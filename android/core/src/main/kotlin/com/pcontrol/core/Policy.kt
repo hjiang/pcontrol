@@ -36,3 +36,24 @@ enum class Verdict {
      */
     BLOCK_WEB,
 }
+
+/**
+ * Context about the current browser session, passed to [PolicyEngine]
+ * for restricted browsing mode evaluation (Stage 6).
+ */
+data class BrowserContext(
+    /** True if this package is a known browser in [BrowserRegistry]. */
+    val isRegistered: Boolean,
+    /**
+     * The last successfully read domain from the URL bar for the current
+     * foreground session. Null when the URL bar is unreadable (new tab,
+     * mid-typing, fullscreen video).
+     */
+    val currentDomain: String?,
+    /**
+     * Consecutive ticks (10s each) where [currentDomain] was null
+     * during this foreground session. Reset to 0 when a domain is
+     * successfully read or when the browser leaves the foreground.
+     */
+    val ticksWithoutDomain: Int
+)

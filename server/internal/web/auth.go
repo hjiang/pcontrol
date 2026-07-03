@@ -343,7 +343,7 @@ func (h *webAuthHandler) limitsPage() http.HandlerFunc {
 			</form>`, deviceID)
 
 		// Exclusions table
-		fmt.Fprintf(w, `<h2>Exclusions (exempt from total limit)</h2><table border="1"><tr><th>Kind</th><th>Subject</th><th></th></tr>`)
+		fmt.Fprintf(w, `<h2>Exclusions</h2><p style="color:#555">Web exclusions: always allowed — usable even after the daily limit.</p><table border="1"><tr><th>Kind</th><th>Subject</th><th></th></tr>`)
 		for _, e := range policy.Exclusions {
 			fmt.Fprintf(w, `<tr><td>%s</td><td>%s</td>
 				<td><form action="/devices/%d/exclusions/%d/delete" method="post"><button>Delete</button></form></td></tr>`,

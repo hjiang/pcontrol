@@ -41,7 +41,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 60, 0)
         )
 
-        // 60s = 1 min, limit is 30 min = 1800s, warn at 90% = 1620s → ALLOW
         assertEquals(Verdict.ALLOW, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 60,
@@ -60,7 +59,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 1620, 0)
         )
 
-        // 1620s = 27 min, 90% of 30 min = 27 min → exactly at warn threshold
         assertEquals(Verdict.WARN, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 1620,
@@ -79,7 +77,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 1799, 0)
         )
 
-        // 1799s = 29.98 min, under 30 min → WARN (above 90%)
         assertEquals(Verdict.WARN, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 1799,
@@ -98,7 +95,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 1800, 0)
         )
 
-        // 1800s = 30 min → at exact limit → BLOCK_APP
         assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 1800,
@@ -137,7 +133,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 1800, 0)
         )
 
-        // §6 rule 2: "This applies even if the app is in exclusions"
         assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 1800,
@@ -197,7 +192,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "web", "tiktok.com", "tiktok.com", 810, 0)
         )
 
-        // 810s = 13.5 min, 90% of 15 min = 13.5 min → WARN
         assertEquals(Verdict.WARN, PolicyEngine.evaluateWeb(
             domain = "tiktok.com",
             webSeconds = 810,
@@ -276,7 +270,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 6480, 0)
         )
 
-        // 6480s = 108 min = 90% of 120 min
         assertEquals(Verdict.WARN, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 6480,
@@ -318,8 +311,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 600, 0)
         )
 
-        // countedTotal = 600s (Game), Study excluded → 600s total
-        // 600s = 10 min, under 60 min → ALLOW
         assertEquals(Verdict.ALLOW, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 600,
@@ -340,8 +331,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "web", "khanacademy.org", "Khan", 3600, 0)
         )
 
-        // countedTotal = 7200s (Browser) - 3600s (khan excluded web) = 3600s = 60 min
-        // At exactly 60 min → BLOCK_APP
         assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
             pkg = "com.example.Browser",
             appSeconds = 7200,
@@ -362,8 +351,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "web", "khanacademy.org", "Khan", 999999, 0)
         )
 
-        // countedTotal = 1800 - 999999 = clamped to 0
-        // 0 under 30 min → ALLOW
         assertEquals(Verdict.ALLOW, PolicyEngine.evaluateApp(
             pkg = "com.example.Browser",
             appSeconds = 1800,
@@ -401,8 +388,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 120, 0)
         )
 
-        // Per-app limit (1 min = 60s) is hit at 120s → BLOCK_APP
-        // Even though total (120 min) is well over
         assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
             pkg = "com.example.Game",
             appSeconds = 120,
@@ -411,7 +396,7 @@ class PolicyEngineTest {
         ))
     }
 
-    // ── Web in restricted mode (total hit, domain excluded) ──────────
+    // ── Stage 5: Web in restricted mode (total hit, domain excluded) ──
 
     @Test
     fun `restricted mode domain excluded returns ALLOW`() {
@@ -425,7 +410,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "web", "khanacademy.org", "Khan", 0, 0)
         )
 
-        // Total hit (1800s ≥ 1800s = 30 min). Domain is excluded → ALLOW
         assertEquals(Verdict.ALLOW, PolicyEngine.evaluateWeb(
             domain = "khanacademy.org",
             webSeconds = 0,
@@ -446,8 +430,6 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "web", "youtube.com", "YouTube", 100, 0)
         )
 
-        // Total hit (1800s + 100s - 0 excluded web = 1900s ≥ 1800s).
-        // youtube.com is NOT excluded → BLOCK_WEB
         assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
             domain = "youtube.com",
             webSeconds = 100,
@@ -476,11 +458,317 @@ class PolicyEngineTest {
         )
 
         val total = PolicyEngine.countedTotal(counters, policy.exclusions)
-        // §6 formula: Σ non-excluded-app-seconds − Σ excluded-web-seconds
-        // Non-excluded app: Game (1800s), Study (3600s) excluded
-        // Excluded web: khanacademy.org (1200s)
-        // countedTotal = 1800 − 1200 = 600
-        // Non-excluded web (youtube.com) is NOT added — it's inside browser app time
         assertEquals(600, total)
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Stage 6: Restricted browsing mode
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── Registered browser + total hit ──────────────────────────────
+
+    @Test
+    fun `total hit with registered browser returns ALLOW in evaluateApp (defers to Web)`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+        val browser = BrowserContext(
+            isRegistered = true,
+            currentDomain = "khanacademy.org",
+            ticksWithoutDomain = 0
+        )
+
+        // Total is hit (30 min = 1800s), but browser is registered → ALLOW
+        // (restricted browsing via evaluateWeb takes over)
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateApp(
+            pkg = "com.example.Browser",
+            appSeconds = 1800,
+            allCounters = counters,
+            policy = policy,
+            browser = browser
+        ))
+    }
+
+    @Test
+    fun `total hit with unregistered browser returns BLOCK_APP`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.UnknownBrowser", "Browser", 1800, 0)
+        )
+        val browser = BrowserContext(
+            isRegistered = false,
+            currentDomain = null,
+            ticksWithoutDomain = 0
+        )
+
+        assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
+            pkg = "com.example.UnknownBrowser",
+            appSeconds = 1800,
+            allCounters = counters,
+            policy = policy,
+            browser = browser
+        ))
+    }
+
+    @Test
+    fun `total hit with excluded app returns ALLOW`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = listOf(ExclusionDef("app", "com.example.Study"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Study", "Study", 1800, 0)
+        )
+
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateApp(
+            pkg = "com.example.Study",
+            appSeconds = 1800,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    // ── Registered browser + total hit + domain evaluation ──────────
+
+    @Test
+    fun `total hit registered browser excluded domain returns ALLOW`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateWeb(
+            domain = "khanacademy.org",
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `total hit registered browser excluded subdomain returns ALLOW`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateWeb(
+            domain = "www.khanacademy.org",
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `total hit registered browser non-excluded domain returns BLOCK_WEB`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+
+        assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
+            domain = "youtube.com",
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    // ── Grace period (null domain + total hit) ──────────────────────
+
+    @Test
+    fun `total hit null domain within grace returns ALLOW`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateWeb(
+            domain = null,
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy,
+            ticksWithoutDomain = 0
+        ))
+    }
+
+    @Test
+    fun `total hit null domain at exactly grace limit returns ALLOW`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateWeb(
+            domain = null,
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy,
+            ticksWithoutDomain = PolicyEngine.TICKS_WITHOUT_DOMAIN_GRACE
+        ))
+    }
+
+    @Test
+    fun `total hit null domain past grace limit returns BLOCK_WEB`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 1800, 0)
+        )
+
+        assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
+            domain = null,
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy,
+            ticksWithoutDomain = PolicyEngine.TICKS_WITHOUT_DOMAIN_GRACE + 1
+        ))
+    }
+
+    @Test
+    fun `total NOT hit null domain returns ALLOW`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 120,
+            limits = emptyList(),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 600, 0)
+        )
+
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateWeb(
+            domain = null,
+            webSeconds = 0,
+            allCounters = counters,
+            policy = policy,
+            ticksWithoutDomain = 999 // even well past grace, total NOT hit → ALLOW
+        ))
+    }
+
+    // ── Per-app limit takes precedence over restricted browsing ─────
+
+    @Test
+    fun `browser per-app limit exhausted still BLOCK_APP even if registered and total hit`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 120,
+            limits = listOf(LimitDef("app", "com.example.Browser", 1)),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 120, 0)
+        )
+        val browser = BrowserContext(
+            isRegistered = true,
+            currentDomain = "khanacademy.org",
+            ticksWithoutDomain = 0
+        )
+
+        // Per-app limit (1 min = 60s) is exceeded (120s) → BLOCK_APP
+        // Even though total NOT hit and domain is excluded
+        assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
+            pkg = "com.example.Browser",
+            appSeconds = 120,
+            allCounters = counters,
+            policy = policy,
+            browser = browser
+        ))
+    }
+
+    // ── Per-site limit in restricted mode ───────────────────────────
+
+    @Test
+    fun `excluded domain with its own per-site limit exhausted returns BLOCK_WEB`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 120,
+            limits = listOf(LimitDef("web", "khanacademy.org", 10)),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Browser", "Browser", 300, 0),
+            UsageCounter("2026-07-03", "web", "khanacademy.org", "Khan", 600, 0)
+        )
+
+        // Total NOT hit (300s = 5min < 120min)
+        // Per-site limit hit (600s = 10min ≥ 10min) → BLOCK_WEB
+        assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
+            domain = "khanacademy.org",
+            webSeconds = 600,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    // ── Regression: Stage 5 behaviour when total NOT hit ────────────
+
+    @Test
+    fun `stage5 regression per-site warn still works when total not hit`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 120,
+            limits = listOf(LimitDef("web", "youtube.com", 30)),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "web", "youtube.com", "YouTube", 1620, 0)
+        )
+
+        assertEquals(Verdict.WARN, PolicyEngine.evaluateWeb(
+            domain = "youtube.com",
+            webSeconds = 1620,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `stage5 regression per-site block still works when total not hit`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 120,
+            limits = listOf(LimitDef("web", "youtube.com", 30)),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "web", "youtube.com", "YouTube", 1800, 0)
+        )
+
+        assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
+            domain = "youtube.com",
+            webSeconds = 1800,
+            allCounters = counters,
+            policy = policy
+        ))
     }
 }

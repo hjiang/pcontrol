@@ -13,6 +13,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
+import com.pcontrol.core.BrowserContext
 import com.pcontrol.core.DomainParser
 import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
@@ -193,12 +194,21 @@ class TrackerService : Service() {
         val policyEntity = db.cachedPolicyDao().get()
         val policy = policyEntity?.let { parsePolicy(it.json) }
 
-        // Evaluate app verdict
-        val appSeconds = allCounters
-            .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
-        val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy)
+        val isKnownBrowser = BrowserRegistry.isKnownBrowser(pkg)
+        val browserContext = if (isKnownBrowser) {
+            BrowserContext(
+                isRegistered = true,
+                currentDomain = domain,
+                ticksWithoutDomain = if (domain == null) ticksWithoutDomain else 0
+            )
+        } else null
 
         val label = pkg
+
+        // Evaluate app verdict (with browser context for restricted mode)
+        val appSeconds = allCounters
+            .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
+        val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy, browserContext)
 
         if (appVerdict != com.pcontrol.core.Verdict.ALLOW) {
             val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
@@ -212,23 +222,27 @@ class TrackerService : Service() {
             )
         }
 
-        // Evaluate web verdict if in a browser with a readable domain
-        if (domain != null) {
-            val webSeconds = allCounters
-                .firstOrNull { it.kind == "web" && it.subject == domain }?.seconds ?: 0
-            val webVerdict = PolicyEngine.evaluateWeb(domain, webSeconds, allCounters, policy)
+        // Evaluate web verdict (restricted mode, grace period for null domain)
+        val webSeconds = allCounters
+            .firstOrNull { it.kind == "web" && it.subject == domain }?.seconds ?: 0
+        val webVerdict = PolicyEngine.evaluateWeb(
+            domain = domain,
+            webSeconds = webSeconds,
+            allCounters = allCounters,
+            policy = policy,
+            ticksWithoutDomain = ticksWithoutDomain
+        )
 
-            if (webVerdict != com.pcontrol.core.Verdict.ALLOW) {
-                val limitMessage = buildLimitMessage(domain, domain, webVerdict, webSeconds, policy)
-                Enforcer.handleVerdict(
-                    context = this,
-                    verdict = webVerdict,
-                    subject = domain,
-                    label = domain,
-                    day = day,
-                    limitMessage = limitMessage
-                )
-            }
+        if (webVerdict != com.pcontrol.core.Verdict.ALLOW) {
+            val limitMessage = buildLimitMessage(domain ?: pkg, label, webVerdict, webSeconds, policy)
+            Enforcer.handleVerdict(
+                context = this,
+                verdict = webVerdict,
+                subject = domain ?: pkg,
+                label = label,
+                day = day,
+                limitMessage = limitMessage
+            )
         }
     }
 

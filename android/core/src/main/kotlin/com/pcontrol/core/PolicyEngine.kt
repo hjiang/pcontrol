@@ -29,18 +29,29 @@ object PolicyEngine {
     )
 
     /**
+     * Maximum number of consecutive ticks with an unreadable URL bar
+     * before a browser is blocked in restricted mode (grace period).
+     * §6: 3 ticks = 30 seconds.
+     */
+    const val TICKS_WITHOUT_DOMAIN_GRACE = 3
+
+    /**
      * Evaluates the verdict for an app foreground event.
      *
      * @param pkg the foreground package name
      * @param appSeconds total tracked seconds for this package today
      * @param allCounters all today's usage counters (app + web)
      * @param policy the current policy, or null if not yet synced
+     * @param browser context about the current browser session; non-null
+     *                only when [pkg] is a known browser. Pass null for
+     *                non-browser apps.
      */
     fun evaluateApp(
         pkg: String,
         appSeconds: Int,
         allCounters: List<UsageCounter>,
-        policy: PolicyV2?
+        policy: PolicyV2?,
+        browser: BrowserContext? = null
     ): Verdict {
         // Rule 1: never-block list
         if (pkg in NEVER_BLOCK_PACKAGES) return Verdict.ALLOW
@@ -57,26 +68,52 @@ object PolicyEngine {
         }
 
         // Rule 4: total limit
-        return evaluateTotalLimit(pkg = pkg, allCounters = allCounters, policy = policy)
+        return evaluateAppTotalLimit(pkg = pkg, allCounters = allCounters, policy = policy, browser = browser)
     }
 
     /**
-     * Evaluates the verdict for a web-domain event.
+     * Evaluates the verdict for a web-domain event within a browser.
+     * Called only for known browsers with a readable domain (or for
+     * the grace-period evaluation when domain is null).
      *
-     * @param domain the registrable domain currently in the browser URL bar
+     * @param domain the registrable domain currently in the browser URL bar,
+     *               or null if the URL bar is unreadable this tick
      * @param webSeconds total tracked seconds for this domain today
      * @param allCounters all today's usage counters (app + web)
      * @param policy the current policy, or null if not yet synced
+     * @param ticksWithoutDomain number of consecutive ticks since a domain
+     *                           was last read in this foreground session.
+     *                           Only meaningful when [domain] is null.
      */
     fun evaluateWeb(
-        domain: String,
+        domain: String?,
         webSeconds: Int,
         allCounters: List<UsageCounter>,
-        policy: PolicyV2?
+        policy: PolicyV2?,
+        ticksWithoutDomain: Int = 0
     ): Verdict {
         if (policy == null) return Verdict.ALLOW
 
-        // Rule 3: per-site limit (suffix match)
+        // Stage 6: null domain — URL unreadable this tick
+        if (domain == null) {
+            val total = countedTotal(allCounters, policy.exclusions)
+            val totalLimitSeconds = policy.totalDailyLimitMinutes?.times(60) ?: return Verdict.ALLOW
+
+            if (total < totalLimitSeconds) {
+                // Total NOT hit — no restriction. Missing domain just means
+                // no web time this tick (app time still counts).
+                return Verdict.ALLOW
+            }
+
+            // Total IS hit — restricted mode with grace period
+            return if (ticksWithoutDomain > TICKS_WITHOUT_DOMAIN_GRACE) {
+                Verdict.BLOCK_WEB
+            } else {
+                Verdict.ALLOW
+            }
+        }
+
+        // Domain is readable — Rule 3: per-site limit (suffix match)
         val siteLimit = policy.limits.firstOrNull { it.kind == "web" && matchesSubject(it.subject, domain) }
         if (siteLimit != null) {
             val limitSeconds = siteLimit.dailyLimitMinutes * 60
@@ -85,7 +122,7 @@ object PolicyEngine {
             if (webSeconds >= warnSeconds) return Verdict.WARN
         }
 
-        // Rule 4: total limit
+        // Rule 4: total limit with restricted browsing mode
         val total = countedTotal(allCounters, policy.exclusions)
         if (policy.totalDailyLimitMinutes == null) return Verdict.ALLOW
         val totalLimitSeconds = policy.totalDailyLimitMinutes * 60
@@ -129,17 +166,22 @@ object PolicyEngine {
 
     // ── private helpers ──────────────────────────────────────────────
 
-    private fun evaluateTotalLimit(
+    private fun evaluateAppTotalLimit(
         pkg: String,
         allCounters: List<UsageCounter>,
-        policy: PolicyV2
+        policy: PolicyV2,
+        browser: BrowserContext?
     ): Verdict {
         val totalLimitMinutes = policy.totalDailyLimitMinutes ?: return Verdict.ALLOW
         val total = countedTotal(allCounters, policy.exclusions)
         val totalLimitSeconds = totalLimitMinutes * 60
 
         if (total >= totalLimitSeconds) {
-            // §6 rule 4: BLOCK_APP for all non-excluded non-browser apps
+            // §6 rule 4:
+            //   - Registered browser → ALLOW (restricted browsing via evaluateWeb)
+            //   - Excluded app → ALLOW (not counted in total)
+            //   - Everything else → BLOCK_APP
+            if (browser?.isRegistered == true) return Verdict.ALLOW
             if (isInExclusions(pkg, policy.exclusions)) return Verdict.ALLOW
             return Verdict.BLOCK_APP
         }

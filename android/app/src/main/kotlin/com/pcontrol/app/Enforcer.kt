@@ -131,16 +131,27 @@ object Enforcer {
         manager.notify(WARN_NOTIFICATION_ID_BASE + subject.hashCode(), notification)
     }
 
-    private fun launchBlockedActivity(
+    fun launchBlockedActivity(
         context: Context,
         limitMessage: String,
         subject: String,
-        startActivity: (Intent) -> Boolean
+        startActivity: (Intent) -> Boolean = { intent ->
+            try {
+                context.startActivity(intent)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        },
+        allowedSites: List<String>? = null
     ) {
         val intent = Intent(context, BlockedActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra("message", limitMessage)
             putExtra("subject", subject)
+            if (allowedSites != null) {
+                putStringArrayListExtra("allowed_sites", ArrayList(allowedSites))
+            }
         }
         startActivity(intent)
     }

@@ -15,11 +15,18 @@ class BlockedActivity : AppCompatActivity() {
 
         val message = intent.getStringExtra("message") ?: "Time limit reached"
         val subject = intent.getStringExtra("subject") ?: ""
+        val allowedSites = intent.getStringArrayListExtra("allowed_sites") ?: arrayListOf()
 
         setContentView(R.layout.activity_blocked)
 
         findViewById<TextView>(R.id.blocked_message)?.text = message
         findViewById<TextView>(R.id.blocked_subject)?.text = subject
+
+        if (allowedSites.isNotEmpty()) {
+            val allowedText = findViewById<TextView>(R.id.blocked_allowed_sites)
+            allowedText?.text = "Allowed: " + allowedSites.joinToString(", ")
+            allowedText?.visibility = android.view.View.VISIBLE
+        }
     }
 
     override fun onBackPressed() {
