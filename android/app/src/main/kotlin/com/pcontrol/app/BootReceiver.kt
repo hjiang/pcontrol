@@ -6,6 +6,9 @@ import android.content.Intent
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
-        // Will start TrackerService in Stage 4
+        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
+            val serviceIntent = Intent(context, TrackerService::class.java)
+            context?.startForegroundService(serviceIntent)
+        }
     }
 }
