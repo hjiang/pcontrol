@@ -573,7 +573,7 @@ Tasks (in order):
 
 **Goal**: SQLite store with full schema; domain aggregation logic; everything
 unit-tested. No HTTP yet beyond `/healthz`.
-**Status**: Not Started
+**Status**: Complete
 
 Tasks:
 
