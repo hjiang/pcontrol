@@ -643,7 +643,7 @@ policy JSON.
 server; dashboard shows real data. All logic in `:core` and all JVM-testable
 `:app` classes are TDD'd; thin Android glue (service/manifest wiring) is
 verified manually.
-**Status**: Not Started
+**Status**: In Progress
 
 Tasks:
 
