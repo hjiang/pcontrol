@@ -1,0 +1,31 @@
+# Go
+server/pcontrol
+server/pcontrold
+*.test
+*.out
+
+# Gradle / Android
+android/.gradle/
+android/build/
+android/app/build/
+android/core/build/
+android/local.properties
+*.iml
+.idea/
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Nix
+result
+
+# Android Studio
+android/.idea/
+android/captures/
+android/.externalNativeBuild/
+
+# macOS
+.DS_Store
