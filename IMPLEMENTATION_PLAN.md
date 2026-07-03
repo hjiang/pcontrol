@@ -607,7 +607,7 @@ Tasks:
 
 **Goal**: complete server: `/api/v1/sync` per §7, all web routes per §8,
 session auth. The server is feature-complete and deployable after this stage.
-**Status**: Not Started
+**Status**: Complete
 
 Tasks:
 

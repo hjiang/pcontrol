@@ -1,0 +1,22 @@
+[Unit]
+Description=pcontrol parental control server
+After=network.target
+
+[Service]
+Type=simple
+User=pcontrold
+DynamicUser=yes
+StateDirectory=pcontrol
+WorkingDirectory=/var/lib/pcontrol
+ExecStart=/usr/local/bin/pcontrold \
+    --db /var/lib/pcontrol/pcontrol.db \
+    --listen 127.0.0.1:8080 \
+    --admin-password-hash "${PCONTROL_ADMIN_HASH}"
+Restart=on-failure
+RestartSec=5
+
+Environment=PCONTROL_ADMIN_HASH=%h
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

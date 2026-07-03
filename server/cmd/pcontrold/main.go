@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
+	"pcontrol/server/internal/store"
 	"pcontrol/server/internal/web"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
@@ -20,19 +24,62 @@ func main() {
 		*adminHash = os.Getenv("PCONTROL_ADMIN_HASH")
 	}
 
-	if flag.Arg(0) == "hash-password" {
-		// hash-password subcommand: reads password from stdin, prints bcrypt hash
-		fmt.Fprintln(os.Stderr, "hash-password subcommand not yet implemented")
-		os.Exit(1)
+	// Handle subcommands
+	if flag.NArg() > 0 {
+		switch flag.Arg(0) {
+		case "hash-password":
+			hashPassword()
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", flag.Arg(0))
+			os.Exit(1)
+		}
 	}
 
-	_ = db // SQLite store will be wired in Stage 2
-	_ = adminHash
+	if *adminHash == "" {
+		log.Fatal("--admin-password-hash or PCONTROL_ADMIN_HASH is required")
+	}
 
-	mux := web.NewRouter()
+	s, err := store.Open(*db)
+	if err != nil {
+		log.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	mux := web.NewRouter(s, *adminHash)
 
 	log.Printf("pcontrold listening on %s", *listen)
 	if err := http.ListenAndServe(*listen, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+// hashPassword reads a password from stdin (first line) and prints its bcrypt hash.
+func hashPassword() {
+	if isTerminal() {
+		fmt.Fprint(os.Stderr, "Enter password: ")
+	}
+	reader := bufio.NewReader(os.Stdin)
+	password, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading password: %v\n", err)
+		os.Exit(1)
+	}
+	password = strings.TrimRight(password, "\n\r")
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error hashing password: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(hash))
+}
+
+func isTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }

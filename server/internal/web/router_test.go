@@ -4,10 +4,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"pcontrol/server/internal/store"
 )
 
 func TestHealthz(t *testing.T) {
-	mux := NewRouter()
+	s, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	mux := NewRouter(s, "")
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -21,7 +29,13 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestHealthzMethodNotAllowed(t *testing.T) {
-	mux := NewRouter()
+	s, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	mux := NewRouter(s, "")
 	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -32,7 +46,13 @@ func TestHealthzMethodNotAllowed(t *testing.T) {
 }
 
 func TestHealthzOtherRoutesNotFound(t *testing.T) {
-	mux := NewRouter()
+	s, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	mux := NewRouter(s, "")
 	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
