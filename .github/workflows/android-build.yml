@@ -65,12 +65,21 @@ jobs:
         id: check_secrets
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "${KEYSTORE_B64}" ]; then
+          missing=()
+          [ -n "${KEYSTORE_B64}" ] || missing+=("ANDROID_KEYSTORE_B64")
+          [ -n "${KEYSTORE_PASSWORD}" ] || missing+=("ANDROID_KEYSTORE_PASSWORD")
+          [ -n "${KEY_ALIAS}" ] || missing+=("ANDROID_KEY_ALIAS")
+          [ -n "${KEY_PASSWORD}" ] || missing+=("ANDROID_KEY_PASSWORD")
+
+          if [ ${#missing[@]} -eq 0 ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ANDROID_KEYSTORE_B64 not set — APK will be unsigned"
+            echo "::warning::Signing disabled; missing secrets: ${missing[*]}"
           fi
 
       - name: Install Android SDK (for zipalign & apksigner)
