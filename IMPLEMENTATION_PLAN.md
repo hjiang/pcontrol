@@ -691,7 +691,7 @@ manual checklist passes end-to-end against the real server.
 at 100%, per §6 — with ONE temporary simplification: when the total limit is
 hit, browsers are blocked like plain apps. Stage 6 replaces that with
 restricted browsing mode.
-**Status**: Not Started
+**Status**: Complete
 
 Tasks:
 

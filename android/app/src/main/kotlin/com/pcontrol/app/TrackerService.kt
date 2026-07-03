@@ -14,6 +14,8 @@ import androidx.core.app.NotificationCompat
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
 import com.pcontrol.core.DomainParser
+import com.pcontrol.core.PolicyEngine
+import com.pcontrol.core.PolicyV2
 import com.pcontrol.core.UsageDay
 import com.pcontrol.app.db.AppDatabase
 import com.pcontrol.app.db.UsageCounterEntity
@@ -22,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import java.time.ZoneId
 import java.util.UUID
 
@@ -153,21 +156,131 @@ class TrackerService : Service() {
 
         incrementCounter(db, day, "app", foregroundPkg, label)
 
-        // Record web usage if in a known browser with a readable domain
+        // Record and evaluate web usage if in a known browser with a readable domain
+        var currentDomain: String? = null
         if (BrowserRegistry.isKnownBrowser(foregroundPkg)) {
-            val domain = BrowserAccessibilityService.domainCache.get(foregroundPkg)
+            currentDomain = BrowserAccessibilityService.domainCache.get(foregroundPkg)
 
-            if (domain != null) {
-                // Domain successfully read — record web usage
-                incrementCounter(db, day, "web", domain, domain)
+            if (currentDomain != null) {
+                incrementCounter(db, day, "web", currentDomain, currentDomain)
                 ticksWithoutDomain = 0
             } else {
                 ticksWithoutDomain++
-                // First ~30 seconds (3 ticks) grace for typing a URL
-                // After that, no web attribution — still counts as app time
             }
         } else {
             ticksWithoutDomain = 0
+        }
+
+        // ── Enforcement (PolicyEngine + Enforcer) ───────────────────
+        runEnforcement(day, foregroundPkg, currentDomain)
+    }
+
+    private suspend fun runEnforcement(day: String, pkg: String, domain: String?) {
+        val db = AppDatabase.getInstance(this)
+        val allCounters = db.usageCounterDao().getDay(day)
+            .map { e ->
+                com.pcontrol.core.UsageCounter(
+                    day = e.day,
+                    kind = e.kind,
+                    subject = e.subject,
+                    label = e.label,
+                    seconds = e.seconds,
+                    syncedSeconds = e.syncedSeconds
+                )
+            }
+
+        // Load cached policy
+        val policyEntity = db.cachedPolicyDao().get()
+        val policy = policyEntity?.let { parsePolicy(it.json) }
+
+        // Evaluate app verdict
+        val appSeconds = allCounters
+            .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
+        val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy)
+
+        val label = pkg
+
+        if (appVerdict != com.pcontrol.core.Verdict.ALLOW) {
+            val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
+            Enforcer.handleVerdict(
+                context = this,
+                verdict = appVerdict,
+                subject = pkg,
+                label = label,
+                day = day,
+                limitMessage = limitMessage
+            )
+        }
+
+        // Evaluate web verdict if in a browser with a readable domain
+        if (domain != null) {
+            val webSeconds = allCounters
+                .firstOrNull { it.kind == "web" && it.subject == domain }?.seconds ?: 0
+            val webVerdict = PolicyEngine.evaluateWeb(domain, webSeconds, allCounters, policy)
+
+            if (webVerdict != com.pcontrol.core.Verdict.ALLOW) {
+                val limitMessage = buildLimitMessage(domain, domain, webVerdict, webSeconds, policy)
+                Enforcer.handleVerdict(
+                    context = this,
+                    verdict = webVerdict,
+                    subject = domain,
+                    label = domain,
+                    day = day,
+                    limitMessage = limitMessage
+                )
+            }
+        }
+    }
+
+    private fun parsePolicy(json: String): PolicyV2? {
+        return try {
+            val jsonLib = Json { ignoreUnknownKeys = true }
+            val resp = jsonLib.decodeFromString<PolicyResponse>(json)
+            PolicyV2(
+                version = resp.version,
+                totalDailyLimitMinutes = resp.totalDailyLimitMinutes,
+                warnThresholdPercent = resp.warnThresholdPercent,
+                limits = resp.limits.map { l ->
+                    com.pcontrol.core.LimitDef(kind = l.kind, subject = l.subject, dailyLimitMinutes = l.dailyLimitMinutes)
+                },
+                exclusions = resp.exclusions.map { e ->
+                    com.pcontrol.core.ExclusionDef(kind = e.kind, subject = e.subject)
+                }
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun buildLimitMessage(
+        subject: String,
+        label: String,
+        verdict: com.pcontrol.core.Verdict,
+        seconds: Int,
+        policy: PolicyV2?
+    ): String {
+        return when (verdict) {
+            com.pcontrol.core.Verdict.BLOCK_APP -> "$label: limit reached"
+            com.pcontrol.core.Verdict.BLOCK_WEB -> "$label: site blocked"
+            com.pcontrol.core.Verdict.WARN -> {
+                val policyVersion = policy
+                if (policyVersion != null) {
+                    // Try to find per-app/per-site limit
+                    val appLimit = policyVersion.limits.firstOrNull {
+                        (it.kind == "app" || it.kind == "web") && it.subject == subject
+                    }
+                    if (appLimit != null) {
+                        "$label: ${seconds / 60} of ${appLimit.dailyLimitMinutes} minutes used"
+                    } else if (policyVersion.totalDailyLimitMinutes != null) {
+                        "$label: ${seconds / 60} of ${policyVersion.totalDailyLimitMinutes} minutes used"
+                    } else {
+                        "$label: $subject limit warning"
+                    }
+                } else {
+                    "$label: limit warning"
+                }
+            }
+            else -> "$label: $subject"
         }
     }
 

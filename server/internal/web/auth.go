@@ -211,21 +211,94 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<html><body><h1>Device %s</h1>`, id)
-		fmt.Fprintf(w, `<a href="/devices/%s/limits">Limits</a> | <a href="/">Back</a>`, id)
-
-		// Show today's usage
 		deviceID := parseID(id)
+
 		day := r.URL.Query().Get("day")
 		if day == "" {
 			day = time.Now().UTC().Format("2006-01-02")
 		}
-		_ = deviceID
-		_ = day
 
-		// TODO: show usage data from store
-		fmt.Fprintf(w, `<p>Usage for %s</p>`, day)
+		policy, err := h.store.GetPolicy(deviceID)
+		if err != nil {
+			policy = domain.Policy{}
+		}
+
+		appTotals, webTotals, _ := h.store.UsageTotals(deviceID, day)
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<html><body><h1>Device %s</h1>`, id)
+		fmt.Fprintf(w, `<a href="/devices/%s/limits">Limits</a> | <a href="/">Back</a><hr>`, id)
+
+		// Day picker
+		fmt.Fprintf(w, `<form method="get"><label>Day: <input name="day" value="%s"></label><button>View</button></form>`, day)
+
+		// Total usage bar
+		totalSeconds := domain.CountedTotalSeconds(appTotals, webTotals, policy.Exclusions)
+		totalMinutes := totalSeconds / 60
+		fmt.Fprintf(w, `<h2>Total usage: %dm</h2>`, totalMinutes)
+		if policy.TotalDailyLimitMin != nil {
+			limitMin := *policy.TotalDailyLimitMin
+			limitMinInt := int(limitMin)
+			pct := 0
+			if limitMinInt > 0 {
+				pct = int(totalMinutes) * 100 / limitMinInt
+			}
+			barColor := "green"
+			badge := ""
+			if int(totalMinutes) >= limitMinInt {
+				barColor = "red"
+				badge = ` <strong style="color:red">[BLOCKED]</strong>`
+			} else if pct >= policy.WarnThresholdPercent {
+				barColor = "orange"
+				badge = ` <strong style="color:orange">[WARN]</strong>`
+			}
+			fmt.Fprintf(w, `<div style="background:#eee;height:20px;width:300px;border-radius:4px">`)
+			fmt.Fprintf(w, `<div style="background:%s;height:20px;width:%d%%;border-radius:4px"></div>`, barColor, min(pct, 100))
+			fmt.Fprintf(w, `</div>%s`, badge)
+			fmt.Fprintf(w, `<p>Limit: %dm (warn at %d%%)</p>`, limitMinInt, policy.WarnThresholdPercent)
+		} else {
+			fmt.Fprintf(w, `<p>No total limit set</p>`)
+		}
+
+		// App usage table
+		fmt.Fprintf(w, `<h2>Apps</h2><table border="1"><tr><th>App</th><th>Minutes</th><th>Status</th></tr>`)
+		for _, a := range appTotals {
+			status := ""
+			for _, l := range policy.Limits {
+				if l.Kind == domain.KindApp && domain.MatchesDomain(l.Subject, a.Subject) {
+					limitSec := l.DailyLimitMinutes * 60
+					if a.Seconds >= limitSec {
+						status = `<strong style="color:red">BLOCKED</strong>`
+					} else if a.Seconds >= limitSec*policy.WarnThresholdPercent/100 {
+						status = `<strong style="color:orange">WARN</strong>`
+					}
+					break
+				}
+			}
+			fmt.Fprintf(w, `<tr><td>%s</td><td>%d</td><td>%s</td></tr>`, a.Label, a.Seconds/60, status)
+		}
+		fmt.Fprintf(w, `</table>`)
+
+		// Web usage table
+		fmt.Fprintf(w, `<h2>Websites</h2><table border="1"><tr><th>Domain</th><th>Minutes</th><th>Status</th></tr>`)
+		for _, w2 := range webTotals {
+			status := ""
+			for _, l := range policy.Limits {
+				if l.Kind == domain.KindWeb && domain.MatchesDomain(l.Subject, w2.Subject) {
+					limitSec := l.DailyLimitMinutes * 60
+					if w2.Seconds >= limitSec {
+						status = `<strong style="color:red">BLOCKED</strong>`
+					} else if w2.Seconds >= limitSec*policy.WarnThresholdPercent/100 {
+						status = `<strong style="color:orange">WARN</strong>`
+					}
+					break
+				}
+			}
+			fmt.Fprintf(w, `<tr><td>%s</td><td>%d</td><td>%s</td></tr>`, w2.Label, w2.Seconds/60, status)
+		}
+		fmt.Fprintf(w, `</table>`)
+
+		fmt.Fprintf(w, `<a href="/devices/%s/limits">Manage limits</a>`, id)
 		fmt.Fprintf(w, `</body></html>`)
 	}
 }

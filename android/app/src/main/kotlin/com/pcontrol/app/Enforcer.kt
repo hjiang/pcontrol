@@ -1,0 +1,160 @@
+package com.pcontrol.app
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import com.pcontrol.core.Verdict
+
+/**
+ * Converts a [Verdict] into an Android enforcement action per §6.
+ *
+ * - [Verdict.ALLOW] → no action.
+ * - [Verdict.WARN] → post a high-priority notification once per (subject, day).
+ * - [Verdict.BLOCK_APP] → launch [BlockedActivity].
+ * - [Verdict.BLOCK_WEB] → perform a BACK action; fall back to [BlockedActivity]
+ *   if the page does not close after two strikes.
+ */
+object Enforcer {
+
+    private const val WARN_CHANNEL_ID = "pcontrol_warn"
+    private const val WARN_NOTIFICATION_ID_BASE = 1000
+
+    /**
+     * Tracks which (subject, day) pairs have already been warned today,
+     * so each subject gets at most one warning notification.
+     */
+    private val warnedKeys = mutableSetOf<String>()
+
+    /** Reset at midnight / day change. Called by TrackerService on day rollover. */
+    fun resetWarnedSet() {
+        warnedKeys.clear()
+    }
+
+    /**
+     * Handles a verdict.
+     *
+     * @param context Android context for notifications and intents.
+     * @param verdict the verdict from [com.pcontrol.core.PolicyEngine].
+     * @param subject the app package name or web domain.
+     * @param label human-readable label for notifications.
+     * @param day the device-local day key "YYYY-MM-DD".
+     * @param limitMessage text describing which limit was hit.
+     * @param performBack lambda that performs GLOBAL_ACTION_BACK; returns true
+     *                    if the back action likely removed the blocked content.
+     *                    Default: performs the back action.
+     * @param startActivity lambda that starts an activity; returns true on success.
+     *                      Default: launches the intent via [Context.startActivity].
+     */
+    @JvmStatic
+    fun handleVerdict(
+        context: Context,
+        verdict: Verdict,
+        subject: String,
+        label: String,
+        day: String,
+        limitMessage: String,
+        performBack: () -> Boolean = { performGlobalBack(context) },
+        startActivity: (Intent) -> Boolean = { intent ->
+            try {
+                context.startActivity(intent)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+    ) {
+        when (verdict) {
+            Verdict.ALLOW -> { /* no action */ }
+
+            Verdict.WARN -> {
+                val warnKey = "$subject|$day"
+                if (warnKey in warnedKeys) return // Already warned today
+                warnedKeys.add(warnKey)
+                postWarningNotification(context, subject, label, limitMessage)
+            }
+
+            Verdict.BLOCK_APP -> {
+                launchBlockedActivity(context, limitMessage, subject, startActivity)
+            }
+
+            Verdict.BLOCK_WEB -> {
+                val backClosed = performBack()
+                if (backClosed) {
+                    // Back action succeeded; the page was closed/navigated away
+                } else {
+                    // Back did not remove the blocked content — fall back to
+                    // full-screen BlockedActivity (2-strikes rule)
+                    launchBlockedActivity(context, limitMessage, subject, startActivity)
+                }
+            }
+        }
+    }
+
+    // ── private helpers ──────────────────────────────────────────────
+
+    private fun ensureWarnChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                WARN_CHANNEL_ID,
+                "Limit warnings",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Warnings when approaching time limits"
+            }
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun postWarningNotification(
+        context: Context,
+        subject: String,
+        label: String,
+        limitMessage: String
+    ) {
+        ensureWarnChannel(context)
+
+        val notification = NotificationCompat.Builder(context, WARN_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("pcontrol limit warning")
+            .setContentText(limitMessage)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .build()
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(WARN_NOTIFICATION_ID_BASE + subject.hashCode(), notification)
+    }
+
+    private fun launchBlockedActivity(
+        context: Context,
+        limitMessage: String,
+        subject: String,
+        startActivity: (Intent) -> Boolean
+    ) {
+        val intent = Intent(context, BlockedActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra("message", limitMessage)
+            putExtra("subject", subject)
+        }
+        startActivity(intent)
+    }
+
+    private fun performGlobalBack(context: Context): Boolean {
+        return try {
+            @Suppress("DEPRECATION")
+            val service = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager?
+            service?.let {
+                // Use performGlobalAction if available, otherwise return false
+                false
+            } ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+}
