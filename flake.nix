@@ -12,7 +12,7 @@
         pkgs = import nixpkgs {
           inherit system;
           config = {
-            allowUnfree = true;               # Android SDK licenses
+            allowUnfree = true;
             android_sdk.accept_license = true;
           };
         };
@@ -26,14 +26,14 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             # server
-            go_1_23
+            go
             gopls
             gotools
             sqlite
             # android
             jdk17
             gradle
-            android-tools            # adb
+            android-tools
             androidComposition.androidsdk
             kotlin-language-server
           ];
