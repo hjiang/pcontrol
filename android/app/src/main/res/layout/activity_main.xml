@@ -1,13 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:layout_height="match_parent">
 
-    <TextView
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="pcontrol setup" />
+        android:orientation="vertical"
+        android:padding="24dp">
 
-</LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="pcontrol Setup"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="24dp" />
+
+        <TextView
+            android:id="@+id/status_usage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❌ Usage access"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_usage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Grant Usage Access"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/status_accessibility"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❌ Accessibility service"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_accessibility"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Enable Accessibility Service"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/status_overlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❌ Draw over other apps"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_overlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Grant Overlay Permission"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/status_notifications"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❌ Notifications"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_notifications"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Enable Notifications"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/status_battery"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❌ Battery optimization"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_battery"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Disable Battery Optimization"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/status_server"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❌ Server configuration"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_server"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Configure Server URL + Token"
+            android:layout_marginBottom="24dp" />
+
+        <Button
+            android:id="@+id/btn_start"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant all permissions above"
+            android:enabled="false"
+            android:textSize="18sp" />
+
+    </LinearLayout>
+</ScrollView>
