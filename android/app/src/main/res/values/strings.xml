@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">pcontrol</string>
+    <string name="accessibility_service_description">pcontrol reads the URL bar of supported browsers to track website usage and enforce time limits.</string>
+</resources>
