@@ -1,0 +1,56 @@
+<h1>Limits for device {{.ID}}</h1>
+<p><a href="/devices/{{.ID}}">Back to device</a></p>
+
+<datalist id="subjects">
+{{range .Subjects}}<option value="{{.Value}}">{{.Label}}</option>
+{{end}}
+</datalist>
+
+<h2>Total daily limit: {{.TotalLimitText}} (warn at {{.WarnPct}}%)</h2>
+
+<h3>Per-subject limits</h3>
+<table border="1" id="limits-table"><tr><th>Kind</th><th>Subject</th><th>Min/day</th><th></th></tr>
+<tbody id="limits-tbody">
+{{range .Limits}}
+<tr id="limit-{{.ID}}">
+  <td>{{.Kind}}</td><td>{{.Subject}}</td><td>{{.DailyLimitMinutes}}</td>
+  <td><button hx-post="/devices/{{$.ID}}/limits/{{.ID}}/delete" hx-target="#limit-{{.ID}}" hx-swap="outerHTML" class="btn-link">Delete</button></td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+<h3>Add limit</h3>
+<form id="add-limit-form" hx-post="/devices/{{.ID}}/limits" hx-target="#limits-tbody" hx-swap="beforeend" hx-on::after-request="if(event.detail.success) this.reset()">
+  <select name="kind"><option value="app">App</option><option value="web">Website</option></select>
+  <input name="subject" placeholder="com.example.app or domain.com" required list="subjects">
+  <input name="minutes" type="number" min="1" placeholder="Minutes" required>
+  <button>Add</button>
+</form>
+
+<h3>Exclusions</h3>
+<p class="muted">Web exclusions: always allowed — usable even after the daily limit.</p>
+<table border="1" id="exclusions-table"><tr><th>Kind</th><th>Subject</th><th></th></tr>
+<tbody id="exclusions-tbody">
+{{range .Exclusions}}
+<tr id="exclusion-{{.ID}}">
+  <td>{{.Kind}}</td><td>{{.Subject}}</td>
+  <td><button hx-post="/devices/{{$.ID}}/exclusions/{{.ID}}/delete" hx-target="#exclusion-{{.ID}}" hx-swap="outerHTML" class="btn-link">Delete</button></td>
+</tr>
+{{end}}
+</tbody>
+</table>
+
+<h3>Add exclusion</h3>
+<form id="add-exclusion-form" hx-post="/devices/{{.ID}}/exclusions" hx-target="#exclusions-tbody" hx-swap="beforeend" hx-on::after-request="if(event.detail.success) this.reset()">
+  <select name="kind"><option value="app">App</option><option value="web">Website</option></select>
+  <input name="subject" placeholder="com.example.app or domain.com" required list="subjects">
+  <button>Add</button>
+</form>
+
+<h2>Settings</h2>
+<form action="/devices/{{.ID}}/settings" method="post">
+  <label>Total daily limit (minutes, leave empty for none): <input name="total" type="number" min="1"></label><br>
+  <label>Warn at percent: <input name="warn" type="number" min="1" max="100" value="{{.WarnPct}}"></label><br>
+  <button>Save</button>
+</form>

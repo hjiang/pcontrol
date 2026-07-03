@@ -34,6 +34,43 @@ func (s *Store) InsertEvents(events []domain.Event) error {
 
 const iso8601 = "2006-01-02T15:04:05Z07:00"
 
+// DistinctSubjects returns all distinct (kind, subject, label) triples ever
+// seen for a device, ordered by most-recently-seen first.  Used to populate
+// the <datalist> on the add-limit form.
+func (s *Store) DistinctSubjects(deviceID int64) ([]domain.UsageTotal, error) {
+	rows, err := s.DB.Query(`
+		SELECT kind, subject,
+		       COALESCE((SELECT label FROM usage_events AS e2
+		                 WHERE e2.kind = e.kind AND e2.subject = e.subject AND e2.label != ''
+		                 ORDER BY e2.started_at DESC LIMIT 1), '') AS label,
+		       0 AS total_seconds
+		FROM usage_events e
+		WHERE device_id = ?
+		GROUP BY kind, subject
+		ORDER BY MAX(e.started_at) DESC
+	`, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct subjects: %w", err)
+	}
+	defer rows.Close()
+
+	var subjects []domain.UsageTotal
+	for rows.Next() {
+		var k, subject, label string
+		var seconds int
+		if err := rows.Scan(&k, &subject, &label, &seconds); err != nil {
+			return nil, fmt.Errorf("scan distinct subject: %w", err)
+		}
+		subjects = append(subjects, domain.UsageTotal{
+			Kind:    domain.Kind(k),
+			Subject: subject,
+			Label:   label,
+			Seconds: 0,
+		})
+	}
+	return subjects, rows.Err()
+}
+
 // UsageTotals returns aggregated usage totals for a device on a given day.
 func (s *Store) UsageTotals(deviceID int64, day string) (appTotals, webTotals []domain.UsageTotal, err error) {
 	rows, err := s.DB.Query(`

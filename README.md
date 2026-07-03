@@ -1,8 +1,9 @@
 # pcontrol — Parental Control System
 
-A self-hosted parental-control system for one Android phone. A Go server (with
-a web UI) runs on a public VPS; a Kotlin Android client tracks app and website
-usage, syncs it to the server, and enforces daily time limits locally.
+A self-hosted parental-control system for one or more Android phones. A Go
+server (with a web UI) runs on a public VPS; a Kotlin Android client tracks
+app and website usage, syncs it to the server, and enforces daily time limits
+locally.
 
 ## Repository layout
 
@@ -30,15 +31,68 @@ cd server && go test ./... && go vet ./...
 # Run JVM tests (android core)
 cd android && gradle :core:test
 
-# Run the server
-go run ./cmd/pcontrold --listen 127.0.0.1:8080
-# Server is at http://127.0.0.1:8080/healthz
+# Run Android instrumentation tests
+cd android && gradle :app:testDebugUnitTest
 ```
 
-The Android SDK is provided by `nixpkgs.androidenv` inside the dev shell.
-If the derivation fails on your system, install Android Studio manually and
-set `ANDROID_HOME` to the Android SDK path, then remove
+### Running the server
+
+```sh
+# Start the server with a development database
+go run ./cmd/pcontrold \
+    --listen 127.0.0.1:8080 \
+    --admin-password-hash "$(go run ./cmd/pcontrold hash-password <<< 'my-password')"
+
+# The server is now at http://127.0.0.1:8080
+# Health check: http://127.0.0.1:8080/healthz
+```
+
+**Server flags:**
+
+| Flag | Env var | Default | Description |
+|------|---------|---------|-------------|
+| `--listen` | — | `127.0.0.1:8080` | HTTP listen address |
+| `--db` | — | `pcontrol.db` | SQLite database path |
+| `--admin-password-hash` | `PCONTROL_ADMIN_HASH` | — | bcrypt hash of admin password |
+
+**Subcommand:** `go run ./cmd/pcontrold hash-password` reads a password from
+stdin (one line) and prints its bcrypt hash to stdout. Pipe the output into
+`--admin-password-hash` or `PCONTROL_ADMIN_HASH`.
+
+### Android SDK note
+
+The flake provides the Android SDK via `androidenv.composeAndroidPackages`.
+If the derivation fails or times out on your system, install Android Studio
+manually, set `ANDROID_HOME` to the SDK path, and remove
 `androidComposition.androidsdk` from `flake.nix`.
+
+## Deployment (VPS)
+
+A systemd unit and Caddyfile are provided in the `deploy/` directory.
+
+```sh
+# Copy the systemd unit
+sudo cp deploy/pcontrold.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# Edit the unit to set PCONTROL_ADMIN_HASH to your bcrypt hash:
+sudo systemctl edit pcontrold
+# Add:
+# [Service]
+# Environment=PCONTROL_ADMIN_HASH=<your-bcrypt-hash>
+
+# Copy the Caddy reverse-proxy config (optional)
+sudo cp deploy/Caddyfile /etc/caddy/sites-enabled/pcontrol.example.com
+# Replace pcontrol.example.com with your domain
+
+# Start the service
+sudo systemctl enable --now pcontrold
+```
+
+**Important:** The SQLite file (`pcontrol.db` in `StateDirectory=pcontrol`,
+i.e. `/var/lib/pcontrol/pcontrol.db`) is the **only state to back up**.
+It contains all devices, usage events, and policy settings. Schedule regular
+backups of this single file.
 
 ## License
 

@@ -43,6 +43,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
+    // EncryptedSharedPreferences for storing the bearer token
+    implementation("androidx.security:security-crypto:1.0.0")
+
     // KotlinX Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 

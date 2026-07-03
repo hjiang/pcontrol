@@ -160,15 +160,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isServerConfigured(): Boolean {
-        val prefs = getSharedPreferences("pcontrol", MODE_PRIVATE)
-        return prefs.getString("server_url", "")?.isNotEmpty() == true &&
-            prefs.getString("device_token", "")?.isNotEmpty() == true
+        return SecretPrefs.getInstance(this).isConfigured()
     }
 
     private fun showServerConfigDialog() {
-        val prefs = getSharedPreferences("pcontrol", MODE_PRIVATE)
-        val currentUrl = prefs.getString("server_url", "") ?: ""
-        val currentToken = prefs.getString("device_token", "") ?: ""
+        val prefs = SecretPrefs.getInstance(this)
+        val currentUrl = prefs.getServerUrl()
+        val currentToken = prefs.getDeviceToken()
 
         val inputUrl = android.widget.EditText(this).apply {
             setText(currentUrl)
@@ -195,10 +193,8 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Server Configuration")
             .setView(layout)
             .setPositiveButton("Save") { _, _ ->
-                prefs.edit()
-                    .putString("server_url", inputUrl.text.toString().trimEnd('/'))
-                    .putString("device_token", inputToken.text.toString().trim())
-                    .apply()
+                prefs.setServerUrl(inputUrl.text.toString().trimEnd('/'))
+                prefs.setDeviceToken(inputToken.text.toString().trim())
                 refreshStatus()
             }
             .setNegativeButton("Cancel", null)

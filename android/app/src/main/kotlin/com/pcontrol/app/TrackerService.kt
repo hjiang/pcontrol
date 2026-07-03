@@ -364,13 +364,13 @@ class TrackerService : Service() {
             )
         }
 
-        val prefs = getSharedPreferences("pcontrol", MODE_PRIVATE)
-        val serverUrl = prefs.getString("server_url", "") ?: ""
-        val deviceToken = prefs.getString("device_token", "") ?: ""
+        val prefs = SecretPrefs.getInstance(this)
+        val serverUrl = prefs.getServerUrl()
+        val deviceToken = prefs.getDeviceToken()
         if (serverUrl.isEmpty() || deviceToken.isEmpty()) return
 
         val client = SyncClient(serverUrl, deviceToken)
-        val cachedPolicyVersion = prefs.getInt("policy_version", 0)
+        val cachedPolicyVersion = getSharedPreferences("pcontrol", MODE_PRIVATE).getInt("policy_version", 0)
 
         val request = SyncRequest(
             deviceTime = java.time.Instant.now().toString(),
@@ -395,7 +395,7 @@ class TrackerService : Service() {
                     json = policyJson.encodeToString(PolicyResponse.serializer(), response.policy)
                 )
             )
-            prefs.edit().putInt("policy_version", response.policy.version).apply()
+            getSharedPreferences("pcontrol", MODE_PRIVATE).edit().putInt("policy_version", response.policy.version).apply()
         }
     }
 

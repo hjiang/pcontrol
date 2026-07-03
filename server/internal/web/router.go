@@ -28,6 +28,9 @@ func NewRouter(s *store.Store, adminHash string) http.Handler {
 	mux.HandleFunc("GET /login", wa.handleLoginForm)
 	mux.HandleFunc("POST /login", wa.handleLogin)
 
+	// Static assets (htmx.min.js)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", StaticHandler()))
+
 	// Web routes — session required
 	mux.Handle("POST /logout", wa.requireSession(wa.handleLogout))
 

@@ -1,0 +1,6 @@
+<h1>Login</h1>
+{{if .ErrorMsg}}<p style="color:red">{{.ErrorMsg}}</p>{{end}}
+<form action="/login" method="post">
+  <label>Password: <input type="password" name="password" required></label>
+  <button>Login</button>
+</form>

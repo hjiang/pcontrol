@@ -1,0 +1,27 @@
+<h1>Devices</h1>
+<p><a href="/devices/new">Register device</a></p>
+{{if not .Devices}}
+<p>No devices registered yet. <a href="/devices/new">Register one</a>.</p>
+{{else}}
+  {{range .Devices}}
+  <div class="card">
+    <div>
+      <strong><a href="/devices/{{.ID}}">{{.Name}}</a></strong>
+      <span class="muted">(last seen: {{.LastSeenAt}})</span>
+    </div>
+    <div style="margin-top:8px">
+      Today: <strong>{{.TotalMinutes}} min</strong>
+      {{if .HasLimit}} / {{.LimitMin}} min limit
+        <div class="bar-bg">
+          <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
+        </div>
+      {{else}}<span class="muted"> (no limit set)</span>{{end}}
+    </div>
+    {{if .TopEntries}}
+    <div class="top-apps">
+      {{range $i, $e := .TopEntries}}{{if $i}} · {{end}}{{$e.Label}} ({{$e.Minutes}} min){{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+{{end}}

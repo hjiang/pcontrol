@@ -1,0 +1,41 @@
+<h1>Device {{.Name}}</h1>
+<p><a href="/devices/{{.ID}}/limits">Limits</a> | <a href="/">Back</a></p>
+
+<form method="get">
+  <label>Day: <input name="day" value="{{.Day}}"></label>
+  <button>View</button>
+</form>
+
+<h2>Total usage: {{.TotalMinutes}} min</h2>
+{{if .HasLimit}}
+  <div class="bar-bg" style="width:300px">
+    <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
+  </div>
+  {{if .BlockedBadge}}<span class="badge-blocked">[BLOCKED]</span>{{end}}
+  {{if .WarnBadge}}<span class="badge-warn">[WARN]</span>{{end}}
+  <p class="muted">Limit: {{.LimitMin}}m (warn at {{.WarnPct}}%)</p>
+{{else}}<p class="muted">No total limit set</p>{{end}}
+
+<h2>Apps</h2>
+<table border="1"><tr><th>App</th><th>Minutes</th><th>Status</th></tr>
+{{range .Apps}}
+<tr>
+  <td>{{.Label}}</td>
+  <td>{{.Minutes}}</td>
+  <td>{{if .Blocked}}<span class="badge-blocked">BLOCKED</span>{{else if .Warn}}<span class="badge-warn">WARN</span>{{end}}</td>
+</tr>
+{{end}}
+</table>
+
+<h2>Websites</h2>
+<table border="1"><tr><th>Domain</th><th>Minutes</th><th>Status</th></tr>
+{{range .Websites}}
+<tr>
+  <td>{{.Label}}</td>
+  <td>{{.Minutes}}</td>
+  <td>{{if .Blocked}}<span class="badge-blocked">BLOCKED</span>{{else if .Warn}}<span class="badge-warn">WARN</span>{{end}}</td>
+</tr>
+{{end}}
+</table>
+
+<p><a href="/devices/{{.ID}}/limits">Manage limits</a></p>
