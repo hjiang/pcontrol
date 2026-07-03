@@ -2,29 +2,45 @@ package domain
 
 import "strings"
 
-// CountedTotalSeconds computes the "counted total" for the total daily limit:
+// CountedTotalSeconds computes the "counted total" for the total daily limit
+// per §6:
 //
 //	countedTotal = Σ appSeconds(p)   for every package p NOT in app-exclusions
-//	             + Σ webSeconds(d)   for every domain d NOT in web-exclusions
+//	             − Σ webSeconds(d)   for every domain d in web-exclusions
+//	clamped to ≥ 0
 //
-// The result is clamped at 0.
+// Web time is a SUBSET of the browser's app time, so non-excluded web seconds
+// are neither added nor subtracted (they are already counted inside the
+// browser's app total). Excluded web seconds are subtracted so that, e.g.,
+// Khan Academy in Chrome does not eat the daily budget.
+//
+// Exclusions match by suffix on dot boundaries (§6), so an exclusion on
+// "khanacademy.org" also subtracts "www.khanacademy.org".
 func CountedTotalSeconds(appTotals, webTotals []UsageTotal, exclusions []Exclusion) int {
-	excluded := make(map[string]bool)
-	for _, e := range exclusions {
-		excluded[string(e.Kind)+":"+e.Subject] = true
+	isExcluded := func(kind Kind, subject string) bool {
+		for _, e := range exclusions {
+			if e.Kind == kind && MatchesDomain(e.Subject, subject) {
+				return true
+			}
+		}
+		return false
 	}
 
 	var total int
+	// Add non-excluded app seconds.
 	for _, ut := range appTotals {
-		if !excluded[string(KindApp)+":"+ut.Subject] {
+		if !isExcluded(KindApp, ut.Subject) {
 			total += ut.Seconds
 		}
 	}
+	// Subtract excluded web seconds (whitelisted browsing never digs the
+	// deficit deeper).
 	for _, ut := range webTotals {
-		if !excluded[string(KindWeb)+":"+ut.Subject] {
-			total += ut.Seconds
+		if isExcluded(KindWeb, ut.Subject) {
+			total -= ut.Seconds
 		}
 	}
+
 	if total < 0 {
 		return 0
 	}

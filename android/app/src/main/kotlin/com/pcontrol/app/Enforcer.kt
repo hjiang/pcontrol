@@ -1,5 +1,6 @@
 package com.pcontrol.app
 
+import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -65,7 +66,14 @@ object Enforcer {
             } catch (e: Exception) {
                 false
             }
-        }
+        },
+        /**
+         * Sites still allowed after the daily limit (web exclusions from
+         * CachedPolicy). When non-empty and the block is the total-limit /
+         * restricted-mode kind, BlockedActivity shows them so the kid knows
+         * what still works. Per Stage 6 task 3.
+         */
+        allowedSites: List<String> = emptyList()
     ) {
         when (verdict) {
             Verdict.ALLOW -> { /* no action */ }
@@ -78,17 +86,15 @@ object Enforcer {
             }
 
             Verdict.BLOCK_APP -> {
-                launchBlockedActivity(context, limitMessage, subject, startActivity)
+                launchBlockedActivity(context, limitMessage, subject, startActivity, allowedSites)
             }
 
             Verdict.BLOCK_WEB -> {
                 val backClosed = performBack()
-                if (backClosed) {
-                    // Back action succeeded; the page was closed/navigated away
-                } else {
+                if (!backClosed) {
                     // Back did not remove the blocked content — fall back to
-                    // full-screen BlockedActivity (2-strikes rule)
-                    launchBlockedActivity(context, limitMessage, subject, startActivity)
+                    // full-screen BlockedActivity (2-strikes rule per §6).
+                    launchBlockedActivity(context, limitMessage, subject, startActivity, allowedSites)
                 }
             }
         }
@@ -156,14 +162,17 @@ object Enforcer {
         startActivity(intent)
     }
 
+    /**
+     * Performs `performGlobalAction(GLOBAL_ACTION_BACK)` on the running
+     * [BrowserAccessibilityService] (per §6, the accessibility service owns
+     * the BACK action). Returns true if the action was dispatched; the caller
+     * decides two-strikes fallback to [BlockedActivity] based on whether the
+     * blocked content actually disappears.
+     */
     private fun performGlobalBack(context: Context): Boolean {
         return try {
-            @Suppress("DEPRECATION")
-            val service = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager?
-            service?.let {
-                // Use performGlobalAction if available, otherwise return false
-                false
-            } ?: false
+            val service = BrowserAccessibilityService.instance ?: return false
+            service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         } catch (e: Exception) {
             false
         }

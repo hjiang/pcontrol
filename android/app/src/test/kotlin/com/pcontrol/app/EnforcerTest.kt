@@ -21,6 +21,8 @@ class EnforcerTest {
     fun setUp() {
         // Reset warned set between tests to avoid cross-test interference
         Enforcer.resetWarnedSet()
+        // Ensure no leftover accessibility-service instance leaks across tests
+        BrowserAccessibilityService.instance = null
     }
 
     @Test
@@ -43,6 +45,41 @@ class EnforcerTest {
     }
 
     @Test
+    fun `BLOCK_WEB falls back when no accessibility service is running`() {
+        // Regression guard for §6: without a running BrowserAccessibilityService
+        // (instance == null) the default performBack returns false and the
+        // 2-strikes fallback to BlockedActivity fires.
+        BrowserAccessibilityService.instance = null
+        var fallbackLaunched = false
+        Enforcer.handleVerdict(
+            context = context,
+            verdict = Verdict.BLOCK_WEB,
+            subject = "youtube.com",
+            label = "YouTube",
+            day = "2026-07-03",
+            limitMessage = "blocked",
+            startActivity = { _ -> fallbackLaunched = true; true }
+        )
+        assertEquals(true, fallbackLaunched) // 2-strikes → BlockedActivity
+    }
+
+    @Test
+    fun `BLOCK_WEB with injected successful back skips BlockedActivity`() {
+        var fallbackLaunched = false
+        Enforcer.handleVerdict(
+            context = context,
+            verdict = Verdict.BLOCK_WEB,
+            subject = "youtube.com",
+            label = "YouTube",
+            day = "2026-07-03",
+            limitMessage = "blocked",
+            performBack = { true }, // back action reported it removed the page
+            startActivity = { _ -> fallbackLaunched = true; true }
+        )
+        assertEquals(false, fallbackLaunched) // back succeeded → no fallback
+    }
+
+    @Test
     fun `BLOCK_APP launches BlockedActivity`() {
         val intentsStarted = mutableListOf<Intent>()
         Enforcer.handleVerdict(
@@ -61,6 +98,29 @@ class EnforcerTest {
         assertEquals(1, intentsStarted.size)
         val intent = intentsStarted.first()
         assertEquals(Intent.FLAG_ACTIVITY_NEW_TASK, intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    @Test
+    fun `BLOCK_APP passes allowed sites to BlockedActivity intent`() {
+        val intentsStarted = mutableListOf<Intent>()
+        Enforcer.handleVerdict(
+            context = context,
+            verdict = Verdict.BLOCK_APP,
+            subject = "com.example.Game",
+            label = "Game",
+            day = "2026-07-03",
+            limitMessage = "Game: 30 min limit reached",
+            allowedSites = listOf("khanacademy.org"),
+            startActivity = { intent ->
+                intentsStarted.add(intent)
+                true
+            }
+        )
+        assertEquals(1, intentsStarted.size)
+        assertEquals(
+            arrayListOf("khanacademy.org"),
+            intentsStarted.first().getStringArrayListExtra("allowed_sites")
+        )
     }
 
     @Test

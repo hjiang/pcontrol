@@ -8,9 +8,11 @@ func TestCountedTotal_NoExclusions(t *testing.T) {
 	apps := []UsageTotal{{KindApp, "com.game", "Game", 600}}
 	web := []UsageTotal{{KindWeb, "youtube.com", "YouTube", 300}}
 	total := CountedTotalSeconds(apps, web, nil)
-	// 600 + 300 = 900
-	if total != 900 {
-		t.Errorf("expected 900, got %d", total)
+	// §6: web time is a SUBSET of app time, so only non-excluded app counts;
+	// non-excluded web is neither added nor subtracted.
+	// countedTotal = 600 (app) = 600
+	if total != 600 {
+		t.Errorf("expected 600, got %d", total)
 	}
 }
 
@@ -21,10 +23,12 @@ func TestCountedTotal_ExcludedAppSubtracted(t *testing.T) {
 	}
 	web := []UsageTotal{{KindWeb, "youtube.com", "YouTube", 300}}
 	exclusions := []Exclusion{{Kind: KindApp, Subject: "com.duolingo"}}
-	// 600 + 300 + (120 - 120) = 900
+	// §6: countedTotal = Σ non-excluded app − Σ excluded web
+	// = 600 (game) − 0 (no excluded web) = 600
+	// duolingo excluded app, youtube non-excluded web (subset, not added)
 	total := CountedTotalSeconds(apps, web, exclusions)
-	if total != 900 {
-		t.Errorf("expected 900, got %d", total)
+	if total != 600 {
+		t.Errorf("expected 600, got %d", total)
 	}
 }
 
@@ -35,10 +39,12 @@ func TestCountedTotal_ExcludedDomainSubtracts(t *testing.T) {
 		{KindWeb, "khanacademy.org", "Khan", 60},
 	}
 	exclusions := []Exclusion{{Kind: KindWeb, Subject: "khanacademy.org"}}
-	// 600 + 120 + (60 - 60) = 720
+	// §6: countedTotal = Σ non-excluded app − Σ excluded web
+	// = 600 (chrome) − 60 (khan) = 540
+	// youtube is non-excluded web → subset of chrome time, not added
 	total := CountedTotalSeconds(apps, web, exclusions)
-	if total != 720 {
-		t.Errorf("expected 720, got %d", total)
+	if total != 540 {
+		t.Errorf("expected 540, got %d", total)
 	}
 }
 
@@ -46,9 +52,9 @@ func TestCountedTotal_ResultClampedAtZero(t *testing.T) {
 	apps := []UsageTotal{{KindApp, "com.app", "App", 10}}
 	web := []UsageTotal{{KindWeb, "excluded.com", "Excluded", 100}}
 	exclusions := []Exclusion{{Kind: KindWeb, Subject: "excluded.com"}}
-	// 10 + (100 - 100) = 10, not negative even though excluded > counted
-	if total := CountedTotalSeconds(apps, web, exclusions); total != 10 {
-		t.Errorf("expected 10, got %d", total)
+	// §6: countedTotal = 10 (app) − 100 (excluded web) = −90 → clamped to 0
+	if total := CountedTotalSeconds(apps, web, exclusions); total != 0 {
+		t.Errorf("expected 0 (clamped), got %d", total)
 	}
 }
 
@@ -64,18 +70,32 @@ func TestCountedTotal_MultipleExclusions(t *testing.T) {
 		{Kind: KindApp, Subject: "com.c"},
 		{Kind: KindWeb, Subject: "site.com"},
 	}
-	// counted: 100 (A) + 200 (B) + 300 (C) + 50 (site) = 650
-	// excluded: 100 (A) + 300 (C) + 50 (site) = 450
-	// total: 650 - 450 = 200
+	// §6: countedTotal = Σ non-excluded app − Σ excluded web
+	// = 200 (B) − 50 (site, excluded web) = 150
 	total := CountedTotalSeconds(apps, web, exclusions)
-	if total != 200 {
-		t.Errorf("expected 200, got %d", total)
+	if total != 150 {
+		t.Errorf("expected 150, got %d", total)
 	}
 }
 
 func TestCountedTotal_Empty(t *testing.T) {
 	if total := CountedTotalSeconds(nil, nil, nil); total != 0 {
 		t.Errorf("expected 0, got %d", total)
+	}
+}
+
+// §6: exclusions match by suffix on dot boundaries, so an exclusion on
+// "khanacademy.org" must also subtract a "www.khanacademy.org" web total.
+func TestCountedTotal_ExclusionSuffixMatches(t *testing.T) {
+	apps := []UsageTotal{{KindApp, "com.android.chrome", "Chrome", 600}}
+	web := []UsageTotal{
+		{KindWeb, "www.khanacademy.org", "Khan", 90},
+	}
+	exclusions := []Exclusion{{Kind: KindWeb, Subject: "khanacademy.org"}}
+	// countedTotal = 600 (chrome) − 90 (www.khanacademy.org matched by suffix)
+	total := CountedTotalSeconds(apps, web, exclusions)
+	if total != 510 {
+		t.Errorf("expected 510, got %d", total)
 	}
 }
 

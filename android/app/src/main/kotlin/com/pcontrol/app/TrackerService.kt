@@ -68,7 +68,9 @@ class TrackerService : Service() {
     private fun startTicks() {
         tickJob?.cancel()
         tickJob = scope.launch {
-            lastSyncTime = System.currentTimeMillis()
+            // §9: sync immediately on service start, then every 60s.
+            // 0 forces the first post-tick sync check to fire right away.
+            lastSyncTime = 0L
 
             while (true) {
                 try {
@@ -205,6 +207,12 @@ class TrackerService : Service() {
 
         val label = pkg
 
+        // Web exclusions = sites still allowed after the daily limit (Stage 6 task 3).
+        val allowedSites = policy?.exclusions
+            ?.filter { it.kind == "web" }
+            ?.map { it.subject }
+            ?: emptyList()
+
         // Evaluate app verdict (with browser context for restricted mode)
         val appSeconds = allCounters
             .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
@@ -218,7 +226,8 @@ class TrackerService : Service() {
                 subject = pkg,
                 label = label,
                 day = day,
-                limitMessage = limitMessage
+                limitMessage = limitMessage,
+                allowedSites = allowedSites
             )
         }
 
@@ -241,7 +250,8 @@ class TrackerService : Service() {
                 subject = domain ?: pkg,
                 label = label,
                 day = day,
-                limitMessage = limitMessage
+                limitMessage = limitMessage,
+                allowedSites = allowedSites
             )
         }
     }
