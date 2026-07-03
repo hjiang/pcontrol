@@ -46,6 +46,10 @@ class TrackerService : Service() {
 
     // Browser foreground session tracking
     private var browserForegroundPkg: String? = null
+    // Tracks the last blocked web domain for strike reset logic
+    private var lastBlockedWebSubject: String? = null
+    // Tracks the current day for rollover detection
+    private var lastDay: String = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -63,6 +67,21 @@ class TrackerService : Service() {
     override fun onDestroy() {
         tickJob?.cancel()
         super.onDestroy()
+    }
+
+    /** Cache for resolved application labels. */
+    private val labelCache = mutableMapOf<String, String>()
+
+    private fun resolveLabel(pkg: String): String {
+        labelCache[pkg]?.let { return it }
+        return try {
+            val appInfo = packageManager.getApplicationInfo(pkg, 0)
+            val label = packageManager.getApplicationLabel(appInfo).toString()
+            labelCache[pkg] = label
+            label
+        } catch (e: Exception) {
+            pkg // fallback to package name
+        }
     }
 
     private fun startTicks() {
@@ -155,7 +174,7 @@ class TrackerService : Service() {
 
         // Record app usage
         val db = AppDatabase.getInstance(this)
-        val label = foregroundPkg // Use package name as label; can be refined
+        val label = resolveLabel(foregroundPkg)
 
         incrementCounter(db, day, "app", foregroundPkg, label)
 
@@ -172,6 +191,19 @@ class TrackerService : Service() {
             }
         } else {
             ticksWithoutDomain = 0
+        }
+
+        // ── Day rollover: clean up old warned entries ──────────────
+        val dbForRollover = AppDatabase.getInstance(this)
+        if (day != lastDay) {
+            if (lastDay.isNotEmpty()) {
+                try {
+                    kotlinx.coroutines.runBlocking {
+                        dbForRollover.warnedSubjectDao().deleteOtherDays(day)
+                    }
+                } catch (_: Exception) {}
+            }
+            lastDay = day
         }
 
         // ── Enforcement (PolicyEngine + Enforcer) ───────────────────
@@ -216,7 +248,8 @@ class TrackerService : Service() {
         // Evaluate app verdict (with browser context for restricted mode)
         val appSeconds = allCounters
             .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
-        val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy, browserContext)
+        val neverBlockSet = NeverBlockResolver.resolve(this)
+        val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy, browserContext, neverBlockSet)
 
         if (appVerdict != com.pcontrol.core.Verdict.ALLOW) {
             val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
@@ -227,7 +260,9 @@ class TrackerService : Service() {
                 label = label,
                 day = day,
                 limitMessage = limitMessage,
-                allowedSites = allowedSites
+                allowedSites = allowedSites,
+                isAlreadyWarned = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().exists(d, s) > 0 } },
+                recordWarning = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().insert(com.pcontrol.app.db.WarnedSubjectEntity(d, s)) } }
             )
         }
 
@@ -251,8 +286,22 @@ class TrackerService : Service() {
                 label = label,
                 day = day,
                 limitMessage = limitMessage,
-                allowedSites = allowedSites
+                allowedSites = allowedSites,
+                isAlreadyWarned = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().exists(d, s) > 0 } },
+                recordWarning = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().insert(com.pcontrol.app.db.WarnedSubjectEntity(d, s)) } }
             )
+        }
+
+        // Reset BLOCK_WEB strikes when verdict changes or subject changes
+        val webSubject = domain ?: pkg
+        if (webVerdict != com.pcontrol.core.Verdict.BLOCK_WEB && lastBlockedWebSubject != null) {
+            Enforcer.webBlockStrikes.reset(lastBlockedWebSubject!!)
+            lastBlockedWebSubject = null
+        } else if (webVerdict == com.pcontrol.core.Verdict.BLOCK_WEB) {
+            if (lastBlockedWebSubject != null && lastBlockedWebSubject != webSubject) {
+                Enforcer.webBlockStrikes.reset(lastBlockedWebSubject!!)
+            }
+            lastBlockedWebSubject = webSubject
         }
     }
 
@@ -350,6 +399,12 @@ class TrackerService : Service() {
         val unsynced = db.usageCounterDao().getUnsynced()
         if (unsynced.isEmpty()) return
 
+        // Snapshot the seconds value BEFORE the network call so we can
+        // restore exactly what was sent even if a tick fires mid-request (§9).
+        val snapshotSeconds = unsynced.associate { c ->
+            Triple(c.day, c.kind, c.subject) to c.seconds
+        }
+
         // Build sync request from unsynced deltas
         val events = unsynced.map { counter ->
             val delta = counter.seconds - counter.syncedSeconds
@@ -381,9 +436,10 @@ class TrackerService : Service() {
         val response = client.sync(request)
         if (response == null) return // Network error, retry next sync
 
-        // Mark synced counters
+        // Mark synced counters using the snapshot values (not current seconds)
         for (counter in unsynced) {
-            db.usageCounterDao().markSynced(counter.day, counter.kind, counter.subject)
+            val sent = snapshotSeconds[Triple(counter.day, counter.kind, counter.subject)] ?: counter.seconds
+            db.usageCounterDao().markSynced(counter.day, counter.kind, counter.subject, sent)
         }
 
         // Process policy update

@@ -14,18 +14,14 @@ package com.pcontrol.core
 object PolicyEngine {
 
     /**
-     * Package names that are NEVER blocked, regardless of any limit.
-     * §6 rule 1: launcher, system-ui, dialer, settings, and pcontrol itself.
+     * Base packages that must always be in the never-block set.
+     * The caller (TrackerService) constructs the full set by adding the
+     * runtime-resolved default launcher and dialer via [NeverBlockResolver].
      */
-    val NEVER_BLOCK_PACKAGES = setOf(
-        "com.android.launcher",
+    val BASE_NEVER_BLOCK_PACKAGES = setOf(
         "com.android.systemui",
-        "com.android.dialer",
         "com.android.settings",
         "com.pcontrol.app",
-        "com.oneplus.launcher",
-        "com.sec.android.app.launcher",
-        "com.google.android.apps.nexuslauncher",
     )
 
     /**
@@ -37,6 +33,9 @@ object PolicyEngine {
 
     /**
      * Evaluates the verdict for an app foreground event.
+     *
+     * All rules are evaluated first; the first BLOCK in rule order wins,
+     * then the first WARN, else ALLOW (§6).
      *
      * @param pkg the foreground package name
      * @param appSeconds total tracked seconds for this package today
@@ -51,30 +50,45 @@ object PolicyEngine {
         appSeconds: Int,
         allCounters: List<UsageCounter>,
         policy: PolicyV2?,
-        browser: BrowserContext? = null
+        browser: BrowserContext? = null,
+        neverBlock: Set<String> = BASE_NEVER_BLOCK_PACKAGES
     ): Verdict {
         // Rule 1: never-block list
-        if (pkg in NEVER_BLOCK_PACKAGES) return Verdict.ALLOW
+        if (pkg in neverBlock) return Verdict.ALLOW
 
         if (policy == null) return Verdict.ALLOW
 
-        // Rule 2: per-app limit (applies even if excluded)
-        val appLimit = policy.limits.firstOrNull { it.kind == "app" && matchesSubject(it.subject, pkg) }
+        // Rule 2: per-app limit (applies even if excluded) — exact match only
+        var r2Verdict = Verdict.ALLOW
+        val appLimit = policy.limits.firstOrNull { it.kind == "app" && matchesSubject(it.subject, pkg, "app") }
         if (appLimit != null) {
             val limitSeconds = appLimit.dailyLimitMinutes * 60
-            if (appSeconds >= limitSeconds) return Verdict.BLOCK_APP
-            val warnSeconds = (limitSeconds * policy.warnThresholdPercent / 100)
-            if (appSeconds >= warnSeconds) return Verdict.WARN
+            if (appSeconds >= limitSeconds) {
+                r2Verdict = Verdict.BLOCK_APP
+            } else {
+                val warnSeconds = (limitSeconds * policy.warnThresholdPercent / 100)
+                if (appSeconds >= warnSeconds) r2Verdict = Verdict.WARN
+            }
         }
 
         // Rule 4: total limit
-        return evaluateAppTotalLimit(pkg = pkg, allCounters = allCounters, policy = policy, browser = browser)
+        val r4Verdict = evaluateAppTotalLimit(pkg = pkg, allCounters = allCounters, policy = policy, browser = browser)
+
+        // Combine: first BLOCK wins, then first WARN, else ALLOW
+        if (r2Verdict == Verdict.BLOCK_APP) return Verdict.BLOCK_APP
+        if (r4Verdict == Verdict.BLOCK_APP) return Verdict.BLOCK_APP
+        if (r2Verdict == Verdict.WARN) return Verdict.WARN
+        if (r4Verdict == Verdict.WARN) return Verdict.WARN
+        return Verdict.ALLOW
     }
 
     /**
      * Evaluates the verdict for a web-domain event within a browser.
      * Called only for known browsers with a readable domain (or for
      * the grace-period evaluation when domain is null).
+     *
+     * All rules are evaluated first; the first BLOCK in rule order wins,
+     * then the first WARN, else ALLOW (§6).
      *
      * @param domain the registrable domain currently in the browser URL bar,
      *               or null if the URL bar is unreadable this tick
@@ -96,13 +110,15 @@ object PolicyEngine {
 
         // Stage 6: null domain — URL unreadable this tick
         if (domain == null) {
+            // No per-site limit to evaluate (no domain).
+            // Evaluate total limit only.
             val total = countedTotal(allCounters, policy.exclusions)
             val totalLimitSeconds = policy.totalDailyLimitMinutes?.times(60) ?: return Verdict.ALLOW
 
             if (total < totalLimitSeconds) {
-                // Total NOT hit — no restriction. Missing domain just means
-                // no web time this tick (app time still counts).
-                return Verdict.ALLOW
+                // Total NOT hit — no restriction, but check WARN band
+                val totalWarnSeconds = (totalLimitSeconds * policy.warnThresholdPercent / 100)
+                return if (total >= totalWarnSeconds) Verdict.WARN else Verdict.ALLOW
             }
 
             // Total IS hit — restricted mode with grace period
@@ -114,28 +130,39 @@ object PolicyEngine {
         }
 
         // Domain is readable — Rule 3: per-site limit (suffix match)
-        val siteLimit = policy.limits.firstOrNull { it.kind == "web" && matchesSubject(it.subject, domain) }
+        var r3Verdict = Verdict.ALLOW
+        val siteLimit = policy.limits.firstOrNull { it.kind == "web" && matchesSubject(it.subject, domain, "web") }
         if (siteLimit != null) {
             val limitSeconds = siteLimit.dailyLimitMinutes * 60
-            if (webSeconds >= limitSeconds) return Verdict.BLOCK_WEB
-            val warnSeconds = (limitSeconds * policy.warnThresholdPercent / 100)
-            if (webSeconds >= warnSeconds) return Verdict.WARN
+            if (webSeconds >= limitSeconds) {
+                r3Verdict = Verdict.BLOCK_WEB
+            } else {
+                val warnSeconds = (limitSeconds * policy.warnThresholdPercent / 100)
+                if (webSeconds >= warnSeconds) r3Verdict = Verdict.WARN
+            }
         }
 
         // Rule 4: total limit with restricted browsing mode
-        val total = countedTotal(allCounters, policy.exclusions)
-        if (policy.totalDailyLimitMinutes == null) return Verdict.ALLOW
-        val totalLimitSeconds = policy.totalDailyLimitMinutes * 60
+        var r4Verdict = Verdict.ALLOW
+        if (policy.totalDailyLimitMinutes != null) {
+            val total = countedTotal(allCounters, policy.exclusions)
+            val totalLimitSeconds = policy.totalDailyLimitMinutes * 60
 
-        if (total >= totalLimitSeconds) {
-            // Restricted browsing mode: domain excluded → ALLOW, else BLOCK_WEB
-            val isExcluded = policy.exclusions.any { it.kind == "web" && matchesSubject(it.subject, domain) }
-            return if (isExcluded) Verdict.ALLOW else Verdict.BLOCK_WEB
+            if (total >= totalLimitSeconds) {
+                // Restricted browsing mode: domain excluded → ALLOW, else BLOCK_WEB
+                val isExcluded = policy.exclusions.any { it.kind == "web" && matchesSubject(it.subject, domain, "web") }
+                if (!isExcluded) r4Verdict = Verdict.BLOCK_WEB
+            } else {
+                val totalWarnSeconds = (totalLimitSeconds * policy.warnThresholdPercent / 100)
+                if (total >= totalWarnSeconds) r4Verdict = Verdict.WARN
+            }
         }
 
-        val totalWarnSeconds = (totalLimitSeconds * policy.warnThresholdPercent / 100)
-        if (total >= totalWarnSeconds) return Verdict.WARN
-
+        // Combine: first BLOCK wins, then first WARN, else ALLOW
+        if (r3Verdict == Verdict.BLOCK_WEB) return Verdict.BLOCK_WEB
+        if (r4Verdict == Verdict.BLOCK_WEB) return Verdict.BLOCK_WEB
+        if (r3Verdict == Verdict.WARN) return Verdict.WARN
+        if (r4Verdict == Verdict.WARN) return Verdict.WARN
         return Verdict.ALLOW
     }
 
@@ -154,11 +181,11 @@ object PolicyEngine {
         val excludedWeb = exclusions.filter { it.kind == "web" }.map { it.subject }.toSet()
 
         val appTotal = allCounters
-            .filter { it.kind == "app" && !isExcluded(it.subject, excludedApps) }
+            .filter { it.kind == "app" && !isExcluded(it.subject, excludedApps, "app") }
             .sumOf { it.seconds }
 
         val webExcludedTotal = allCounters
-            .filter { it.kind == "web" && isExcluded(it.subject, excludedWeb) }
+            .filter { it.kind == "web" && isExcluded(it.subject, excludedWeb, "web") }
             .sumOf { it.seconds }
 
         return maxOf(0, appTotal - webExcludedTotal)
@@ -192,17 +219,24 @@ object PolicyEngine {
         return Verdict.ALLOW
     }
 
-    /** Suffix matching on dot boundaries: `youtube.com` matches `m.youtube.com`. */
-    private fun matchesSubject(pattern: String, subject: String): Boolean {
+    /**
+     * Suffix matching on dot boundaries for web domains only:
+     * `youtube.com` matches `m.youtube.com`.
+     * For app subjects, exact equality is required to prevent
+     * `android.chrome` from matching `com.android.chrome` (§7).
+     */
+    private fun matchesSubject(pattern: String, subject: String, kind: String): Boolean {
+        if (kind == "app") return pattern == subject
+        // Web: suffix match on dot boundaries
         if (pattern == subject) return true
         return subject.endsWith(".$pattern")
     }
 
-    private fun isExcluded(subject: String, exclusionSet: Set<String>): Boolean {
-        return exclusionSet.any { matchesSubject(it, subject) }
+    private fun isExcluded(subject: String, exclusionSet: Set<String>, kind: String): Boolean {
+        return exclusionSet.any { matchesSubject(it, subject, kind) }
     }
 
     private fun isInExclusions(subject: String, exclusions: List<ExclusionDef>): Boolean {
-        return exclusions.any { it.kind == "app" && matchesSubject(it.subject, subject) }
+        return exclusions.any { it.kind == "app" && matchesSubject(it.subject, subject, "app") }
     }
 }

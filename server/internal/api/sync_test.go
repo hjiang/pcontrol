@@ -125,6 +125,42 @@ func TestSync_OversizedBody(t *testing.T) {
 	}
 }
 
+func TestSync_InvalidEventKindReturns400(t *testing.T) {
+	_, handler, rawToken := newTestSyncEnv(t)
+
+	body := `{
+		"device_time": "2026-07-03T15:04:05+08:00",
+		"policy_version": 0,
+		"events": [
+			{"event_id": "u1", "kind": "invalid_kind", "subject": "com.game", "label": "Game", "day": "2026-07-03", "started_at": "2026-07-03T14:58:00+08:00", "duration_seconds": 120}
+		]
+	}`
+
+	rec := doSyncRequest(t, handler, rawToken, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid kind, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSync_MissingEventIdReturns400(t *testing.T) {
+	_, handler, rawToken := newTestSyncEnv(t)
+
+	body := `{
+		"device_time": "2026-07-03T15:04:05+08:00",
+		"policy_version": 0,
+		"events": [
+			{"event_id": "", "kind": "app", "subject": "com.game", "label": "Game", "day": "2026-07-03", "started_at": "2026-07-03T14:58:00+08:00", "duration_seconds": 120}
+		]
+	}`
+
+	rec := doSyncRequest(t, handler, rawToken, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty event_id, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSync_Unauthenticated(t *testing.T) {
 	_, handler, _ := newTestSyncEnv(t)
 

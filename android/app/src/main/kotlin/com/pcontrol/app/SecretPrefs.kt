@@ -17,6 +17,8 @@ class SecretPrefs private constructor(
 ) {
     companion object {
         private const val ENCRYPTED_NAME = "pcontrol_encrypted"
+        private const val KEY_SERVER_URL = "server_url"
+        private const val KEY_DEVICE_TOKEN = "device_token"
 
         @Volatile
         private var instance: SecretPrefs? = null
@@ -55,9 +57,4 @@ class SecretPrefs private constructor(
 
     /** True when both server URL and device token are set. */
     fun isConfigured(): Boolean = getServerUrl().isNotEmpty() && getDeviceToken().isNotEmpty()
-
-    private companion object {
-        private const val KEY_SERVER_URL = "server_url"
-        private const val KEY_DEVICE_TOKEN = "device_token"
-    }
 }

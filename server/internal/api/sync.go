@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -78,9 +78,23 @@ func HandleSync(s *store.Store, mux *http.ServeMux) {
 		events := make([]domain.Event, 0, len(req.Events))
 		acceptedIDs := make([]string, 0, len(req.Events))
 		for _, se := range req.Events {
+			// Validate required fields
+			if se.EventID == "" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if se.Kind != "app" && se.Kind != "web" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if se.Day == "" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+
 			startedAt, err := time.Parse(time.RFC3339, se.StartedAt)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("invalid started_at: %s", se.StartedAt), http.StatusBadRequest)
+				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 			events = append(events, domain.Event{
@@ -99,13 +113,14 @@ func HandleSync(s *store.Store, mux *http.ServeMux) {
 		// Insert events (duplicates are silently ignored via ON CONFLICT DO NOTHING)
 		if len(events) > 0 {
 			if err := s.InsertEvents(events); err != nil {
-				http.Error(w, fmt.Sprintf("insert events: %v", err), http.StatusInternalServerError)
+				log.Printf("insert events: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
 		}
 
 		// Touch last_seen
-		s.TouchLastSeen(deviceID, time.Now())
+		_ = s.TouchLastSeen(deviceID, time.Now())
 
 		// Build response
 		resp := syncResponse{
@@ -121,7 +136,8 @@ func HandleSync(s *store.Store, mux *http.ServeMux) {
 		if req.PolicyVersion != currentVersion {
 			policy, err := s.GetPolicy(deviceID)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("get policy: %v", err), http.StatusInternalServerError)
+				log.Printf("get policy: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
 			resp.Policy = policyToJSON(policy)

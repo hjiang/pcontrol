@@ -24,13 +24,11 @@ object Enforcer {
     private const val WARN_CHANNEL_ID = "pcontrol_warn"
     private const val WARN_NOTIFICATION_ID_BASE = 1000
 
-    /**
-     * Tracks which (subject, day) pairs have already been warned today,
-     * so each subject gets at most one warning notification.
-     */
+    /** In-memory fallback for WARN dedupe when no persistence callback is provided. */
     private val warnedKeys = mutableSetOf<String>()
 
-    /** Reset at midnight / day change. Called by TrackerService on day rollover. */
+    /** Reset in-memory warned keys. Exposed for testing only. */
+    @JvmStatic
     fun resetWarnedSet() {
         warnedKeys.clear()
     }
@@ -50,7 +48,12 @@ object Enforcer {
      * @param startActivity lambda that starts an activity; returns true on success.
      *                      Default: launches the intent via [Context.startActivity].
      */
+    /** Tracks consecutive BLOCK_WEB strikes for 2-strikes fallback (§6). */
+    @JvmField
+    val webBlockStrikes = WebBlockStrikes()
+
     @JvmStatic
+    @JvmOverloads
     fun handleVerdict(
         context: Context,
         verdict: Verdict,
@@ -73,16 +76,27 @@ object Enforcer {
          * restricted-mode kind, BlockedActivity shows them so the kid knows
          * what still works. Per Stage 6 task 3.
          */
-        allowedSites: List<String> = emptyList()
+        allowedSites: List<String> = emptyList(),
+        /** Check if subject was already warned today (may block briefly for DB I/O). */
+        isAlreadyWarned: ((day: String, subject: String) -> Boolean)? = null,
+        /** Record that subject was warned today (may block briefly for DB I/O). */
+        recordWarning: ((day: String, subject: String) -> Unit)? = null
     ) {
         when (verdict) {
             Verdict.ALLOW -> { /* no action */ }
 
             Verdict.WARN -> {
-                val warnKey = "$subject|$day"
-                if (warnKey in warnedKeys) return // Already warned today
-                warnedKeys.add(warnKey)
-                postWarningNotification(context, subject, label, limitMessage)
+                if (isAlreadyWarned != null && recordWarning != null) {
+                    // Persistence path (used by TrackerService)
+                    if (isAlreadyWarned(day, subject)) return
+                    recordWarning(day, subject)
+                    postWarningNotification(context, subject, label, limitMessage)
+                } else {
+                    // Fallback: in-memory dedupe (used by unit tests)
+                    if (warnedKeys.contains("$subject|$day")) return
+                    warnedKeys.add("$subject|$day")
+                    postWarningNotification(context, subject, label, limitMessage)
+                }
             }
 
             Verdict.BLOCK_APP -> {
@@ -90,11 +104,13 @@ object Enforcer {
             }
 
             Verdict.BLOCK_WEB -> {
-                val backClosed = performBack()
-                if (!backClosed) {
-                    // Back did not remove the blocked content — fall back to
-                    // full-screen BlockedActivity (2-strikes rule per §6).
+                webBlockStrikes.recordStrike(subject, day)
+                if (webBlockStrikes.shouldFallback(subject, day)) {
+                    // 2 back-presses did not navigate away (§6 2-strikes rule)
                     launchBlockedActivity(context, limitMessage, subject, startActivity, allowedSites)
+                } else {
+                    // Still within first 2 strikes — perform BACK
+                    performBack()
                 }
             }
         }

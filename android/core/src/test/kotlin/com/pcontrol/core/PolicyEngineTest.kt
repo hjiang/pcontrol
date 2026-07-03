@@ -18,12 +18,20 @@ class PolicyEngineTest {
             UsageCounter("2026-07-03", "app", "com.launcher", "Launcher", 120, 0)
         )
 
-        for (pkg in PolicyEngine.NEVER_BLOCK_PACKAGES) {
+        val neverBlock = PolicyEngine.BASE_NEVER_BLOCK_PACKAGES + setOf(
+            "com.android.launcher",
+            "com.android.dialer",
+            "com.oneplus.launcher",
+            "com.sec.android.app.launcher",
+            "com.google.android.apps.nexuslauncher",
+        )
+        for (pkg in neverBlock) {
             val result = PolicyEngine.evaluateApp(
                 pkg = pkg,
                 appSeconds = counters.firstOrNull { it.subject == pkg }?.seconds ?: 999999,
                 allCounters = counters,
-                policy = policy
+                policy = policy,
+                neverBlock = neverBlock
             )
             assertEquals(Verdict.ALLOW, result, "Should never block $pkg")
         }
@@ -748,6 +756,136 @@ class PolicyEngineTest {
         assertEquals(Verdict.WARN, PolicyEngine.evaluateWeb(
             domain = "youtube.com",
             webSeconds = 1620,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    // ── F2: verdict ordering — BLOCK beats WARN ────────────────────
+
+    @Test
+    fun `per-app WARN band but total limit hit returns BLOCK_APP`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 60,
+            limits = listOf(LimitDef("app", "com.example.Game", 30)),
+            exclusions = emptyList()
+        )
+        // App in per-app WARN band (27/30 = 1620/1800 = 90%)
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.example.Game", "Game", 1620, 0),
+            UsageCounter("2026-07-03", "app", "com.example.Other", "Other", 2000, 0)
+        )
+        // Total = 1620 + 2000 = 3620 > 3600 (60 min) → total limit BLOCK
+        // Per-app WARN band should not prevent total BLOCK from winning
+        assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
+            pkg = "com.example.Game",
+            appSeconds = 1620,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `per-site WARN band but total limit hit and domain not excluded returns BLOCK_WEB`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 60,
+            limits = listOf(LimitDef("web", "youtube.com", 30)),
+            exclusions = emptyList()
+        )
+        // youtube.com in per-site WARN band (27/30 min = 1620/1800s = 90%)
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.android.chrome", "Chrome", 3620, 0),
+            UsageCounter("2026-07-03", "web", "youtube.com", "YouTube", 1620, 0)
+        )
+        // Total = 3620 + 1620 = 5240 > 3600 (60 min) → total limit BLOCK
+        // Per-site WARN should not prevent total limit BLOCK_WEB from winning
+        assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
+            domain = "youtube.com",
+            webSeconds = 1620,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `per-site WARN band total limit hit domain excluded returns WARN`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 60,
+            limits = listOf(LimitDef("web", "khanacademy.org", 30)),
+            exclusions = listOf(ExclusionDef("web", "khanacademy.org"))
+        )
+        // khanacademy.org in per-site WARN band (27/30 min = 1620/1800s = 90%)
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.android.chrome", "Chrome", 3620, 0),
+            UsageCounter("2026-07-03", "web", "khanacademy.org", "Khan", 1620, 0)
+        )
+        // Total = 3620 > 3600 (60 min) → total limit hit
+        // But domain is excluded → restricted mode ALLOWs it
+        // Per-site WARN should still fire because the domain IS in its WARN band
+        assertEquals(Verdict.WARN, PolicyEngine.evaluateWeb(
+            domain = "khanacademy.org",
+            webSeconds = 1620,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    // ── F7: suffix matching for domains only ────────────────────────
+
+    @Test
+    fun `app limit on android dot chrome does not match com dot android dot chrome`() {
+        val policy = PolicyV2(
+            limits = listOf(LimitDef("app", "android.chrome", 30)),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.android.chrome", "Chrome", 1800, 0)
+        )
+
+        // "android.chrome" should NOT suffix-match "com.android.chrome"
+        assertEquals(Verdict.ALLOW, PolicyEngine.evaluateApp(
+            pkg = "com.android.chrome",
+            appSeconds = 1800,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `app exclusion on android dot chrome does not match com dot android dot chrome`() {
+        val policy = PolicyV2(
+            totalDailyLimitMinutes = 30,
+            limits = emptyList(),
+            exclusions = listOf(ExclusionDef("app", "android.chrome"))
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "app", "com.android.chrome", "Chrome", 1800, 0)
+        )
+
+        // Exclusion "android.chrome" should NOT match "com.android.chrome"
+        // Total = 1800 = 30 min → BLOCK (exclusion doesn't apply)
+        assertEquals(Verdict.BLOCK_APP, PolicyEngine.evaluateApp(
+            pkg = "com.android.chrome",
+            appSeconds = 1800,
+            allCounters = counters,
+            policy = policy
+        ))
+    }
+
+    @Test
+    fun `domain suffix matching still works for web limits`() {
+        val policy = PolicyV2(
+            limits = listOf(LimitDef("web", "youtube.com", 30)),
+            exclusions = emptyList()
+        )
+        val counters = listOf(
+            UsageCounter("2026-07-03", "web", "m.youtube.com", "YouTube", 1800, 0)
+        )
+
+        // "youtube.com" should suffix-match "m.youtube.com" for web
+        assertEquals(Verdict.BLOCK_WEB, PolicyEngine.evaluateWeb(
+            domain = "m.youtube.com",
+            webSeconds = 1800,
             allCounters = counters,
             policy = policy
         ))

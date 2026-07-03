@@ -19,8 +19,9 @@ class EnforcerTest {
 
     @Before
     fun setUp() {
-        // Reset warned set between tests to avoid cross-test interference
+        // Reset warned set and web strikes between tests to avoid cross-test interference
         Enforcer.resetWarnedSet()
+        Enforcer.webBlockStrikes.resetAll()
         // Ensure no leftover accessibility-service instance leaks across tests
         BrowserAccessibilityService.instance = null
     }
@@ -45,12 +46,25 @@ class EnforcerTest {
     }
 
     @Test
-    fun `BLOCK_WEB falls back when no accessibility service is running`() {
-        // Regression guard for §6: without a running BrowserAccessibilityService
-        // (instance == null) the default performBack returns false and the
-        // 2-strikes fallback to BlockedActivity fires.
+    fun `BLOCK_WEB falls back after three strikes when no accessibility service is running`() {
+        // Regression guard for §6 2-strikes rule: after 2 back-presses fail
+        // (strikes 1-2 perform BACK, strike 3 launches BlockedActivity).
         BrowserAccessibilityService.instance = null
         var fallbackLaunched = false
+        // Strikes 1-2: perform back (fails silently without service)
+        repeat(2) {
+            Enforcer.handleVerdict(
+                context = context,
+                verdict = Verdict.BLOCK_WEB,
+                subject = "youtube.com",
+                label = "YouTube",
+                day = "2026-07-03",
+                limitMessage = "blocked",
+                startActivity = { _ -> fallbackLaunched = true; true }
+            )
+            assertEquals(false, fallbackLaunched)
+        }
+        // Strike 3: should fall back to BlockedActivity
         Enforcer.handleVerdict(
             context = context,
             verdict = Verdict.BLOCK_WEB,
@@ -60,7 +74,7 @@ class EnforcerTest {
             limitMessage = "blocked",
             startActivity = { _ -> fallbackLaunched = true; true }
         )
-        assertEquals(true, fallbackLaunched) // 2-strikes → BlockedActivity
+        assertEquals(true, fallbackLaunched) // 3 strikes → BlockedActivity
     }
 
     @Test
@@ -141,9 +155,29 @@ class EnforcerTest {
     }
 
     @Test
-    fun `BLOCK_WEB falls back to BlockedActivity when back fails`() {
-        var backPerformed = false
+    fun `BLOCK_WEB falls back to BlockedActivity after three strikes`() {
+        var backCount = 0
         val intentsStarted = mutableListOf<Intent>()
+        // Strikes 1-2: back is attempted (returns false = page still there)
+        repeat(2) {
+            Enforcer.handleVerdict(
+                context = context,
+                verdict = Verdict.BLOCK_WEB,
+                subject = "youtube.com",
+                label = "YouTube",
+                day = "2026-07-03",
+                limitMessage = "YouTube: 15 min limit reached",
+                performBack = { backCount++; false },
+                startActivity = { intent ->
+                    intentsStarted.add(intent)
+                    true
+                }
+            )
+        }
+        assertEquals(2, backCount)
+        assertEquals(0, intentsStarted.size)
+
+        // Strike 3: should launch BlockedActivity (3 strikes → fallback)
         Enforcer.handleVerdict(
             context = context,
             verdict = Verdict.BLOCK_WEB,
@@ -151,17 +185,13 @@ class EnforcerTest {
             label = "YouTube",
             day = "2026-07-03",
             limitMessage = "YouTube: 15 min limit reached",
-            performBack = {
-                backPerformed = true
-                false // back did not close the page
-            },
+            performBack = { backCount++; false },
             startActivity = { intent ->
                 intentsStarted.add(intent)
                 true
             }
         )
 
-        assertEquals(true, backPerformed)
         assertEquals(1, intentsStarted.size)
     }
 
