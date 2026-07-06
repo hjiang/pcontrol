@@ -3,10 +3,10 @@
 # Smoke test (run from repo root):
 #   docker build -t pcontrol-server server/
 #   docker run --rm -i pcontrol-server hash-password <<< 'x'
-#   docker run --rm -e PCONTROL_ADMIN_HASH='...' -v $(pwd)/tmp:/data pcontrol-server
-#
-# The healthcheck subcommand verifies the server is alive:
-#   docker run --rm pcontrol-server healthcheck   # requires a running instance on :7285
+#   docker run -d --name pcontrol-test -p 7285:7285 \
+#     -e PCONTROL_ADMIN_HASH='...' -v $(pwd)/tmp:/data pcontrol-server
+#   docker exec pcontrol-test /pcontrold healthcheck
+#   docker stop pcontrol-test && docker rm pcontrol-test
 
 FROM golang:1.26-alpine AS build
 WORKDIR /src
