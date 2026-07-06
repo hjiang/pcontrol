@@ -32,7 +32,7 @@ jobs:
         run: |
           cd server
           mkdir -p test-output
-          go test -v -count=1 -json ./... 2>&1 | tee test-output/test.json
+          go test -count=1 -json ./... | tee test-output/test.json
 
       - name: Upload test results
         if: always()
