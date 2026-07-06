@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"pcontrol/server/internal/store"
 	"pcontrol/server/internal/web"
@@ -29,6 +30,9 @@ func main() {
 		switch flag.Arg(0) {
 		case "hash-password":
 			hashPassword()
+			return
+		case "healthcheck":
+			healthcheck()
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", flag.Arg(0))
@@ -52,6 +56,23 @@ func main() {
 	if err := http.ListenAndServe(*listen, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+// healthcheck verifies the server is alive by hitting the /healthz endpoint.
+// Intended for use as a Docker HEALTHCHECK command.
+func healthcheck() {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:7285/healthz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
+		os.Exit(1)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck returned %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
 }
 
 // hashPassword reads a password from stdin (first line) and prints its bcrypt hash.
