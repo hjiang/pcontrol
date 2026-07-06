@@ -90,7 +90,7 @@ jobs:
 
       - name: Install Android SDK (for zipalign & apksigner)
         if: steps.check_secrets.outputs.available == 'true'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Align and sign APK
         if: steps.check_secrets.outputs.available == 'true'
