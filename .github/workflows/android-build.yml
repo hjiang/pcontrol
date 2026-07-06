@@ -183,8 +183,9 @@ jobs:
           path: ${{ steps.rename.outputs.path }}
           compression-level: 0  # APK is already compressed
 
-      - name: Delete existing release (if any) for clean rerun
-        run: gh release delete "${{ steps.version.outputs.tag }}" --yes || true
+      - name: Delete existing release for clean rerun
+        if: github.run_attempt > 1
+        run: gh release delete "${{ steps.version.outputs.tag }}" --yes
         env:
           GH_TOKEN: ${{ github.token }}
 
