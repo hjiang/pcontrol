@@ -45,12 +45,12 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.5
+          gradle-version: 9.4.1
 
       - name: Generate Gradle Wrapper
         run: |
           cd android
-          gradle wrapper --gradle-version 8.5
+          gradle wrapper --gradle-version 9.4.1
 
       - name: Build release APK
         run: |

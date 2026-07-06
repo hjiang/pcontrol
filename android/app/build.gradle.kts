@@ -1,18 +1,17 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22"
-    id("com.google.devtools.ksp") version "1.9.22-1.0.17"
+    id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.devtools.ksp")
 }
 
 android {
     namespace = "com.pcontrol.app"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.pcontrol.app"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0.0"
     }
@@ -28,8 +27,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

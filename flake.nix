@@ -17,8 +17,8 @@
           };
         };
         androidComposition = pkgs.androidenv.composeAndroidPackages {
-          platformVersions = [ "34" ];
-          buildToolsVersions = [ "34.0.0" ];
+          platformVersions = [ "37" ];
+          buildToolsVersions = [ "36.0.0" "37.0.0" ];
           includeEmulator = false;
           includeSystemImages = false;
         };
@@ -39,7 +39,7 @@
           ];
           ANDROID_HOME = "${androidComposition.androidsdk}/libexec/android-sdk";
           shellHook = ''
-            export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/34.0.0/aapt2"
+            export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/37.0.0/aapt2"
             echo "pcontrol dev shell: go $(go version | cut -d' ' -f3), java $(java -version 2>&1 | head -1)"
           '';
         };
