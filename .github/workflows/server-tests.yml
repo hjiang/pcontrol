@@ -29,9 +29,11 @@ jobs:
           go-version-file: server/go.mod
 
       - name: Run all server tests
+        shell: bash
         run: |
           cd server
           mkdir -p test-output
+          set -o pipefail
           go test -count=1 -json ./... | tee test-output/test.json
 
       - name: Upload test results
