@@ -94,6 +94,38 @@ i.e. `/var/lib/pcontrol/pcontrol.db`) is the **only state to back up**.
 It contains all devices, usage events, and policy settings. Schedule regular
 backups of this single file.
 
+## CI / CD
+
+The repository includes a GitHub Actions workflow for building the Android APK:
+
+| Trigger | Workflow | Artifact |
+|---------|----------|----------|
+| Push tag `android-*` | `.github/workflows/android-build.yml` | Signed or unsigned APK |
+
+**Usage:**
+
+```sh
+# Tag an Android release
+git tag android-v1.2.3
+git push origin android-v1.2.3
+```
+
+The workflow:
+1. Builds the release APK via `./gradlew :app:assembleRelease`
+2. Signs the APK with `apksigner` (if secrets are configured)
+3. Uploads the APK as a build artifact named `pcontrol-android-<version>`
+
+### Signing setup
+
+To enable APK signing in CI, set these [repository secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions):
+
+| Secret | Value |
+|--------|-------|
+| `ANDROID_KEYSTORE_B64` | Base64-encoded JKS keystore (`base64 < release.keystore`) |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `ANDROID_KEY_ALIAS` | Key alias |
+| `ANDROID_KEY_PASSWORD` | Key password |
+
 ## License
 
 MIT
