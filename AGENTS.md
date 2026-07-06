@@ -17,7 +17,7 @@ server/           Go module `pcontrol/server` (Go 1.26)
 android/          Gradle project (Kotlin, JDK 17, Gradle 9.4.1)
   core/           Pure Kotlin JVM module — PolicyEngine, domain logic, no Android deps
   app/            Android app — TrackerService, enforcement, Room DB, sync
-deploy/           systemd unit + Caddyfile
+deploy/           systemd unit + Caddyfile + Unraid Docker template (deploy/unraid/)
 docs/plans/       Numbered plan files (01_… is the normative original spec)
 ```
 
@@ -46,8 +46,9 @@ cd server && go run ./cmd/pcontrold \
 ```
 
 CI (`.github/workflows/`): `server-tests.yml` runs `go test -count=1 ./...`,
-`android-tests.yml` runs `gradle test`, and `android-build.yml` builds a
-release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
+`android-tests.yml` runs `gradle test`, `server-image.yml` builds and
+publishes a multi-arch Docker image to GHCR, and `android-build.yml` builds
+a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 `main` only; PRs get their own runs.
 
 ## Architecture invariants

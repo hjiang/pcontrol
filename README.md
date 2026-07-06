@@ -14,7 +14,7 @@ server/          Go module (pcontrol/server) — JSON API + web dashboard
 android/         Gradle project
   core/           Pure Kotlin JVM module — policy engine, domain logic
   app/            Android app — tracking service, enforcement, sync
-deploy/          systemd unit + Caddyfile
+deploy/          systemd unit + Caddyfile + Unraid Docker template
 ```
 
 ## Development
@@ -66,6 +66,33 @@ If the derivation fails or times out on your system, install Android Studio
 manually, set `ANDROID_HOME` to the SDK path, and remove
 `androidComposition.androidsdk` from `flake.nix`.
 
+## Deployment (Docker)
+
+A `server/Dockerfile` produces a distroless container image with the
+pcontrold binary. Pre-built images are published to the GitHub Container
+Registry:
+
+```
+ghcr.io/hjiang/pcontrol-server:latest
+```
+
+### Deploy on Unraid
+
+See [`deploy/unraid/README.md`](deploy/unraid/README.md) for the full
+setup guide — install the Docker template, generate an admin password
+hash, and configure TLS for the Android client.
+
+### Deploy anywhere with Docker
+
+```sh
+docker run -d \
+  --name pcontrol \
+  -p 7285:7285 \
+  -v /path/to/appdata:/data \
+  -e PCONTROL_ADMIN_HASH='<your-bcrypt-hash>' \
+  ghcr.io/hjiang/pcontrol-server:latest
+```
+
 ## Deployment (VPS)
 
 A systemd unit and Caddyfile are provided in the `deploy/` directory.
@@ -96,10 +123,12 @@ backups of this single file.
 
 ## CI / CD
 
-The repository includes a GitHub Actions workflow for building the Android APK:
+The repository includes Docker image and Android APK workflows:
 
 | Trigger | Workflow | Artifact |
 |---------|----------|----------|
+| Push to `main` touching `server/**` | `.github/workflows/server-image.yml` | Docker image `ghcr.io/hjiang/pcontrol-server:latest` |
+| Push tag `server-v*` | `.github/workflows/server-image.yml` | Docker image `ghcr.io/hjiang/pcontrol-server:X.Y.Z` |
 | Push tag `android-*` | `.github/workflows/android-build.yml` | Signed or unsigned APK |
 
 **Usage:**
@@ -108,6 +137,10 @@ The repository includes a GitHub Actions workflow for building the Android APK:
 # Tag an Android release
 git tag android-v1.2.3
 git push origin android-v1.2.3
+
+# Tag a server image release
+git tag server-v0.1.0
+git push origin server-v0.1.0
 ```
 
 The workflow:

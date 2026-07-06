@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"pcontrol/server/internal/store"
 	"pcontrol/server/internal/web"
@@ -29,6 +31,9 @@ func main() {
 		switch flag.Arg(0) {
 		case "hash-password":
 			hashPassword()
+			return
+		case "healthcheck":
+			healthcheck()
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", flag.Arg(0))
@@ -52,6 +57,36 @@ func main() {
 	if err := http.ListenAndServe(*listen, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+// healthcheck verifies the server is alive by hitting the /healthz endpoint.
+// Intended for use as a Docker HEALTHCHECK command.
+// Accepts an optional URL argument (default: http://127.0.0.1:7285/healthz).
+func healthcheck() {
+	url := "http://127.0.0.1:7285/healthz"
+	if flag.NArg() > 1 {
+		url = flag.Arg(1)
+	}
+	if flag.NArg() > 2 {
+		fmt.Fprintf(os.Stderr, "usage: %s healthcheck [url]\n", os.Args[0])
+		os.Exit(2)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck body read failed: %v\n", err)
+		os.Exit(1)
+	}
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck returned %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
 }
 
 // hashPassword reads a password from stdin (first line) and prints its bcrypt hash.
