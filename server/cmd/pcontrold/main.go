@@ -60,9 +60,14 @@ func main() {
 
 // healthcheck verifies the server is alive by hitting the /healthz endpoint.
 // Intended for use as a Docker HEALTHCHECK command.
+// Accepts an optional URL argument (default: http://127.0.0.1:7285/healthz).
 func healthcheck() {
+	url := "http://127.0.0.1:7285/healthz"
+	if flag.NArg() > 1 {
+		url = flag.Arg(1)
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:7285/healthz")
+	resp, err := client.Get(url)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
 		os.Exit(1)
