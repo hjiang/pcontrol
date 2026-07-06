@@ -14,9 +14,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /pcontrold ./cmd/pcontrold
+# Pre-create /data owned by the distroless nonroot user (65532)
+# so anonymous/named volumes inherit the correct permissions.
+RUN mkdir -p /data && chown 65532:65532 /data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /pcontrold /pcontrold
+COPY --from=build --chown=65532:65532 /data /data
 VOLUME /data
 EXPOSE 7285
 HEALTHCHECK CMD ["/pcontrold", "healthcheck"]
