@@ -183,6 +183,11 @@ jobs:
           path: ${{ steps.rename.outputs.path }}
           compression-level: 0  # APK is already compressed
 
+      - name: Delete existing release (if any) for clean rerun
+        run: gh release delete "${{ steps.version.outputs.tag }}" --yes || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Create Release and upload APK
         uses: softprops/action-gh-release@v2
         with:
