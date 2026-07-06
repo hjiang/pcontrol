@@ -14,15 +14,16 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /pcontrold ./cmd/pcontrold
-# Pre-create /data owned by the distroless nonroot user (65532)
-# so anonymous/named volumes inherit the correct permissions.
-RUN mkdir -p /data && chown 65532:65532 /data
+# Pre-create /data world-writable so any --user (e.g. Unraid's 99:100
+# or distroless nonroot 65532) can create /data/pcontrol.db.
+RUN mkdir -p /data && chmod 777 /data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /pcontrold /pcontrold
 COPY --from=build --chown=65532:65532 /data /data
 VOLUME /data
 EXPOSE 7285
+# /healthz is an unauthenticated 200-OK endpoint implemented in web.NewRouter.
 HEALTHCHECK CMD ["/pcontrold", "healthcheck"]
 ENTRYPOINT ["/pcontrold"]
 CMD ["--listen", "0.0.0.0:7285", "--db", "/data/pcontrol.db"]

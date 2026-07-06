@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -66,13 +67,18 @@ func healthcheck() {
 	if flag.NArg() > 1 {
 		url = flag.Arg(1)
 	}
+	if flag.NArg() > 2 {
+		fmt.Fprintf(os.Stderr, "usage: %s healthcheck [url]\n", os.Args[0])
+		os.Exit(2)
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
 		os.Exit(1)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "healthcheck returned %d\n", resp.StatusCode)
 		os.Exit(1)
