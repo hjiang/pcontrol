@@ -85,9 +85,10 @@ page. Log in with the password you entered in step 1.
 
 ### 5. (Recommended) Pin appdata to cache pool
 
-SQLite does not work reliably over Unraid's FUSE `/mnt/user` layer due to
-unreliable file locking. **The appdata share must be stored on cache/pool
-storage** — this is the default for `appdata` shares in Unraid, but verify:
+SQLite does not work reliably when the appdata share lives on the array
+(where it traverses Unraid's FUSE layer, which has unreliable file
+locking). **The appdata share must be stored on cache/pool storage** —
+this is the default for `appdata` shares in Unraid, but verify:
 
 1. Go to **Settings** → **Share Settings** → **Appdata**.
 2. Set **Use cache pool** to **Prefer** or **Only**.

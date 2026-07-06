@@ -160,9 +160,10 @@ the existing actions.
   2. GHCR visibility: either make the package public (Settings →
      Packages) or add a `docker login ghcr.io` with a read-only PAT via
      Unraid's registry credentials.
-  3. Pinning the `pcontrol` appdata share to the cache pool — SQLite over
-     Unraid's FUSE `/mnt/user` layer has unreliable locking; appdata must
-     live on cache/pool storage (the Unraid default, but worth stating).
+  3. Pinning the `pcontrol` appdata share to the cache pool — SQLite on
+     the array (via Unraid's FUSE layer) has unreliable locking; appdata
+     must live on cache/pool storage (the Unraid default, but worth
+     stating).
   4. Reverse-proxy/TLS options for exposing the dashboard and
      `POST /api/v1/sync` to the phone (existing Caddy per
      `deploy/Caddyfile`, Nginx Proxy Manager, or Tailscale) — the Android
