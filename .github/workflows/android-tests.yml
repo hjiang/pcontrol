@@ -7,6 +7,8 @@ name: Android Tests
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'android/**'
       - '.github/workflows/android-tests.yml'
