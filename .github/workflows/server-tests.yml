@@ -6,9 +6,11 @@ on:
   push:
     paths:
       - 'server/**'
+      - '.github/workflows/server-tests.yml'
   pull_request:
     paths:
       - 'server/**'
+      - '.github/workflows/server-tests.yml'
 
 jobs:
   test:
@@ -30,7 +32,7 @@ jobs:
         run: |
           cd server
           mkdir -p test-output
-          go test ./... -v -count=1 -json 2>&1 | tee test-output/test.json
+          go test -v -count=1 -json ./... 2>&1 | tee test-output/test.json
 
       - name: Upload test results
         if: always()

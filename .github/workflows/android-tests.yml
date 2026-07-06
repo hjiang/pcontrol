@@ -9,9 +9,11 @@ on:
   push:
     paths:
       - 'android/**'
+      - '.github/workflows/android-tests.yml'
   pull_request:
     paths:
       - 'android/**'
+      - '.github/workflows/android-tests.yml'
 
 jobs:
   test:
