@@ -78,7 +78,10 @@ func healthcheck() {
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck body read failed: %v\n", err)
+		os.Exit(1)
+	}
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "healthcheck returned %d\n", resp.StatusCode)
 		os.Exit(1)

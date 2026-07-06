@@ -16,7 +16,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /pcontrold ./cmd/pcontrold
 # Pre-create /data world-writable so any --user (e.g. Unraid's 99:100
 # or distroless nonroot 65532) can create /data/pcontrol.db.
-RUN mkdir -p /data && chmod 777 /data
+RUN mkdir -p /data && chmod 1777 /data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /pcontrold /pcontrold
