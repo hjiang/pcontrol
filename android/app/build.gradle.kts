@@ -39,9 +39,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
 
     // Room
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.7.1")
+    implementation("androidx.room:room-ktx:2.7.1")
+    ksp("androidx.room:room-compiler:2.7.1")
 
     // EncryptedSharedPreferences for storing the bearer token
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
