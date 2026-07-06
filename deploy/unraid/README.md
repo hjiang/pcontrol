@@ -110,8 +110,9 @@ If you already run Caddy (or another proxy) on the Unraid host, adapt the
 
 **Option C — Tailscale**
 If you run Tailscale on both the Unraid server and the phone, you can
-skip a public domain and use the Tailscale IP/name with `--accept-routes`
-for HTTPS via Tailscale's own certificates.
+skip a public domain. Use `tailscale serve` (or `tailscale cert` with
+your own reverse proxy) to get HTTPS via Tailscale's automatic
+certificates on the machine's Tailscale name.
 
 **After setting up TLS**, update the **Sync server URL** on the Android
 app to `https://your-domain.example.com` (or the Tailscale URL).

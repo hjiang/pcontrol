@@ -16,7 +16,7 @@ See deploy/unraid/README.md for full setup instructions.
   <Support>https://github.com/hjiang/pcontrol</Support>
   <Project>https://github.com/hjiang/pcontrol</Project>
   <Overview>Parental-control server for Android devices. Stores policy and app/website usage; the companion Android app enforces daily time limits locally. Web dashboard at port 7285.</Overview>
-  <Category>Productivity:</Category>
+  <Category>Productivity</Category>
   <WebUI>http://[IP]:[PORT:7285]</WebUI>
   <ExtraParams>--user 99:100</ExtraParams>
   <Requires></Requires>
