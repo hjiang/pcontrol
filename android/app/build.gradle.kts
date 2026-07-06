@@ -40,7 +40,7 @@ dependencies {
     // Room
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
-    ksp("androidx.room:room-compiler:2.7.1")
+    ksp("androidx.room:room-compiler:2.8.4")
 
     // EncryptedSharedPreferences for storing the bearer token
     implementation("androidx.security:security-crypto:1.1.0")
