@@ -175,7 +175,7 @@ jobs:
           echo "path=${FINAL}" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcontrol-android-${{ steps.version.outputs.version }}
           path: ${{ steps.rename.outputs.path }}
