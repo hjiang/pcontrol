@@ -59,7 +59,6 @@ jobs:
             exit 1
           fi
           echo "path=${APK}" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename ${APK})" >> "$GITHUB_OUTPUT"
 
       - name: Check signing secrets
         id: check_secrets
@@ -105,7 +104,12 @@ jobs:
           SIGNED="${DIR}/app-release-signed.apk"
 
           # Locate zipalign and apksigner in the Android SDK
-          BUILD_TOOLS="${ANDROID_HOME}/build-tools"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "${SDK_ROOT}" ]; then
+            echo "::error::ANDROID_HOME/ANDROID_SDK_ROOT not set"
+            exit 1
+          fi
+          BUILD_TOOLS="${SDK_ROOT}/build-tools"
           ZIPALIGN=$(find "${BUILD_TOOLS}" -name zipalign -type f | head -1)
           APKSIGNER=$(find "${BUILD_TOOLS}" -name apksigner -type f | head -1)
 
