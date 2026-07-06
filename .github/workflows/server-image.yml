@@ -70,11 +70,10 @@ jobs:
         id: final_tags
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
-          TAGS="$(echo "${TAGS}" | tr '\n' ',')"
           if [[ "${{ github.ref }}" == refs/tags/server-v* ]]; then
-            TAGS+=",ghcr.io/${{ github.repository_owner }}/pcontrol-server:latest"
+            TAGS="${TAGS}"$'\n'"ghcr.io/${{ github.repository_owner }}/pcontrol-server:latest"
           fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          { echo 'tags<<EOF'; echo "${TAGS}"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
