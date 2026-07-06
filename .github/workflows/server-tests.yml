@@ -6,6 +6,9 @@ on:
   push:
     paths:
       - 'server/**'
+  pull_request:
+    paths:
+      - 'server/**'
 
 jobs:
   test:
@@ -26,12 +29,13 @@ jobs:
       - name: Run all server tests
         run: |
           cd server
-          go test ./... -v -count=1
+          mkdir -p test-output
+          go test ./... -v -count=1 -json 2>&1 | tee test-output/test.json
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: server-test-results
-          path: server/**/test-output/
+          path: server/test-output/
           compression-level: 6
