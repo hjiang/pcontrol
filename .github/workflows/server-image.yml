@@ -19,9 +19,6 @@ on:
       - main
     tags:
       - 'server-v*'
-    paths:
-      - 'server/**'
-      - '.github/workflows/server-image.yml'
   pull_request:
     paths:
       - 'server/**'
