@@ -216,7 +216,9 @@ func TestDashboard_OnlineBadge(t *testing.T) {
 		t.Fatalf("CreateDevice: %v", err)
 	}
 	// Touch last_seen with current time (just now)
-	s.TouchLastSeen(dev.ID, time.Now())
+	if err := s.TouchLastSeen(dev.ID, time.Now()); err != nil {
+		t.Fatalf("TouchLastSeen: %v", err)
+	}
 
 	sessionCookie := loginSession(t, mux)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -246,7 +248,9 @@ func TestDashboard_OfflineBadge(t *testing.T) {
 		t.Fatalf("CreateDevice: %v", err)
 	}
 	// Touch last_seen with an hour ago
-	s.TouchLastSeen(dev.ID, time.Now().Add(-1*time.Hour))
+	if err := s.TouchLastSeen(dev.ID, time.Now().Add(-1*time.Hour)); err != nil {
+		t.Fatalf("TouchLastSeen: %v", err)
+	}
 
 	sessionCookie := loginSession(t, mux)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

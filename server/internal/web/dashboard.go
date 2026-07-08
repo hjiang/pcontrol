@@ -269,9 +269,14 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		totalSeconds := domain.CountedTotalSeconds(appTotals, webTotals, policy.Exclusions)
 		totalMinutes := totalSeconds / 60
 
+		if deviceID <= 0 {
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
+		}
 		device, err := h.store.DeviceByTokenFromID(deviceID)
 		if err != nil {
-			device = domain.Device{Name: "unknown"}
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
 		}
 		data := deviceDetailData{
 			ID:           deviceID,

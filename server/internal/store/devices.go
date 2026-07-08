@@ -109,19 +109,23 @@ func (s *Store) DeleteDevice(deviceID int64) error {
 	}
 	defer tx.Rollback()
 
-	for _, stmt := range []string{
-		`DELETE FROM usage_events WHERE device_id = ?`,
-		`DELETE FROM limits WHERE device_id = ?`,
-		`DELETE FROM exclusions WHERE device_id = ?`,
-		`DELETE FROM device_settings WHERE device_id = ?`,
-		`DELETE FROM devices WHERE id = ?`,
+	type delStep struct {
+		Label string
+		SQL   string
+	}
+	for _, step := range []delStep{
+		{"usage_events", `DELETE FROM usage_events WHERE device_id = ?`},
+		{"limits", `DELETE FROM limits WHERE device_id = ?`},
+		{"exclusions", `DELETE FROM exclusions WHERE device_id = ?`},
+		{"device_settings", `DELETE FROM device_settings WHERE device_id = ?`},
+		{"devices", `DELETE FROM devices WHERE id = ?`},
 	} {
-		res, err := tx.Exec(stmt, deviceID)
+		res, err := tx.Exec(step.SQL, deviceID)
 		if err != nil {
-			return fmt.Errorf("delete device child: %w", err)
+			return fmt.Errorf("delete %s: %w", step.Label, err)
 		}
 		// Check RowsAffected on the final DELETE FROM devices
-		if stmt == `DELETE FROM devices WHERE id = ?` {
+		if step.Label == "devices" {
 			n, err := res.RowsAffected()
 			if err != nil {
 				return err
