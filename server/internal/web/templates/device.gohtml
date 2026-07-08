@@ -1,10 +1,32 @@
 <h1>Device {{.Name}}</h1>
 <p><a href="/devices/{{.ID}}/limits">Limits</a> | <a href="/">Back</a></p>
+{{if .HasBattery}}
+  <p>
+    <span class="battery{{if .BatteryLow}} battery-low{{end}}">
+      🔋 {{.BatteryPercent}}%{{if .BatteryCharging}} ⚡{{end}}
+    </span>
+  </p>
+{{end}}
 
 <form method="get">
   <label>Day: <input name="day" value="{{.Day}}"></label>
   <button>View</button>
 </form>
+
+{{if .History}}
+<h3>7-day history</h3>
+<div style="margin-bottom:1rem">
+{{range .History}}
+  <div style="display:flex;gap:0.5em;align-items:center;margin:2px 0">
+    <span style="width:6em;text-align:right;font-size:0.85em">{{.Day}}</span>
+    <div class="bar-bg" style="width:200px">
+      <div class="bar-fill" style="background:#69c;width:{{.BarPercent}}%;min-width:{{if .Minutes}}4px{{else}}0{{end}}"></div>
+    </div>
+    <span style="font-size:0.85em;min-width:3em">{{.Minutes}} min</span>
+  </div>
+{{end}}
+</div>
+{{end}}
 
 <h2>Total usage: {{.TotalMinutes}} min</h2>
 {{if .HasLimit}}
@@ -37,5 +59,15 @@
 </tr>
 {{end}}
 </table>
+
+<h3>Device management</h3>
+<form action="/devices/{{.ID}}/rename" method="post" style="display:inline">
+  <label>Rename: <input name="name" value="{{.Name}}" required></label>
+  <button>Rename</button>
+</form>
+<form action="/devices/{{.ID}}/delete" method="post" style="display:inline"
+      onsubmit="return confirm('Delete device and all its data?')">
+  <button style="color:#c00;margin-left:1em">Delete device</button>
+</form>
 
 <p><a href="/devices/{{.ID}}/limits">Manage limits</a></p>

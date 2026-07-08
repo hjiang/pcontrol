@@ -1,14 +1,18 @@
 package web
 
 import (
+	"database/sql"
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
 	"pcontrol/server/internal/domain"
 )
+
+const onlineThreshold = 5 * time.Minute
 
 func (h *webAuthHandler) dashboard() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +23,9 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 
 		// List devices
 		rows, err := h.store.DB.Query(
-			`SELECT id, name, created_at, COALESCE(last_seen_at, 'never') FROM devices ORDER BY id`)
+			`SELECT id, name, created_at, COALESCE(last_seen_at, 'never'),
+			        battery_percent, battery_charging
+			 FROM devices ORDER BY id`)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -27,15 +33,18 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 		defer rows.Close()
 
 		type rawDevice struct {
-			ID         int64
-			Name       string
-			CreatedAt  string
-			LastSeenAt string
+			ID              int64
+			Name            string
+			CreatedAt       string
+			LastSeenAt      string
+			BatteryPercent  sql.NullInt64
+			BatteryCharging sql.NullInt64
 		}
 		var rawDevices []rawDevice
 		for rows.Next() {
 			var d rawDevice
-			if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt, &d.LastSeenAt); err != nil {
+			if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt, &d.LastSeenAt,
+				&d.BatteryPercent, &d.BatteryCharging); err != nil {
 				continue
 			}
 			rawDevices = append(rawDevices, d)
@@ -52,11 +61,38 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			totalSeconds := domain.CountedTotalSeconds(appTotals, webTotals, policy.Exclusions)
 			totalMinutes := totalSeconds / 60
 
+			// Compute online status
+			online := false
+			var lastSeenAge string
+			if rd.LastSeenAt != "never" {
+				if t, err := time.Parse(time.RFC3339, rd.LastSeenAt); err == nil {
+					age := time.Since(t)
+					if age < 0 {
+						age = 0
+					}
+					online = age <= onlineThreshold
+					lastSeenAge = formatAge(age)
+				}
+			}
+
 			entry := dashboardDeviceEntry{
 				ID:           rd.ID,
 				Name:         rd.Name,
 				LastSeenAt:   rd.LastSeenAt,
+				Online:       online,
+				LastSeenAge:  lastSeenAge,
 				TotalMinutes: int(totalMinutes),
+			}
+
+			// Battery
+			if rd.BatteryPercent.Valid {
+				pct := int(rd.BatteryPercent.Int64)
+				entry.HasBattery = true
+				entry.BatteryPercent = pct
+				entry.BatteryLow = pct < 20
+				if rd.BatteryCharging.Valid {
+					entry.BatteryCharging = rd.BatteryCharging.Int64 != 0
+				}
 			}
 
 			if policy.TotalDailyLimitMin != nil {
@@ -148,6 +184,44 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 	}
 }
 
+func (h *webAuthHandler) deviceRename() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		deviceID := parseID(id)
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		name := r.FormValue("name")
+		if name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+
+		if err := h.store.RenameDevice(deviceID, name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
+	}
+}
+
+func (h *webAuthHandler) deviceDelete() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		deviceID := parseID(id)
+
+		if err := h.store.DeleteDevice(deviceID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
 func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -175,12 +249,56 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		totalSeconds := domain.CountedTotalSeconds(appTotals, webTotals, policy.Exclusions)
 		totalMinutes := totalSeconds / 60
 
-		device, _ := h.store.DeviceByTokenFromID(deviceID)
+		device, err := h.store.DeviceByTokenFromID(deviceID)
+		if err != nil {
+			device = domain.Device{Name: "unknown"}
+		}
 		data := deviceDetailData{
 			ID:           deviceID,
 			Name:         device.Name,
 			Day:          day,
 			TotalMinutes: int(totalMinutes),
+		}
+
+		// Battery
+		if device.BatteryPercent != nil {
+			pct := *device.BatteryPercent
+			data.HasBattery = true
+			data.BatteryPercent = pct
+			data.BatteryLow = pct < 20
+			if device.BatteryCharging != nil {
+				data.BatteryCharging = *device.BatteryCharging
+			}
+		}
+
+		// 7-day history: compute counted totals for the last 7 days
+		if parsedDay, err := time.Parse("2006-01-02", day); err == nil {
+			fromDay := parsedDay.AddDate(0, 0, -6).Format("2006-01-02")
+			dailyTotals, err := h.store.DailyTotals(deviceID, fromDay, day)
+			if err == nil {
+				// Find max for scaling
+				maxMinutes := 0
+				for i := 6; i >= 0; i-- {
+					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
+					min := dailyTotals[d] / 60
+					if min > maxMinutes {
+						maxMinutes = min
+					}
+				}
+				if maxMinutes == 0 {
+					maxMinutes = 1 // avoid division by zero
+				}
+				for i := 6; i >= 0; i-- {
+					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
+					min := dailyTotals[d] / 60
+					pct := min * 100 / maxMinutes
+					data.History = append(data.History, historyRow{
+						Day:        d,
+						Minutes:    min,
+						BarPercent: pct,
+					})
+				}
+			}
 		}
 
 		if policy.TotalDailyLimitMin != nil {
@@ -272,4 +390,19 @@ func ioWriteString(w http.ResponseWriter, s string) {
 
 func htmlEsc(s string) string {
 	return template.HTMLEscapeString(s)
+}
+
+// formatAge formats a duration as a human-readable age string
+// using the largest unit (minutes, hours, or days).
+func formatAge(d time.Duration) string {
+	min := int(math.Round(d.Minutes()))
+	if min < 60 {
+		return fmt.Sprintf("%d min", min)
+	}
+	hrs := min / 60
+	if hrs < 24 {
+		return fmt.Sprintf("%d h", hrs)
+	}
+	days := hrs / 24
+	return fmt.Sprintf("%d d", days)
 }
