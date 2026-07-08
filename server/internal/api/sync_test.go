@@ -171,6 +171,107 @@ func TestSync_Unauthenticated(t *testing.T) {
 	}
 }
 
+func TestSync_BatteryPersisted(t *testing.T) {
+	s, handler, rawToken, deviceID := newTestSyncEnvFull(t)
+
+	body := `{
+		"device_time": "2026-07-06T00:00:00Z",
+		"policy_version": 0,
+		"events": [],
+		"battery_percent": 42,
+		"battery_charging": true
+	}`
+
+	rec := doSyncRequest(t, handler, rawToken, body)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	dev, err := s.DeviceByTokenFromID(deviceID)
+	if err != nil {
+		t.Fatalf("DeviceByTokenFromID: %v", err)
+	}
+	if dev.BatteryPercent == nil || *dev.BatteryPercent != 42 {
+		t.Errorf("expected BatteryPercent 42, got %v", dev.BatteryPercent)
+	}
+	if dev.BatteryCharging == nil || !*dev.BatteryCharging {
+		t.Errorf("expected BatteryCharging true, got %v", dev.BatteryCharging)
+	}
+	if dev.BatteryUpdatedAt == nil {
+		t.Error("expected BatteryUpdatedAt to be set")
+	}
+}
+
+func TestSync_WithoutBatteryFieldLeavesExistingBattery(t *testing.T) {
+	s, handler, rawToken, deviceID := newTestSyncEnvFull(t)
+
+	// First sync with battery
+	body1 := `{"device_time":"2026-07-06T00:00:00Z","policy_version":0,"events":[],"battery_percent":42,"battery_charging":true}`
+	rec1 := doSyncRequest(t, handler, rawToken, body1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first sync: expected 200, got %d", rec1.Code)
+	}
+
+	// Second sync without battery fields
+	body2 := `{"device_time":"2026-07-06T01:00:00Z","policy_version":1,"events":[]}`
+	rec2 := doSyncRequest(t, handler, rawToken, body2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second sync: expected 200, got %d", rec2.Code)
+	}
+
+	dev, err := s.DeviceByTokenFromID(deviceID)
+	if err != nil {
+		t.Fatalf("DeviceByTokenFromID: %v", err)
+	}
+	if dev.BatteryPercent == nil || *dev.BatteryPercent != 42 {
+		t.Errorf("expected BatteryPercent still 42, got %v", dev.BatteryPercent)
+	}
+}
+
+func TestSync_InvalidBatteryPercentReturns400(t *testing.T) {
+	_, handler, rawToken := newTestSyncEnv(t)
+
+	for _, val := range []int{101, -1} {
+		body := fmt.Sprintf(`{
+			"device_time": "2026-07-06T00:00:00Z",
+			"policy_version": 0,
+			"events": [],
+			"battery_percent": %d,
+			"battery_charging": false
+		}`, val)
+
+		rec := doSyncRequest(t, handler, rawToken, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("battery_percent=%d: expected 400, got %d", val, rec.Code)
+		}
+	}
+}
+
+func TestSync_EmptyEventsWithBattery(t *testing.T) {
+	_, handler, rawToken := newTestSyncEnv(t)
+
+	body := `{
+		"device_time": "2026-07-06T00:00:00Z",
+		"policy_version": 0,
+		"events": [],
+		"battery_percent": 80,
+		"battery_charging": false
+	}`
+
+	rec := doSyncRequest(t, handler, rawToken, body)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for empty events with battery, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp syncResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.AcceptedEventIDs) != 0 {
+		t.Errorf("expected empty accepted_event_ids, got %v", resp.AcceptedEventIDs)
+	}
+}
+
 // --- helpers ---
 
 func newTestSyncEnv(t *testing.T) (*store.Store, http.Handler, string) {

@@ -13,9 +13,11 @@ import (
 const maxSyncBodySize = 1 << 20 // 1 MiB
 
 type syncRequest struct {
-	DeviceTime    string        `json:"device_time"`
-	PolicyVersion int           `json:"policy_version"`
-	Events        []syncEvent   `json:"events"`
+	DeviceTime      string      `json:"device_time"`
+	PolicyVersion   int         `json:"policy_version"`
+	Events          []syncEvent `json:"events"`
+	BatteryPercent  *int        `json:"battery_percent"`
+	BatteryCharging *bool       `json:"battery_charging"`
 }
 
 type syncEvent struct {
@@ -29,15 +31,15 @@ type syncEvent struct {
 }
 
 type syncResponse struct {
-	AcceptedEventIDs []string       `json:"accepted_event_ids"`
-	Policy           *policyJSON    `json:"policy"` // nil when version matches
+	AcceptedEventIDs []string    `json:"accepted_event_ids"`
+	Policy           *policyJSON `json:"policy"` // nil when version matches
 }
 
 type policyJSON struct {
-	Version              int            `json:"version"`
-	TotalDailyLimitMin   *int           `json:"total_daily_limit_minutes"`
-	WarnThresholdPercent int            `json:"warn_threshold_percent"`
-	Limits               []limitJSON    `json:"limits"`
+	Version              int             `json:"version"`
+	TotalDailyLimitMin   *int            `json:"total_daily_limit_minutes"`
+	WarnThresholdPercent int             `json:"warn_threshold_percent"`
+	Limits               []limitJSON     `json:"limits"`
 	Exclusions           []exclusionJSON `json:"exclusions"`
 }
 
@@ -72,6 +74,14 @@ func HandleSync(s *store.Store, mux *http.ServeMux) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 			}
 			return
+		}
+
+		// Validate battery fields
+		if req.BatteryPercent != nil {
+			if *req.BatteryPercent < 0 || *req.BatteryPercent > 100 {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Parse events
@@ -121,6 +131,17 @@ func HandleSync(s *store.Store, mux *http.ServeMux) {
 
 		// Touch last_seen
 		_ = s.TouchLastSeen(deviceID, time.Now())
+
+		// Persist battery (best-effort, never fails the request)
+		if req.BatteryPercent != nil {
+			charging := false
+			if req.BatteryCharging != nil {
+				charging = *req.BatteryCharging
+			}
+			if err := s.UpdateBatteryStatus(deviceID, *req.BatteryPercent, charging, time.Now()); err != nil {
+				log.Printf("update battery: %v", err)
+			}
+		}
 
 		// Build response
 		resp := syncResponse{
