@@ -301,7 +301,9 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		if parsedDay, err := time.Parse("2006-01-02", day); err == nil {
 			fromDay := parsedDay.AddDate(0, 0, -6).Format("2006-01-02")
 			dailyTotals, err := h.store.DailyTotalsWithExclusions(deviceID, fromDay, day, policy.Exclusions)
-			if err == nil {
+			if err != nil {
+				log.Printf("daily totals: %v", err)
+			} else {
 				// Find max for scaling
 				maxMinutes := 0
 				for i := 6; i >= 0; i-- {

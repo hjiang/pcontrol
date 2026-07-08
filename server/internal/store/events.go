@@ -116,7 +116,7 @@ func (s *Store) DailyTotalsWithExclusions(deviceID int64, fromDay, toDay string,
 		dayGroups[day] = append(dayGroups[day], rawGroup{Kind: kind, Subject: subject, Seconds: seconds})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("daily totals rows: %w", err)
 	}
 
 	result := make(map[string]int)
