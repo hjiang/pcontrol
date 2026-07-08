@@ -73,8 +73,21 @@ func (s *Store) DistinctSubjects(deviceID int64) ([]domain.UsageTotal, error) {
 
 // DailyTotals returns counted total seconds per day for a device over a
 // day range (inclusive) by aggregating per (kind, subject) and applying
-// exclusion rules via domain.CountedTotalSeconds.
+// exclusion rules. This variant loads the policy (and its exclusions) from
+// the store. Callers that already have the policy should use
+// DailyTotalsWithExclusions to avoid the extra query.
 func (s *Store) DailyTotals(deviceID int64, fromDay, toDay string) (map[string]int, error) {
+	policy, err := s.GetPolicy(deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("get policy for daily totals: %w", err)
+	}
+	return s.DailyTotalsWithExclusions(deviceID, fromDay, toDay, policy.Exclusions)
+}
+
+// DailyTotalsWithExclusions is like DailyTotals but accepts exclusions
+// directly, avoiding an extra GetPolicy call when the caller already
+// has the policy loaded.
+func (s *Store) DailyTotalsWithExclusions(deviceID int64, fromDay, toDay string, exclusions []domain.Exclusion) (map[string]int, error) {
 	rows, err := s.DB.Query(`
 		SELECT day, kind, subject, SUM(duration_seconds) AS total_seconds
 		FROM usage_events
@@ -106,12 +119,6 @@ func (s *Store) DailyTotals(deviceID int64, fromDay, toDay string) (map[string]i
 		return nil, err
 	}
 
-	// Get policy exclusions for this device (needed for CountedTotalSeconds)
-	policy, err := s.GetPolicy(deviceID)
-	if err != nil {
-		return nil, fmt.Errorf("get policy for daily totals: %w", err)
-	}
-
 	result := make(map[string]int)
 	for day, groups := range dayGroups {
 		var appTotals, webTotals []domain.UsageTotal
@@ -128,7 +135,7 @@ func (s *Store) DailyTotals(deviceID int64, fromDay, toDay string) (map[string]i
 				webTotals = append(webTotals, ut)
 			}
 		}
-		result[day] = domain.CountedTotalSeconds(appTotals, webTotals, policy.Exclusions)
+		result[day] = domain.CountedTotalSeconds(appTotals, webTotals, exclusions)
 	}
 
 	return result, nil

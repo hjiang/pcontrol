@@ -2,6 +2,7 @@ package web
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -207,6 +208,10 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 		}
 
 		if err := h.store.RenameDevice(deviceID, name); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -225,6 +230,10 @@ func (h *webAuthHandler) deviceDelete() http.HandlerFunc {
 		}
 
 		if err := h.store.DeleteDevice(deviceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -285,7 +294,7 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		// 7-day history: compute counted totals for the last 7 days
 		if parsedDay, err := time.Parse("2006-01-02", day); err == nil {
 			fromDay := parsedDay.AddDate(0, 0, -6).Format("2006-01-02")
-			dailyTotals, err := h.store.DailyTotals(deviceID, fromDay, day)
+			dailyTotals, err := h.store.DailyTotalsWithExclusions(deviceID, fromDay, day, policy.Exclusions)
 			if err == nil {
 				// Find max for scaling
 				maxMinutes := 0

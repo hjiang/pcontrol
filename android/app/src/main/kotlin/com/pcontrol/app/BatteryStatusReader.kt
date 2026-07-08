@@ -22,6 +22,6 @@ class BatteryStatusReader(private val context: Context) {
         val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
             status == BatteryManager.BATTERY_STATUS_FULL
-        return BatteryStatus(level * 100 / scale, charging)
+        return BatteryStatus((level * 100 / scale).coerceIn(0, 100), charging)
     }
 }
