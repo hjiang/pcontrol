@@ -76,8 +76,12 @@ func HandleSync(s *store.Store, mux *http.ServeMux) {
 			return
 		}
 
-		// Validate battery fields
-		if req.BatteryPercent != nil {
+		// Validate battery fields — both must be present or both absent
+		if req.BatteryPercent != nil || req.BatteryCharging != nil {
+			if req.BatteryPercent == nil || req.BatteryCharging == nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
 			if *req.BatteryPercent < 0 || *req.BatteryPercent > 100 {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return

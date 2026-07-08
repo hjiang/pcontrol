@@ -49,7 +49,10 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			}
 			rawDevices = append(rawDevices, d)
 		}
-		rows.Close()
+		if err := rows.Err(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		today := time.Now().UTC().Format("2006-01-02")
 		devices := make([]dashboardDeviceEntry, 0, len(rawDevices))
@@ -188,6 +191,10 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		deviceID := parseID(id)
+		if deviceID <= 0 {
+			http.Error(w, "invalid device id", http.StatusBadRequest)
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -212,6 +219,10 @@ func (h *webAuthHandler) deviceDelete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		deviceID := parseID(id)
+		if deviceID <= 0 {
+			http.Error(w, "invalid device id", http.StatusBadRequest)
+			return
+		}
 
 		if err := h.store.DeleteDevice(deviceID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -393,9 +404,10 @@ func htmlEsc(s string) string {
 }
 
 // formatAge formats a duration as a human-readable age string
-// using the largest unit (minutes, hours, or days).
+// using the largest unit (minutes, hours, or days). Floor is used
+// so the age badge does not round up prematurely.
 func formatAge(d time.Duration) string {
-	min := int(math.Round(d.Minutes()))
+	min := int(math.Floor(d.Minutes()))
 	if min < 60 {
 		return fmt.Sprintf("%d min", min)
 	}

@@ -79,17 +79,29 @@ func (s *Store) TouchLastSeen(deviceID int64, t time.Time) error {
 	return err
 }
 
-// RenameDevice updates the name of a device. Returns error if name is empty.
+// RenameDevice updates the name of a device. Returns sql.ErrNoRows if the
+// device does not exist, or an error if name is empty.
 func (s *Store) RenameDevice(deviceID int64, name string) error {
 	if name == "" {
 		return fmt.Errorf("device name cannot be empty")
 	}
-	_, err := s.DB.Exec(`UPDATE devices SET name = ? WHERE id = ?`, name, deviceID)
-	return err
+	res, err := s.DB.Exec(`UPDATE devices SET name = ? WHERE id = ?`, name, deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // DeleteDevice removes a device and all its child rows (events, limits,
-// exclusions, settings) in a single transaction.
+// exclusions, settings) in a single transaction. Returns sql.ErrNoRows if
+// the device does not exist.
 func (s *Store) DeleteDevice(deviceID int64) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -104,8 +116,19 @@ func (s *Store) DeleteDevice(deviceID int64) error {
 		`DELETE FROM device_settings WHERE device_id = ?`,
 		`DELETE FROM devices WHERE id = ?`,
 	} {
-		if _, err := tx.Exec(stmt, deviceID); err != nil {
+		res, err := tx.Exec(stmt, deviceID)
+		if err != nil {
 			return fmt.Errorf("delete device child: %w", err)
+		}
+		// Check RowsAffected on the final DELETE FROM devices
+		if stmt == `DELETE FROM devices WHERE id = ?` {
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return sql.ErrNoRows
+			}
 		}
 	}
 

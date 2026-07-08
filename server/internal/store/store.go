@@ -41,28 +41,43 @@ func Open(path string) (*Store, error) {
 }
 
 // migrateV2 adds battery-status columns to devices (idempotent).
+// Each column is checked and applied individually so a partial failure
+// does not leave the schema inconsistent.
 func migrateV2(db *sql.DB) error {
-	var n int
-	err := db.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('devices')
-		 WHERE name = 'battery_percent'`).Scan(&n)
-	if err != nil {
-		return fmt.Errorf("check battery column: %w", err)
+	columnExists := func(name string) (bool, error) {
+		var n int
+		err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('devices') WHERE name = ?`, name).Scan(&n)
+		if err != nil {
+			return false, fmt.Errorf("check column %q: %w", name, err)
+		}
+		return n > 0, nil
 	}
-	if n > 0 {
-		return nil // already applied
+
+	type colDef struct {
+		Name string
+		SQL  string
 	}
-	stmts := []string{
-		`ALTER TABLE devices ADD COLUMN battery_percent INTEGER`,
-		`ALTER TABLE devices ADD COLUMN battery_charging INTEGER`,
-		`ALTER TABLE devices ADD COLUMN battery_updated_at TEXT`,
+	columns := []colDef{
+		{"battery_percent", `ALTER TABLE devices ADD COLUMN battery_percent INTEGER`},
+		{"battery_charging", `ALTER TABLE devices ADD COLUMN battery_charging INTEGER`},
+		{"battery_updated_at", `ALTER TABLE devices ADD COLUMN battery_updated_at TEXT`},
 	}
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("apply v2 migration: %w", err)
+
+	for _, c := range columns {
+		exists, err := columnExists(c.Name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.Exec(c.SQL); err != nil {
+			return fmt.Errorf("add column %q: %w", c.Name, err)
 		}
 	}
-	_, err = db.Exec(
+
+	_, err := db.Exec(
 		`INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)`)
 	return err
 }
