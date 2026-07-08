@@ -46,7 +46,8 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			var d rawDevice
 			if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt, &d.LastSeenAt,
 				&d.BatteryPercent, &d.BatteryCharging); err != nil {
-				continue
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 			rawDevices = append(rawDevices, d)
 		}
@@ -246,6 +247,10 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		deviceID := parseID(id)
+		if deviceID <= 0 {
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
+		}
 
 		day := r.URL.Query().Get("day")
 		if day == "" {
@@ -269,10 +274,6 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		totalSeconds := domain.CountedTotalSeconds(appTotals, webTotals, policy.Exclusions)
 		totalMinutes := totalSeconds / 60
 
-		if deviceID <= 0 {
-			http.Error(w, "device not found", http.StatusNotFound)
-			return
-		}
 		device, err := h.store.DeviceByTokenFromID(deviceID)
 		if err != nil {
 			http.Error(w, "device not found", http.StatusNotFound)

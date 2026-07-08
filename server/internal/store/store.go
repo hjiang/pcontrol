@@ -41,8 +41,8 @@ func Open(path string) (*Store, error) {
 }
 
 // migrateV2 adds battery-status columns to devices (idempotent).
-// Each column is checked and applied individually so a partial failure
-// does not leave the schema inconsistent.
+// Each column is checked and applied individually, so a mid-run failure
+// only skips one column and the migration self-heals on the next startup.
 func migrateV2(db *sql.DB) error {
 	columnExists := func(name string) (bool, error) {
 		var n int
