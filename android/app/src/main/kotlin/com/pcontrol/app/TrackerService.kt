@@ -397,7 +397,6 @@ class TrackerService : Service() {
     private suspend fun onSync() {
         val db = AppDatabase.getInstance(this)
         val unsynced = db.usageCounterDao().getUnsynced()
-        if (unsynced.isEmpty()) return
 
         // Snapshot the seconds value BEFORE the network call so we can
         // restore exactly what was sent even if a tick fires mid-request (§9).
@@ -427,10 +426,14 @@ class TrackerService : Service() {
         val client = SyncClient(serverUrl, deviceToken)
         val cachedPolicyVersion = getSharedPreferences("pcontrol", MODE_PRIVATE).getInt("policy_version", 0)
 
+        val batteryStatus = BatteryStatusReader(this).read()
+
         val request = SyncRequest(
             deviceTime = java.time.Instant.now().toString(),
             policyVersion = cachedPolicyVersion,
-            events = events
+            events = events,
+            batteryPercent = batteryStatus?.percent,
+            batteryCharging = batteryStatus?.charging
         )
 
         val response = client.sync(request)

@@ -1,11 +1,15 @@
 package com.pcontrol.app
 
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -110,5 +114,33 @@ class SyncClientTest {
         assertEquals("Bearer my-secret-token", recordedRequest.getHeader("Authorization"))
 
         server.shutdown()
+    }
+
+    @Test
+    fun `sync request with battery encodes both fields`() {
+        val json = Json { ignoreUnknownKeys = true }
+        val request = SyncRequest(
+            deviceTime = "2026-07-06T00:00:00Z",
+            policyVersion = 1,
+            events = emptyList(),
+            batteryPercent = 77,
+            batteryCharging = false
+        )
+        val encoded = json.encodeToString(request)
+        assertTrue("expected battery_percent", encoded.contains("\"battery_percent\":77"))
+        assertTrue("expected battery_charging", encoded.contains("\"battery_charging\":false"))
+    }
+
+    @Test
+    fun `sync request without battery omits both fields`() {
+        val json = Json { ignoreUnknownKeys = true }
+        val request = SyncRequest(
+            deviceTime = "2026-07-06T00:00:00Z",
+            policyVersion = 1,
+            events = emptyList()
+        )
+        val encoded = json.encodeToString(request)
+        assertFalse("expected no battery_percent", encoded.contains("battery_percent"))
+        assertFalse("expected no battery_charging", encoded.contains("battery_charging"))
     }
 }
