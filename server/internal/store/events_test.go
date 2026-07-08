@@ -100,7 +100,9 @@ func TestDailyTotals(t *testing.T) {
 	dev, _ := mustCreateDevice(t, s, "phone-1")
 
 	// Add an exclusion for "khanacademy.org" web usage
-	s.AddExclusion(dev.ID, "web", "khanacademy.org")
+	if _, err := s.AddExclusion(dev.ID, "web", "khanacademy.org"); err != nil {
+		t.Fatalf("AddExclusion: %v", err)
+	}
 
 	events := []domain.Event{
 		// Day 1: 120s app, 60s excluded web
