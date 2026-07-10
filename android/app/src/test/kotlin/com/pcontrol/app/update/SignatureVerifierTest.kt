@@ -20,22 +20,18 @@ class SignatureVerifierTest {
     }
 
     @Test
-    fun `matchesInstalled returns false when archive packageInfo is unreadable`() {
-        // A dummy file that is not a real APK cannot have its packageName
-        // read via getPackageArchiveInfo → fails closed via matchesPackageName.
+    fun `matchesInstalled rejects unreadable archive via matchesPackageName`() {
+        // A non-APK temp file cannot have its packageName read, so
+        // matchesPackageName fails closed → reject.
         val apkFile = File.createTempFile("test", ".apk").apply {
-            writeText("dummy apk content")
+            writeText("dummy")
             deleteOnExit()
         }
-
-        val result = SignatureVerifier.matchesInstalled(context, apkFile)
-        assertFalse("should return false when archive packageInfo is unreadable", result)
+        assertFalse(SignatureVerifier.matchesInstalled(context, apkFile))
     }
 
     @Test
-    fun `matchesInstalled fails closed on missing file`() {
-        // Non-existent APK path → getPackageArchiveInfo returns null → reject.
-        val result = SignatureVerifier.matchesInstalled(context, File("/nonexistent/missing.apk"))
-        assertFalse("should return false (fail closed) on missing file", result)
+    fun `matchesInstalled rejects missing file`() {
+        assertFalse(SignatureVerifier.matchesInstalled(context, File("/nonexistent/missing.apk")))
     }
 }

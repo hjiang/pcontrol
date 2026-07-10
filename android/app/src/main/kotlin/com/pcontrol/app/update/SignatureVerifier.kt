@@ -102,7 +102,12 @@ object SignatureVerifier : Verifier {
             val flags = PackageManager.GET_SIGNING_CERTIFICATES
             val packageInfo = if (isArchive) {
                 try {
-                    pm.getPackageArchiveInfo(packageNameOrPath, flags)
+                    pm.getPackageArchiveInfo(packageNameOrPath, flags)?.also { info ->
+                        // Some API levels/OEMs require sourceDir to match the archive
+                        // path for signing info to be populated correctly.
+                        info.applicationInfo?.sourceDir = packageNameOrPath
+                        info.applicationInfo?.publicSourceDir = packageNameOrPath
+                    }
                 } catch (e: Exception) {
                     null
                 }
@@ -146,7 +151,10 @@ object SignatureVerifier : Verifier {
         val flags = PackageManager.GET_SIGNATURES
         val packageInfo = if (isArchive) {
             try {
-                pm.getPackageArchiveInfo(packageNameOrPath, flags)
+                pm.getPackageArchiveInfo(packageNameOrPath, flags)?.also { info ->
+                    info.applicationInfo?.sourceDir = packageNameOrPath
+                    info.applicationInfo?.publicSourceDir = packageNameOrPath
+                }
             } catch (e: Exception) {
                 null
             }
