@@ -232,7 +232,7 @@ class MainActivity : AppCompatActivity() {
                 val result = coordinator.runOnce(force = true)
 
                 val message = when (result) {
-                    is UpdateResult.INSTALL_TRIGGERED -> "Update downloaded — tap to install"
+                    is UpdateResult.INSTALL_TRIGGERED -> "System install dialog opened"
                     is UpdateResult.UP_TO_DATE -> "You're up to date"
                     is UpdateResult.VERSION_ERROR -> "Version comparison error"
                     is UpdateResult.NETWORK_ERROR -> "Could not fetch update info"

@@ -43,8 +43,9 @@ jobs:
             exit 1
           fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$NUM"
-          # Force base-10 arithmetic; leading zeros are stripped safely with 10# prefix
-          VCODE=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
+          # Force base-10 arithmetic using a 1000-wide slot per segment so
+          # PATCH values up to 999 never collide with the next MINOR level.
+          VCODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "num=${NUM}" >> "$GITHUB_OUTPUT"

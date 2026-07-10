@@ -157,7 +157,7 @@ class TrackerService : Service() {
 
         when (result) {
             is UpdateResult.INSTALL_TRIGGERED -> {
-                postUpdateNotification("Update downloaded — tap to install")
+                postUpdateNotification("Install dialog shown for update")
             }
             is UpdateResult.SIGNATURE_MISMATCH -> {
                 postUpdateNotification("Update available (manual install required)")
