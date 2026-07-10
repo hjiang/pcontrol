@@ -32,7 +32,7 @@ class ApkDownloader(
      * @param url The browser_download_url of the APK asset.
      * @param version The normalized version string (e.g. "1.2.3") used in the filename.
      */
-    override fun download(url: String, version: String): File? {
+    override fun download(url: String, version: String, expectedSize: Long): File? {
         val updatesDir = File(cacheDir, UPDATES_SUBDIR).also { it.mkdirs() }
 
         // Clean up any stale APKs from previous downloads
@@ -60,8 +60,9 @@ class ApkDownloader(
                         bytesRead += n
                     }
 
-                    // If we know the expected size, verify we got it all
-                    if (contentLength > 0 && bytesRead != contentLength) {
+                    // If we know the expected size (from HTTP header or API), verify
+                    val knownLength = if (expectedSize > 0) expectedSize else contentLength
+                    if (knownLength > 0 && bytesRead != knownLength) {
                         destFile.delete()
                         return@responseScope null
                     }

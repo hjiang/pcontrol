@@ -40,10 +40,12 @@ class UpdateCoordinatorTest {
         var downloadCalled = false
         var capturedUrl: String? = null
         var capturedVersion: String? = null
-        override fun download(url: String, version: String): File? {
+        var capturedExpectedSize: Long = 0L
+        override fun download(url: String, version: String, expectedSize: Long): File? {
             downloadCalled = true
             capturedUrl = url
             capturedVersion = version
+            capturedExpectedSize = expectedSize
             if (!shouldSucceed) return null
             return File.createTempFile("downloaded", ".apk").also {
                 it.writeText("fake apk")

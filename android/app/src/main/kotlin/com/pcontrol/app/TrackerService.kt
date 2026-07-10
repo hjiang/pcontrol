@@ -136,7 +136,7 @@ class TrackerService : Service() {
                         try {
                             onUpdateCheck()
                         } catch (e: Exception) {
-                            // Update failure must never kill tracking
+                            Log.w(TAG, "Update check failed", e)
                         } finally {
                             updateCheckInFlight.set(false)
                         }

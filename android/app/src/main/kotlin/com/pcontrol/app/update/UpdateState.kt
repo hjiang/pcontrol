@@ -36,8 +36,10 @@ class UpdateState(context: Context) {
 
     /**
      * Path to the last successfully downloaded APK, or empty string.
-     * Persisted so [ApkInstaller] can present a "tap to install" flow
-     * even after a process restart.
+     * Written by [UpdateCoordinator] on successful download and after
+     * a failed install attempt. Reserved for a future "resume install"
+     * flow that can pick up a previously downloaded APK after a process
+     * restart; currently not consumed by any reader.
      */
     var downloadedApkPath: String
         get() = prefs.getString(KEY_DOWNLOADED_APK_PATH, "") ?: ""

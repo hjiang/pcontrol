@@ -210,29 +210,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkForUpdates() {
+        // In-flight guard: disable the button so only one check runs at a time.
+        btnCheckUpdate.isEnabled = false
+
         CoroutineScope(Dispatchers.IO).launch {
-            val coordinator = UpdateCoordinator(
-                context = applicationContext,
-                versionName = BuildConfig.VERSION_NAME
-            )
-            val result = coordinator.runOnce(force = true)
+            try {
+                val coordinator = UpdateCoordinator(
+                    context = applicationContext,
+                    versionName = BuildConfig.VERSION_NAME
+                )
+                val result = coordinator.runOnce(force = true)
 
-            val message = when (result) {
-                is UpdateResult.INSTALL_TRIGGERED -> "Update downloaded — tap to install"
-                is UpdateResult.UP_TO_DATE -> "You're up to date"
-                is UpdateResult.VERSION_ERROR -> "Version comparison error"
-                is UpdateResult.NETWORK_ERROR -> "Could not check for updates (network)"
-                is UpdateResult.DOWNLOAD_FAILED -> "Download failed"
-                is UpdateResult.SIGNATURE_MISMATCH -> "Update available (manual) — signature mismatch"
-                is UpdateResult.INSTALL_FAILED -> "Could not open install dialog"
-                is UpdateResult.DISABLED -> "Auto-update is disabled"
-                is UpdateResult.SKIPPED -> "Check again later"
-            }
+                val message = when (result) {
+                    is UpdateResult.INSTALL_TRIGGERED -> "Update downloaded — tap to install"
+                    is UpdateResult.UP_TO_DATE -> "You're up to date"
+                    is UpdateResult.VERSION_ERROR -> "Version comparison error"
+                    is UpdateResult.NETWORK_ERROR -> "Could not check for updates (network)"
+                    is UpdateResult.DOWNLOAD_FAILED -> "Download failed"
+                    is UpdateResult.SIGNATURE_MISMATCH -> "Update available (manual) — signature mismatch"
+                    is UpdateResult.INSTALL_FAILED -> "Could not open install dialog"
+                    is UpdateResult.DISABLED -> "Auto-update is disabled"
+                    is UpdateResult.SKIPPED -> "Check again later"
+                }
 
-            runOnUiThread {
-                if (!isFinishing && !isDestroyed) {
-                    Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
-                    refreshStatus()
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                        refreshStatus()
+                    }
+                }
+            } finally {
+                runOnUiThread {
+                    btnCheckUpdate.isEnabled = true
                 }
             }
         }

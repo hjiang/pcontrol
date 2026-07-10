@@ -73,7 +73,7 @@ class UpdateCoordinator(
         Log.i(TAG, "Update v${updateInfo.version} available (installed: v$installedVersion)")
 
         // 3. Download the APK
-        val apkFile = downloader.download(updateInfo.downloadUrl, updateInfo.version)
+        val apkFile = downloader.download(updateInfo.downloadUrl, updateInfo.version, updateInfo.sizeBytes)
             ?: return UpdateResult.DOWNLOAD_FAILED
 
         // 4. Verify signature
@@ -130,7 +130,7 @@ interface UpdateClient {
 
 /** Downloads an APK from a URL to local storage. */
 interface Downloader {
-    fun download(url: String, version: String): File?
+    fun download(url: String, version: String, expectedSize: Long = 0L): File?
 }
 
 /** Verifies that a downloaded APK is signed correctly. */
