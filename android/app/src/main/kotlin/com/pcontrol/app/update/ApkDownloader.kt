@@ -45,7 +45,7 @@ class ApkDownloader(
             client.newCall(request).execute().use responseScope@{ response ->
                 if (!response.isSuccessful) return@responseScope null
 
-                val body = response.body
+                val body = response.body ?: return@responseScope null
                 val contentLength = body.contentLength()
 
                 FileOutputStream(destFile).use { output ->

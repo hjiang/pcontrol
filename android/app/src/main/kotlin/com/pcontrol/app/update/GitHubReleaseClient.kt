@@ -75,7 +75,7 @@ class GitHubReleaseClient(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
 
-                val body = response.body.string()
+                val body = response.body?.string() ?: return@use null
                 val release = json.decodeFromString<GitHubRelease>(body)
 
                 val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") } ?: return@use null
