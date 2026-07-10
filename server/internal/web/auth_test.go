@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,6 +102,55 @@ func TestLoginFlow(t *testing.T) {
 	}
 }
 
+// TestLoginCookieNotSecureOverHTTP asserts that a login over plain HTTP
+// (r.TLS == nil) sets a session cookie WITHOUT the Secure flag. A browser
+// silently discards Secure cookies on http://, so a hard-coded Secure=true
+// makes login impossible on a LAN-only Unraid deployment started as
+// http://unraid-ip:7285/.
+func TestLoginCookieNotSecureOverHTTP(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secretpassword")
+	mux := NewRouter(s, realHash)
+
+	body := "password=secretpassword"
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// r.TLS is nil → simulates plain HTTP (httptest.NewRequest default).
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusFound {
+		t.Fatalf("expected redirect after successful login, got %d", rec.Code)
+	}
+
+	sessionCookie := findSessionCookie(t, rec.Result().Cookies())
+	if sessionCookie.Secure {
+		t.Error("expected session cookie Secure=false over plain HTTP (r.TLS == nil); " +
+			"a browser on http:// would discard a Secure cookie, blocking login")
+	}
+}
+
+// TestLoginCookieSecureOverHTTPS asserts that a login over HTTPS
+// (r.TLS != nil) sets the Secure flag so the cookie stays off the wire
+// on any accidental plain-HTTP request.
+func TestLoginCookieSecureOverHTTPS(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secretpassword")
+	mux := NewRouter(s, realHash)
+
+	body := "password=secretpassword"
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.TLS = &tls.ConnectionState{} // simulate an HTTPS request
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	sessionCookie := findSessionCookie(t, rec.Result().Cookies())
+	if !sessionCookie.Secure {
+		t.Error("expected session cookie Secure=true over HTTPS (r.TLS != nil)")
+	}
+}
+
 func TestLogin_WrongPasswordRendersForm(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
@@ -121,6 +171,17 @@ func TestLogin_WrongPasswordRendersForm(t *testing.T) {
 }
 
 // --- helpers ---
+
+func findSessionCookie(t *testing.T, cookies []*http.Cookie) *http.Cookie {
+	t.Helper()
+	for _, c := range cookies {
+		if c.Name == "session" {
+			return c
+		}
+	}
+	t.Fatal("expected a session cookie")
+	return nil
+}
 
 func newTestWebStore(t *testing.T) *store.Store {
 	t.Helper()

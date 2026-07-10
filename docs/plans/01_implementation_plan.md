@@ -412,8 +412,10 @@ lost; `event_id` dedupe makes retries safe.
 ## 8. Web UI (parent-facing)
 
 Server-rendered Go templates + HTMX (vendor `htmx.min.js` into the binary via
-`go:embed`; no npm, no build step). Session cookie (`HttpOnly`, `Secure`,
-`SameSite=Lax`, 30-day expiry). All non-`/login`, non-`/api` routes redirect
+`go:embed`; no npm, no build step). Session cookie (`HttpOnly`, `Secure`
+(when the request is over TLS, so plain-HTTP LAN access like
+http://unraid-ip:7285/ still stores the cookie), `SameSite=Lax`,
+30-day expiry). All non-`/login`, non-`/api` routes redirect
 to `/login` without a valid session. All POSTs go through HTMX or plain forms.
 
 | Route | Method | Purpose |

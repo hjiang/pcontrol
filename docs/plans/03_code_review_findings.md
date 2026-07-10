@@ -18,7 +18,7 @@ not listed here.
   Schema matches plan §5; `/api/v1/sync` matches §7 (UUID dedupe, `policy:
   null` on version match, 1 MiB cap → 413, 401 middleware); policy mutations
   bump `policy_version` transactionally (tested); session cookies are
-  `HttpOnly`/`Secure`/`SameSite=Lax`; bcrypt admin auth; `hash-password`
+  `HttpOnly`/`Secure` (TLS-only, so LAN HTTP logins work)/`SameSite=Lax`; bcrypt admin auth; `hash-password`
   subcommand; HTMX templates via `go:embed`; `deploy/` files present.
 - `:core` tests pass; `PolicyEngineTest` covers all eight required Stage 6
   cases plus Stage 5 regressions.

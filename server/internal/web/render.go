@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 )
@@ -16,9 +17,16 @@ var templateFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-// StaticHandler serves embedded static files (e.g. htmx.min.js).
+// StaticHandler serves embedded static files (e.g. htmx.min.js). The
+// embed root is "static/", so we strip that prefix with fs.Sub so the
+// served paths line up with the /static/ route prefix (see router.go).
 func StaticHandler() http.Handler {
-	return http.FileServer(http.FS(staticFS))
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		// Should never happen: "static" exists at compile time via go:embed.
+		panic("embed: fs.Sub(static): " + err.Error())
+	}
+	return http.FileServer(http.FS(sub))
 }
 
 // parsedTemplates is the complete set of named templates.

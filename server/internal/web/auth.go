@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"pcontrol/server/internal/domain"
 	"pcontrol/server/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type webAuthHandler struct {
@@ -66,12 +66,18 @@ func (h *webAuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Secure is set only when the request arrived over TLS. A hard-coded
+	// Secure=true makes the session cookie invisible to browsers on plain
+	// HTTP (e.g. a LAN-only Unraid deployment at http://unraid-ip:7285/),
+	// which makes login impossible: the password is accepted, the session
+	// is created, but the browser discards the cookie and the next request
+	// is treated as unauthenticated.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
 	})
@@ -90,7 +96,7 @@ func (h *webAuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   r.TLS != nil,
 		MaxAge:   -1,
 	})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

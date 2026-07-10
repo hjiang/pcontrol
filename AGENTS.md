@@ -99,6 +99,20 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - Web templates are embedded via `go:embed` in `web/render.go`; adding a
   template means adding a `.gohtml` file under `web/templates/` (the glob
   picks it up) and a view-model struct in `web/templatesData.go`.
+- **Session cookie `Secure` must follow the transport, not be hard-coded.**
+  A hard-coded `Secure: true` makes the browser discard the session cookie
+  over plain HTTP, so login silently fails on a LAN-only Unraid deploy
+  opened as `http://unraid-ip:7285/` — the password is accepted, the
+  session is created, but the next request looks unauthenticated and
+  bounces back to `/login`. Set `Secure: r.TLS != nil` (login + logout).
+  Caveat: behind a TLS-terminating reverse proxy `r.TLS` is nil inside the
+  container, so the cookie won't be `Secure` there (forwarded-header
+  trust is intentionally not implemented yet).
+- **`go:embed static/*` stores files under the `static/` prefix.** Serving
+  them at `/static/*` requires `fs.Sub(staticFS, "static")` before
+  `http.FileServer` — a bare `http.FileServer(http.FS(staticFS))` behind
+  `http.StripPrefix("/static/", ...)` returns 404 because the stripped
+  path (`htmx.min.js`) doesn't exist at the embed root (`static/htmx.min.js`).
 
 ## Conventions
 
