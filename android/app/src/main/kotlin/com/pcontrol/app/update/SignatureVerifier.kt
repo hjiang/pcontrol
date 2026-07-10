@@ -34,6 +34,10 @@ object SignatureVerifier : Verifier {
         val pm = context.packageManager
         val packageName = context.packageName
 
+        // 0. Reject if the archive declares a different packageName than the installed app.
+        //    This catches accidental mis-packaging or a manifest-squatting attack.
+        if (!matchesPackageName(pm, apkFile, packageName)) return false
+
         // 1. Installed signer
         val installedSigner = getSignerSha256(pm, packageName, isArchive = false)
         if (installedSigner == null) {
@@ -49,6 +53,30 @@ object SignatureVerifier : Verifier {
         }
 
         return installedSigner.contentEquals(archiveSigner)
+    }
+
+    /**
+     * Returns false if the archive's [PackageInfo.packageName] can be read
+     * and differs from [expectedPackageName]. When the archive's package name
+     * cannot be read (e.g. corrupt APK), we allow the installation to proceed
+     * so the system installer can be the final judge.
+     */
+    private fun matchesPackageName(
+        pm: PackageManager,
+        apkFile: File,
+        expectedPackageName: String
+    ): Boolean {
+        val archiveInfo = try {
+            pm.getPackageArchiveInfo(apkFile.absolutePath, 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "Cannot read archive packageInfo — trust the installer", e)
+            return true
+        } ?: return true
+        if (archiveInfo.packageName != expectedPackageName) {
+            Log.w(TAG, "Archive packageName '${archiveInfo.packageName}' != installed '$expectedPackageName' — rejecting")
+            return false
+        }
+        return true
     }
 
     /**
@@ -69,7 +97,11 @@ object SignatureVerifier : Verifier {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val flags = PackageManager.GET_SIGNING_CERTIFICATES
             val packageInfo = if (isArchive) {
-                pm.getPackageArchiveInfo(packageNameOrPath, flags)
+                try {
+                    pm.getPackageArchiveInfo(packageNameOrPath, flags)
+                } catch (e: Exception) {
+                    null
+                }
             } else {
                 try {
                     pm.getPackageInfo(packageNameOrPath, flags)
@@ -107,7 +139,11 @@ object SignatureVerifier : Verifier {
     ): ByteArray? {
         val flags = PackageManager.GET_SIGNATURES
         val packageInfo = if (isArchive) {
-            pm.getPackageArchiveInfo(packageNameOrPath, flags)
+            try {
+                pm.getPackageArchiveInfo(packageNameOrPath, flags)
+            } catch (e: Exception) {
+                null
+            }
         } else {
             try {
                 pm.getPackageInfo(packageNameOrPath, flags)

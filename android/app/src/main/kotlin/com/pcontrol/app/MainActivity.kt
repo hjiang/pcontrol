@@ -22,9 +22,14 @@ import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
+
+    private val checkUpdateScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private lateinit var statusUsage: TextView
     private lateinit var statusAccessibility: TextView
@@ -121,6 +126,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        checkUpdateScope.cancel()
+    }
+
     override fun onResume() {
         super.onResume()
         refreshStatus()
@@ -213,7 +223,7 @@ class MainActivity : AppCompatActivity() {
         // In-flight guard: disable the button so only one check runs at a time.
         btnCheckUpdate.isEnabled = false
 
-        CoroutineScope(Dispatchers.IO).launch {
+        checkUpdateScope.launch {
             try {
                 val coordinator = UpdateCoordinator(
                     context = applicationContext,

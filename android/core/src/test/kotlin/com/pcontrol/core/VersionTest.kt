@@ -107,6 +107,12 @@ class VersionTest {
         assertNull(Version.compare("", ""))
     }
 
+    @Test
+    fun `compare returns null on integer overflow segment`() {
+        assertNull(Version.compare("9999999999999999.0.0", "1.0.0"))
+        assertNull(Version.compare("1.0.0", "1.9999999999999999.0"))
+    }
+
     // ── needsUpdate ───────────────────────────────────────────────────
 
     @Test

@@ -45,8 +45,10 @@ data class GitHubAsset(
  *
  * Design: Uses the same [OkHttpClient]-based pattern as [SyncClient].
  * Unauthenticated calls are rate-limited to 60/hour — our once-per-day
- * cadence stays under that, and the "check now" button is additionally
- * gated by update-prefs so it can't be hammered.
+ * cadence stays well under that. The manual "Check for updates" button
+ * calls [UpdateCoordinator.runOnce] with `force = true`, bypassing the
+ * 24h gate; the practical rate-limit protection is the GitHub API's own
+ * 60/hr limit.
  */
 class GitHubReleaseClient(
     private val repo: String = "hjiang/pcontrol",

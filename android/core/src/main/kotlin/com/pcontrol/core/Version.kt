@@ -48,8 +48,8 @@ object Version {
     fun compare(a: String, b: String): Int? {
         val na = parse(a) ?: return null
         val nb = parse(b) ?: return null
-        val partsA = na.split('.').map { it.toInt() }
-        val partsB = nb.split('.').map { it.toInt() }
+        val partsA = na.split('.').map { it.toIntOrNull() ?: return null }
+        val partsB = nb.split('.').map { it.toIntOrNull() ?: return null }
         for (i in 0..2) {
             val cmp = partsA[i].compareTo(partsB[i])
             if (cmp != 0) return cmp
