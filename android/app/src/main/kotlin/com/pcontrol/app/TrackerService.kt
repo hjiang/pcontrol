@@ -9,8 +9,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import com.pcontrol.app.update.UpdateCoordinator
+import com.pcontrol.app.update.UpdateResult
+import com.pcontrol.app.update.UpdateState
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
 import com.pcontrol.core.BrowserContext
@@ -23,6 +25,7 @@ import com.pcontrol.app.db.UsageCounterEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -33,6 +36,7 @@ class TrackerService : Service() {
 
     companion object {
         const val CHANNEL_ID = "pcontrol_tracker"
+        const val CHANNEL_ID_UPDATE = "pcontrol_update"
         const val NOTIFICATION_ID = 1
         const val TICK_INTERVAL_MS = 10_000L  // 10 seconds
         const val SYNC_INTERVAL_MS = 60_000L  // 60 seconds
@@ -53,7 +57,7 @@ class TrackerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        createNotificationChannels()
         startForeground(NOTIFICATION_ID, buildNotification())
     }
 
@@ -66,6 +70,7 @@ class TrackerService : Service() {
 
     override fun onDestroy() {
         tickJob?.cancel()
+        scope.cancel()
         super.onDestroy()
     }
 
@@ -91,6 +96,8 @@ class TrackerService : Service() {
             // 0 forces the first post-tick sync check to fire right away.
             lastSyncTime = 0L
 
+            val updateState = UpdateState(this@TrackerService)
+
             while (true) {
                 try {
                     onTick()
@@ -98,8 +105,9 @@ class TrackerService : Service() {
                     // Log and continue
                 }
 
-                // Sync every 60 seconds
                 val now = System.currentTimeMillis()
+
+                // Sync every 60 seconds
                 if (now - lastSyncTime >= SYNC_INTERVAL_MS) {
                     try {
                         onSync()
@@ -109,9 +117,53 @@ class TrackerService : Service() {
                     lastSyncTime = now
                 }
 
+                // Update check every 24 hours, independent of sync.
+                // Launched on a separate coroutine so the blocking download
+                // never stalls the 10-second usage-tracking tick loop.
+                if (updateState.autoUpdateEnabled &&
+                    now - updateState.lastUpdateCheckMs >= UpdateState.UPDATE_CHECK_INTERVAL_MS
+                ) {
+                    scope.launch {
+                        try {
+                            onUpdateCheck()
+                        } catch (e: Exception) {
+                            // Update failure must never kill tracking
+                        }
+                    }
+                }
+
                 delay(TICK_INTERVAL_MS)
             }
         }
+    }
+
+    private fun onUpdateCheck() {
+        val coordinator = UpdateCoordinator(
+            context = this,
+            versionName = BuildConfig.VERSION_NAME
+        )
+        val result = coordinator.runOnce()
+
+        when (result) {
+            is UpdateResult.INSTALL_TRIGGERED -> {
+                postUpdateNotification("Update downloaded — tap to install")
+            }
+            is UpdateResult.SIGNATURE_MISMATCH -> {
+                postUpdateNotification("Update available (manual install required)")
+            }
+            else -> { /* silent — already logged by coordinator */ }
+        }
+    }
+
+    private fun postUpdateNotification(text: String) {
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID_UPDATE)
+            .setContentTitle("pcontrol update")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setAutoCancel(true)
+            .build()
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(1001, notification)
     }
 
     private suspend fun onTick() {
@@ -458,15 +510,24 @@ class TrackerService : Service() {
         }
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val trackerChannel = NotificationChannel(
                 CHANNEL_ID,
                 "pcontrol tracker",
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            manager.createNotificationChannel(trackerChannel)
+
+            val updateChannel = NotificationChannel(
+                CHANNEL_ID_UPDATE,
+                "pcontrol updates",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Notifications when app updates are available"
+            }
+            manager.createNotificationChannel(updateChannel)
         }
     }
 

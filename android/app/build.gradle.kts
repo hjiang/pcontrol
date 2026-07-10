@@ -11,6 +11,12 @@ android {
     // Local release signing. "android/key.properties" is gitignored and present
     // only on dev machines; CI builds unsigned APKs (it signs with apksigner
     // separately), so this block is a no-op when the file is absent.
+    // Version injected by CI from the release tag (via -PappVersionName /
+    // -PappVersionCode). Defaults are for local dev builds; CI always
+    // overrides with the tag version so auto-update can compare correctly.
+    val appVersionName: String = project.findProperty("appVersionName") as String? ?: "0.0.5"
+    val appVersionCode: Int = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 5
+
     val keyProperties = rootProject.file("key.properties")
     if (keyProperties.exists()) {
         signingConfigs {
@@ -36,8 +42,12 @@ android {
         applicationId = "com.pcontrol.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
