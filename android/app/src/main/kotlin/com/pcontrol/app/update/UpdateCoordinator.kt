@@ -62,6 +62,10 @@ class UpdateCoordinator(
         // 2. Compare versions
         val installedVersion = versionName
         val result = com.pcontrol.core.Version.needsUpdate(installedVersion, updateInfo.version)
+        if (result == null) {
+            Log.w(TAG, "Cannot compare versions: installed=$installedVersion, release=${updateInfo.version}")
+            return UpdateResult.VERSION_ERROR
+        }
         if (result != com.pcontrol.core.UpdateCheckResult.NEEDS_UPDATE) {
             return UpdateResult.UP_TO_DATE
         }
@@ -111,6 +115,8 @@ sealed class UpdateResult {
     data object SIGNATURE_MISMATCH : UpdateResult()
     /** System install dialog could not be launched. */
     data object INSTALL_FAILED : UpdateResult()
+    /** Installed or release version could not be parsed. */
+    data object VERSION_ERROR : UpdateResult()
     /** System install dialog was presented successfully. */
     data object INSTALL_TRIGGERED : UpdateResult()
 }

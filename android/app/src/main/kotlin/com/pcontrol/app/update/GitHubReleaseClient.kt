@@ -70,20 +70,21 @@ class GitHubReleaseClient(
                 .header("User-Agent", "pcontrol")
                 .build()
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return null
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
 
-            val body = response.body.string()
-            val release = json.decodeFromString<GitHubRelease>(body)
+                val body = response.body.string()
+                val release = json.decodeFromString<GitHubRelease>(body)
 
-            val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") } ?: return null
-            val version = Version.parse(release.tagName) ?: return null
+                val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") } ?: return@use null
+                val version = Version.parse(release.tagName) ?: return@use null
 
-            UpdateInfo(
-                version = version,
-                downloadUrl = apkAsset.downloadUrl,
-                sizeBytes = apkAsset.size
-            )
+                UpdateInfo(
+                    version = version,
+                    downloadUrl = apkAsset.downloadUrl,
+                    sizeBytes = apkAsset.size
+                )
+            }
         } catch (e: Exception) {
             null
         }

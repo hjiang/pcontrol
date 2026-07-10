@@ -166,10 +166,11 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   auto-purged by the OS. Always delete on failure and superseded siblings to
   avoid a half-downloaded APK causing a confusing install-fail.
 - **GitHub unauthenticated rate limit is 60/hr.** The 24h cadence is far
-  under that; the "Check for updates" button in the UI is additionally gated
-  by `UpdateState.lastUpdateCheckMs`, so rapid manual taps don't hit the
-  rate limit. The coordinator logs the check on every call so the timestamp
-  is always refreshed even on failure.
+  under that. The "Check for updates" button in MainActivity calls
+  `runOnce(force = true)`, which intentionally bypasses the
+  `lastUpdateCheckMs` gate so the user can always check immediately. The
+  practical rate-limit protection against rapid manual taps is the HTTP
+  403 from GitHub itself (60/hr).
 
 - **`versionName`/`versionCode` must match the release tag — CI injects them.**
   `build.gradle.kts` hardcodes defaults (`versionName`, `versionCode`) for

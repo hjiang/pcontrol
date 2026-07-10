@@ -212,7 +212,7 @@ class MainActivity : AppCompatActivity() {
     private fun checkForUpdates() {
         CoroutineScope(Dispatchers.IO).launch {
             val coordinator = UpdateCoordinator(
-                context = this@MainActivity,
+                context = applicationContext,
                 versionName = BuildConfig.VERSION_NAME
             )
             val result = coordinator.runOnce(force = true)
@@ -220,6 +220,7 @@ class MainActivity : AppCompatActivity() {
             val message = when (result) {
                 is UpdateResult.INSTALL_TRIGGERED -> "Update downloaded — tap to install"
                 is UpdateResult.UP_TO_DATE -> "You're up to date"
+                is UpdateResult.VERSION_ERROR -> "Version comparison error"
                 is UpdateResult.NETWORK_ERROR -> "Could not check for updates (network)"
                 is UpdateResult.DOWNLOAD_FAILED -> "Download failed"
                 is UpdateResult.SIGNATURE_MISMATCH -> "Update available (manual) — signature mismatch"

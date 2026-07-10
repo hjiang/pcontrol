@@ -42,32 +42,33 @@ class ApkDownloader(
 
         return try {
             val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return null
+            client.newCall(request).execute().use responseScope@{ response ->
+                if (!response.isSuccessful) return@responseScope null
 
-            val body = response.body
-            val contentLength = body.contentLength()
+                val body = response.body
+                val contentLength = body.contentLength()
 
-            FileOutputStream(destFile).use { output ->
-                val buffer = ByteArray(8192)
-                var bytesRead: Long = 0
-                val input = body.byteStream()
+                FileOutputStream(destFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Long = 0
+                    val input = body.byteStream()
 
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n == -1) break
-                    output.write(buffer, 0, n)
-                    bytesRead += n
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n == -1) break
+                        output.write(buffer, 0, n)
+                        bytesRead += n
+                    }
+
+                    // If we know the expected size, verify we got it all
+                    if (contentLength > 0 && bytesRead != contentLength) {
+                        destFile.delete()
+                        return@responseScope null
+                    }
                 }
 
-                // If we know the expected size, verify we got it all
-                if (contentLength > 0 && bytesRead != contentLength) {
-                    destFile.delete()
-                    return null
-                }
+                destFile
             }
-
-            destFile
         } catch (e: Exception) {
             destFile.delete()
             null

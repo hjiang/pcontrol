@@ -3,13 +3,16 @@ package com.pcontrol.app
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.atomic.AtomicBoolean
 import com.pcontrol.app.update.UpdateCoordinator
 import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
@@ -35,6 +38,7 @@ import java.util.UUID
 class TrackerService : Service() {
 
     companion object {
+        const val TAG = "TrackerService"
         const val CHANNEL_ID = "pcontrol_tracker"
         const val CHANNEL_ID_UPDATE = "pcontrol_update"
         const val NOTIFICATION_ID = 1
@@ -46,6 +50,9 @@ class TrackerService : Service() {
     private var tickJob: Job? = null
     private var lastSyncTime = 0L
     private var currentForegroundPkg: String? = null
+
+    /** Guards against concurrent update checks in the tick loop (Stage 9). */
+    private val updateCheckInFlight = AtomicBoolean(false)
     private var ticksWithoutDomain = 0
 
     // Browser foreground session tracking
@@ -120,14 +127,18 @@ class TrackerService : Service() {
                 // Update check every 24 hours, independent of sync.
                 // Launched on a separate coroutine so the blocking download
                 // never stalls the 10-second usage-tracking tick loop.
+                // Guarded by AtomicBoolean so only one check runs at a time.
                 if (updateState.autoUpdateEnabled &&
-                    now - updateState.lastUpdateCheckMs >= UpdateState.UPDATE_CHECK_INTERVAL_MS
+                    now - updateState.lastUpdateCheckMs >= UpdateState.UPDATE_CHECK_INTERVAL_MS &&
+                    updateCheckInFlight.compareAndSet(false, true)
                 ) {
                     scope.launch {
                         try {
                             onUpdateCheck()
                         } catch (e: Exception) {
                             // Update failure must never kill tracking
+                        } finally {
+                            updateCheckInFlight.set(false)
                         }
                     }
                 }
@@ -151,15 +162,29 @@ class TrackerService : Service() {
             is UpdateResult.SIGNATURE_MISMATCH -> {
                 postUpdateNotification("Update available (manual install required)")
             }
+            is UpdateResult.VERSION_ERROR -> {
+                Log.w(TAG, "Version parse error during update check")
+            }
             else -> { /* silent — already logged by coordinator */ }
         }
     }
 
     private fun postUpdateNotification(text: String) {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_UPDATE)
             .setContentTitle("pcontrol update")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
