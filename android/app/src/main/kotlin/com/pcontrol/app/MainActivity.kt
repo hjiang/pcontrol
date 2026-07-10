@@ -239,6 +239,7 @@ class MainActivity : AppCompatActivity() {
                     is UpdateResult.DOWNLOAD_FAILED -> "Download failed"
                     is UpdateResult.SIGNATURE_MISMATCH -> "Update available (manual) — signature mismatch"
                     is UpdateResult.INSTALL_FAILED -> "Could not open install dialog"
+                    is UpdateResult.IN_PROGRESS -> "Update check already in progress"
                     is UpdateResult.DISABLED -> "Auto-update is disabled"
                     is UpdateResult.SKIPPED -> "Check again later"
                 }

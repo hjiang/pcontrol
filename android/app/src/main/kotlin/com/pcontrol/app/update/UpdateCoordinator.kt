@@ -3,6 +3,7 @@ package com.pcontrol.app.update
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Orchestrates the full auto-update pipeline:
@@ -26,6 +27,15 @@ class UpdateCoordinator(
 ) {
     companion object {
         private const val TAG = "UpdateCoordinator"
+
+        /**
+         * Process-wide in-flight guard so that only one [runOnce] call
+         * executes at a time across all instances (TrackerService periodic
+         * check and MainActivity manual check). Serialises downloads to
+         * the same deterministic filename to prevent races on the APK file
+         * and [UpdateState.downloadedApkPath].
+         */
+        private val inProgress = AtomicBoolean(false)
     }
 
     /**
@@ -48,6 +58,19 @@ class UpdateCoordinator(
             return UpdateResult.DISABLED
         }
 
+        if (!inProgress.compareAndSet(false, true)) {
+            return UpdateResult.IN_PROGRESS
+        }
+
+        try {
+            return doRunOnce(force)
+        } finally {
+            inProgress.set(false)
+        }
+    }
+
+    /** The actual pipeline, protected by [inProgress]. */
+    private fun doRunOnce(force: Boolean): UpdateResult {
         val now = System.currentTimeMillis()
         if (!force && (now - updateState.lastUpdateCheckMs < UpdateState.UPDATE_CHECK_INTERVAL_MS)) {
             return UpdateResult.SKIPPED
@@ -117,6 +140,8 @@ sealed class UpdateResult {
     data object INSTALL_FAILED : UpdateResult()
     /** Installed or release version could not be parsed. */
     data object VERSION_ERROR : UpdateResult()
+    /** Another update check is already running. */
+    data object IN_PROGRESS : UpdateResult()
     /** System install dialog was presented successfully. */
     data object INSTALL_TRIGGERED : UpdateResult()
 }

@@ -1,27 +1,22 @@
 package com.pcontrol.app.update
 
-import android.content.pm.PackageManager
-import org.junit.Assert.assertFalse
+import android.content.Context
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows
-import org.robolectric.shadows.ShadowPackageManager
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 class SignatureVerifierTest {
 
     private lateinit var context: android.content.Context
-    private lateinit var shadowPm: ShadowPackageManager
 
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
-        shadowPm = Shadows.shadowOf(context.packageManager)
     }
 
     @Test

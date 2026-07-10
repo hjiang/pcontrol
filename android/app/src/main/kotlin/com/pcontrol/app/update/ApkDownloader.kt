@@ -48,24 +48,26 @@ class ApkDownloader(
                 val body = response.body ?: return@responseScope null
                 val contentLength = body.contentLength()
 
-                FileOutputStream(destFile).use { output ->
-                    val buffer = ByteArray(8192)
-                    var bytesRead: Long = 0
-                    val input = body.byteStream()
-
-                    while (true) {
-                        val n = input.read(buffer)
-                        if (n == -1) break
-                        output.write(buffer, 0, n)
-                        bytesRead += n
+                // Close both streams before any size check so the FD is released
+                val bytesRead = body.byteStream().use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        val buffer = ByteArray(8192)
+                        var count = 0L
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n == -1) break
+                            output.write(buffer, 0, n)
+                            count += n
+                        }
+                        count
                     }
+                }
 
-                    // If we know the expected size (from HTTP header or API), verify
-                    val knownLength = if (expectedSize > 0) expectedSize else contentLength
-                    if (knownLength > 0 && bytesRead != knownLength) {
-                        destFile.delete()
-                        return@responseScope null
-                    }
+                // Validate size after all streams are closed
+                val knownLength = if (expectedSize > 0) expectedSize else contentLength
+                if (knownLength > 0 && bytesRead != knownLength) {
+                    destFile.delete()
+                    return@responseScope null
                 }
 
                 destFile
