@@ -252,7 +252,9 @@ class MainActivity : AppCompatActivity() {
                 }
             } finally {
                 runOnUiThread {
-                    btnCheckUpdate.isEnabled = true
+                    if (!isFinishing && !isDestroyed) {
+                        btnCheckUpdate.isEnabled = true
+                    }
                 }
             }
         }

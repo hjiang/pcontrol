@@ -15,7 +15,13 @@ android {
     // -PappVersionCode). Defaults are for local dev builds; CI always
     // overrides with the tag version so auto-update can compare correctly.
     val appVersionName: String = project.findProperty("appVersionName") as String? ?: "0.0.5"
-    val appVersionCode: Int = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 5
+    val appVersionCodeRaw = project.findProperty("appVersionCode") as String?
+    val appVersionCode: Int = if (appVersionCodeRaw != null) {
+        appVersionCodeRaw.toIntOrNull()
+            ?: error("Invalid -PappVersionCode value: '$appVersionCodeRaw' (must be a non-negative integer)")
+    } else {
+        5
+    }
 
     val keyProperties = rootProject.file("key.properties")
     if (keyProperties.exists()) {
