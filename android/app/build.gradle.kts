@@ -8,6 +8,30 @@ android {
     namespace = "com.pcontrol.app"
     compileSdk = 37
 
+    // Local release signing. "android/key.properties" is gitignored and present
+    // only on dev machines; CI builds unsigned APKs (it signs with apksigner
+    // separately), so this block is a no-op when the file is absent.
+    val keyProperties = rootProject.file("key.properties")
+    if (keyProperties.exists()) {
+        signingConfigs {
+            create("release") {
+                keyProperties.readText()
+                    .lineSequence()
+                    .filter { it.contains('=') }
+                    .associate {
+                        val (k, v) = it.split('=', limit = 2)
+                        k.trim() to v.trim()
+                    }
+                    .also { props ->
+                        storeFile = rootProject.file(props["storeFile"]!!)
+                        storePassword = props["storePassword"]!!
+                        keyAlias = props["keyAlias"]!!
+                        keyPassword = props["keyPassword"]!!
+                    }
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.pcontrol.app"
         minSdk = 26
@@ -19,6 +43,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (keyProperties.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

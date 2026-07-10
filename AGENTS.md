@@ -43,6 +43,11 @@ cd android && gradle :app:testDebugUnitTest
 cd server && go run ./cmd/pcontrold \
     --listen 127.0.0.1:8080 \
     --admin-password-hash "$(go run ./cmd/pcontrold hash-password <<< 'my-password')"
+
+# Build a signed release APK locally (needs android/key.properties + android/release.jks,
+# both gitignored — see "Local release signing" gotcha below)
+cd android && gradle :app:assembleRelease
+# Output: android/app/build/outputs/apk/release/app-release.apk
 ```
 
 CI (`.github/workflows/`): `server-tests.yml` runs `go test -count=1 ./...`,
@@ -113,6 +118,15 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   `http.FileServer` — a bare `http.FileServer(http.FS(staticFS))` behind
   `http.StripPrefix("/static/", ...)` returns 404 because the stripped
   path (`htmx.min.js`) doesn't exist at the embed root (`static/htmx.min.js`).
+- **Local release signing is opt-in via a gitignored `key.properties`.**
+  `android/app/build.gradle.kts` reads `android/key.properties` (pointing
+  at a local `android/release.jks`) **only when that file exists**; when
+  absent (as in CI), the `release` build type produces an unsigned APK and
+  the `android-*` tag workflow signs it separately with `apksigner`.
+  The local dev key is **not** the canonical release key — an APK signed
+  locally cannot share install lineage with a CI-signed `android-*`
+  release (different signing certs = different signers in Android's eyes).
+  See `docs/plans/06_local_signed_apk.md` for the full setup.
 
 ## Conventions
 

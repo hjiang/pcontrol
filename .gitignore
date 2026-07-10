@@ -10,6 +10,9 @@ android/build/
 android/app/build/
 android/core/build/
 android/local.properties
+android/key.properties
+android/*.jks
+android/*.keystore
 *.iml
 .idea/
 
@@ -21,6 +24,7 @@ android/local.properties
 
 # Nix
 result
+.direnv/
 
 # Android Studio
 android/.idea/
@@ -29,3 +33,6 @@ android/.externalNativeBuild/
 
 # macOS
 .DS_Store
+
+# Build artifacts
+pcontrol-app-release.apk
