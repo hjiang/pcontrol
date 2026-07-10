@@ -36,7 +36,8 @@ object Version {
             if (part.isEmpty()) return null
             if (!part.all { it.isDigit() }) return null
             // Reject segments that overflow Int — they'd cause confusing failures later
-            if (part.toLong() > Int.MAX_VALUE) return null
+            val longVal = part.toLongOrNull() ?: return null
+            if (longVal > Int.MAX_VALUE) return null
         }
         return s
     }

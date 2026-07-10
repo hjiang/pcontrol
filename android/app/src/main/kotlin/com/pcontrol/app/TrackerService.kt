@@ -165,6 +165,9 @@ class TrackerService : Service() {
             is UpdateResult.VERSION_ERROR -> {
                 Log.w(TAG, "Version parse error during update check")
             }
+            is UpdateResult.INSTALL_FAILED -> {
+                postUpdateNotification("Update downloaded but install failed")
+            }
             else -> { /* silent — already logged by coordinator */ }
         }
     }

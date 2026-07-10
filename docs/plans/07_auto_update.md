@@ -46,9 +46,9 @@ Add a first-class, opt-out auto-update path to the Android client that:
   `tag_name`, `name`, `published_at`, and `assets[]` where each asset has
   `name`, `size`, `browser_download_url`. Unauthenticated calls are rate
   limited to **60/hour** — comfortably above our once-per-day cadence.
-- **`versionName` is `"1.0.0"`** (`build.gradle.kts`, no `v` prefix). The
-  release tag carries `android-vX.Y.Z`. Both must normalize to `X.Y.Z`
-  before comparison.
+- **`versionName` is injected by CI** via `-PappVersionName` (default
+  `"1.0.0"` in `build.gradle.kts`), no `v` prefix. The release tag carries
+  `android-vX.Y.Z`. Both must normalize to `X.Y.Z` before comparison.
 - **Install authority:** on Android 8+ (minSdk 26) installing a third-party
   APK requires the `REQUEST_INSTALL_PACKAGES` permission **and** the user
   individually marking our app as an allowed source of "unknown apps"
