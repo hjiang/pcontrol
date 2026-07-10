@@ -117,7 +117,9 @@ object SignatureVerifier : Verifier {
             val signingInfo = packageInfo?.signingInfo ?: return null
             @Suppress("DEPRECATION")
             val signers = if (signingInfo.hasMultipleSigners()) {
-                signingInfo.apkContentsSigners
+                // Multiple signers means rotating or additional keys; hashing only
+                // signers[0] would give false confidence. Defer to the installer.
+                return null
             } else {
                 // signingCertificateHistory may be null on some OEM builds
                 signingInfo.signingCertificateHistory ?: signingInfo.apkContentsSigners

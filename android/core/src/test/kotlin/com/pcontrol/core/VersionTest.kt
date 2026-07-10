@@ -59,6 +59,12 @@ class VersionTest {
         assertNull(Version.parse("1.0.0-beta"))
     }
 
+    @Test
+    fun `parse returns null when segment exceeds Int range`() {
+        assertNull(Version.parse("9999999999.0.0"))
+        assertNull(Version.parse("1.9999999999.0"))
+    }
+
     // ── compare ──────────────────────────────────────────────────────
 
     @Test

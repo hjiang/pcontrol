@@ -2,7 +2,6 @@ package com.pcontrol.app.update
 
 import android.content.Context
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,9 +20,9 @@ class SignatureVerifierTest {
     }
 
     @Test
-    fun `matchesInstalled returns false when archive has no signing info`() {
-        // When getPackageArchiveInfo returns null signing info, SignatureVerifier
-        // now fails closed: unreadable archive package info → rejection.
+    fun `matchesInstalled returns false when archive packageInfo is unreadable`() {
+        // A dummy file that is not a real APK cannot have its packageName
+        // read via getPackageArchiveInfo → fails closed via matchesPackageName.
         val apkFile = File.createTempFile("test", ".apk").apply {
             writeText("dummy apk content")
             deleteOnExit()
@@ -34,23 +33,9 @@ class SignatureVerifierTest {
     }
 
     @Test
-    fun `matchesInstalled returns false when APK is non-installable file`() {
-        // A non-APK file with no real package info should be rejected.
-        val apkFile = File.createTempFile("test", ".apk").apply {
-            writeText("dummy apk content")
-            deleteOnExit()
-        }
-
-        val result = SignatureVerifier.matchesInstalled(context, apkFile)
-        assertFalse("should return false for non-installable archive", result)
-    }
-
-    @Test
     fun `matchesInstalled fails closed on missing file`() {
         // Non-existent APK path → getPackageArchiveInfo returns null → reject.
-        val badFile = File("/nonexistent/missing.apk")
-        // This should not throw — fail closed is the graceful behavior
-        val result = SignatureVerifier.matchesInstalled(context, badFile)
+        val result = SignatureVerifier.matchesInstalled(context, File("/nonexistent/missing.apk"))
         assertFalse("should return false (fail closed) on missing file", result)
     }
 }

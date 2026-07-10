@@ -31,10 +31,12 @@ object Version {
 
         val parts = s.split('.')
         if (parts.size != 3) return null
-        // Each part must be a non-negative integer, no leading zeros convention
+        // Each part must be a non-negative integer that fits in an Int
         for (part in parts) {
             if (part.isEmpty()) return null
             if (!part.all { it.isDigit() }) return null
+            // Reject segments that overflow Int — they'd cause confusing failures later
+            if (part.toLong() > Int.MAX_VALUE) return null
         }
         return s
     }
