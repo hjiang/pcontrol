@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AppCompat theme required by AppCompatActivity-based activities.
+         The manifest previously declared no android:theme, so activities
+         fell back to the platform Theme.DeviceDefault, which threw
+         "You need to use a Theme.AppCompat theme" in setContentView. -->
+    <style name="Pcontrol" parent="Theme.AppCompat.DayNight.DarkActionBar" />
+</resources>

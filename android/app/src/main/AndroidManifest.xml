@@ -12,7 +12,8 @@
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:theme="@style/Pcontrol">
 
         <activity
             android:name=".MainActivity"
