@@ -32,7 +32,7 @@
             sqlite
             # android
             jdk17
-            gradle
+            gradle_9
             android-tools
             androidComposition.androidsdk
             kotlin-language-server

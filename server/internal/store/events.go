@@ -71,6 +71,76 @@ func (s *Store) DistinctSubjects(deviceID int64) ([]domain.UsageTotal, error) {
 	return subjects, rows.Err()
 }
 
+// DailyTotals returns counted total seconds per day for a device over a
+// day range (inclusive) by aggregating per (kind, subject) and applying
+// exclusion rules. This variant loads the policy (and its exclusions) from
+// the store. Callers that already have the policy should use
+// DailyTotalsWithExclusions to avoid the extra query.
+func (s *Store) DailyTotals(deviceID int64, fromDay, toDay string) (map[string]int, error) {
+	policy, err := s.GetPolicy(deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("get policy for daily totals: %w", err)
+	}
+	return s.DailyTotalsWithExclusions(deviceID, fromDay, toDay, policy.Exclusions)
+}
+
+// DailyTotalsWithExclusions is like DailyTotals but accepts exclusions
+// directly, avoiding an extra GetPolicy call when the caller already
+// has the policy loaded.
+func (s *Store) DailyTotalsWithExclusions(deviceID int64, fromDay, toDay string, exclusions []domain.Exclusion) (map[string]int, error) {
+	rows, err := s.DB.Query(`
+		SELECT day, kind, subject, SUM(duration_seconds) AS total_seconds
+		FROM usage_events
+		WHERE device_id = ? AND day >= ? AND day <= ?
+		GROUP BY day, kind, subject
+		ORDER BY day, kind, subject
+	`, deviceID, fromDay, toDay)
+	if err != nil {
+		return nil, fmt.Errorf("query daily totals: %w", err)
+	}
+	defer rows.Close()
+
+	// Group raw totals by day
+	type rawGroup struct {
+		Kind    string
+		Subject string
+		Seconds int
+	}
+	dayGroups := make(map[string][]rawGroup)
+	for rows.Next() {
+		var day, kind, subject string
+		var seconds int
+		if err := rows.Scan(&day, &kind, &subject, &seconds); err != nil {
+			return nil, fmt.Errorf("scan daily total: %w", err)
+		}
+		dayGroups[day] = append(dayGroups[day], rawGroup{Kind: kind, Subject: subject, Seconds: seconds})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("daily totals rows: %w", err)
+	}
+
+	result := make(map[string]int)
+	for day, groups := range dayGroups {
+		var appTotals, webTotals []domain.UsageTotal
+		for _, g := range groups {
+			ut := domain.UsageTotal{
+				Kind:    domain.Kind(g.Kind),
+				Subject: g.Subject,
+				Seconds: g.Seconds,
+			}
+			switch ut.Kind {
+			case domain.KindApp:
+				appTotals = append(appTotals, ut)
+			case domain.KindWeb:
+				webTotals = append(webTotals, ut)
+			}
+		}
+		result[day] = domain.CountedTotalSeconds(appTotals, webTotals, exclusions)
+	}
+
+	return result, nil
+}
+
 // UsageTotals returns aggregated usage totals for a device on a given day.
 func (s *Store) UsageTotals(deviceID int64, day string) (appTotals, webTotals []domain.UsageTotal, err error) {
 	rows, err := s.DB.Query(`

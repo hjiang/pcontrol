@@ -95,6 +95,50 @@ func TestUsageTotals(t *testing.T) {
 	}
 }
 
+func TestDailyTotals(t *testing.T) {
+	s := newTestStore(t)
+	dev, _ := mustCreateDevice(t, s, "phone-1")
+
+	// Add an exclusion for "khanacademy.org" web usage
+	if _, err := s.AddExclusion(dev.ID, "web", "khanacademy.org"); err != nil {
+		t.Fatalf("AddExclusion: %v", err)
+	}
+
+	events := []domain.Event{
+		// Day 1: 120s app, 60s excluded web
+		{EventID: "d1e1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.game", Label: "Game", Day: "2026-07-03", StartedAt: time.Now(), DurationSeconds: 120},
+		{EventID: "d1e2", DeviceID: dev.ID, Kind: domain.KindWeb, Subject: "khanacademy.org", Label: "Khan", Day: "2026-07-03", StartedAt: time.Now(), DurationSeconds: 60},
+		// Day 2: 30s app, 200s non-excluded web
+		{EventID: "d2e1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.game", Label: "Game", Day: "2026-07-04", StartedAt: time.Now(), DurationSeconds: 30},
+		{EventID: "d2e2", DeviceID: dev.ID, Kind: domain.KindWeb, Subject: "youtube.com", Label: "YouTube", Day: "2026-07-04", StartedAt: time.Now(), DurationSeconds: 200},
+		// Day 3: 90s app (excluded app does not subtract)
+		{EventID: "d3e1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.other", Label: "Other", Day: "2026-07-05", StartedAt: time.Now(), DurationSeconds: 90},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	totals, err := s.DailyTotals(dev.ID, "2026-07-03", "2026-07-05")
+	if err != nil {
+		t.Fatalf("DailyTotals: %v", err)
+	}
+
+	// Day 1: 120s app - 60s excluded web = 60s = 1 min
+	if totals["2026-07-03"] != 60 {
+		t.Errorf("expected day 2026-07-03 total 60, got %d", totals["2026-07-03"])
+	}
+
+	// Day 2: 30s app only (web is non-excluded, already in browser app time)
+	if totals["2026-07-04"] != 30 {
+		t.Errorf("expected day 2026-07-04 total 30, got %d", totals["2026-07-04"])
+	}
+
+	// Day 3: 90s app (no exclusions match)
+	if totals["2026-07-05"] != 90 {
+		t.Errorf("expected day 2026-07-05 total 90, got %d", totals["2026-07-05"])
+	}
+}
+
 func TestUsageTotals_EmptyDay(t *testing.T) {
 	s := newTestStore(t)
 	dev, _ := mustCreateDevice(t, s, "phone-1")

@@ -17,7 +17,11 @@ data class SyncRequest(
     val deviceTime: String,
     @kotlinx.serialization.SerialName("policy_version")
     val policyVersion: Int,
-    val events: List<SyncEvent>
+    val events: List<SyncEvent>,
+    @kotlinx.serialization.SerialName("battery_percent")
+    val batteryPercent: Int? = null,
+    @kotlinx.serialization.SerialName("battery_charging")
+    val batteryCharging: Boolean? = null
 )
 
 @Serializable

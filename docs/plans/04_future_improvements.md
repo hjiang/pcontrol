@@ -74,7 +74,7 @@ percentage and whether the device is charging, updated on every sync
 - Old clients (no battery fields) still sync successfully; the dashboard
   shows nothing for them instead of a bogus value.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 1.1 Server: schema migration (version 2)
 
@@ -327,7 +327,7 @@ timestamp the parent must interpret.
 `last_seen_at` is within the last 5 minutes, otherwise a gray "offline"
 badge plus a human-readable age ("offline · 3 h").
 
-**Status**: Not Started
+**Status**: Complete
 
 **Implementation notes**:
 
@@ -361,7 +361,7 @@ device (and all its data) without touching sqlite3 by hand.
 button (with confirmation); after delete, the device disappears from the
 dashboard and its events/limits/exclusions/settings rows are gone.
 
-**Status**: Not Started
+**Status**: Complete
 
 **Implementation notes**:
 
@@ -398,7 +398,7 @@ the parent can spot trends, not just today's number.
 list) of the last 7 day-keys with total counted minutes per day, using the
 same exclusion rules as the daily total.
 
-**Status**: Not Started
+**Status**: Complete
 
 **Implementation notes**:
 

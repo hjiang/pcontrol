@@ -40,6 +40,8 @@ func NewRouter(s *store.Store, adminHash string) http.Handler {
 	mux.Handle("GET /devices/new", wa.requireSession(wa.deviceNewForm()))
 	mux.Handle("POST /devices/new", wa.requireSession(wa.deviceNew()))
 	mux.Handle("GET /devices/{id}", wa.requireSession(wa.deviceDetail()))
+	mux.Handle("POST /devices/{id}/rename", wa.requireSession(wa.deviceRename()))
+	mux.Handle("POST /devices/{id}/delete", wa.requireSession(wa.deviceDelete()))
 	mux.Handle("GET /devices/{id}/limits", wa.requireSession(wa.limitsPage()))
 	mux.Handle("POST /devices/{id}/limits", wa.requireSession(wa.addLimit()))
 	mux.Handle("POST /devices/{id}/limits/{limitId}/delete", wa.requireSession(wa.deleteLimit()))
