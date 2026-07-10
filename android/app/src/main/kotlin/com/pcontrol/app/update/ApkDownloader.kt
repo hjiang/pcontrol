@@ -43,9 +43,15 @@ class ApkDownloader(
         return try {
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use responseScope@{ response ->
-                if (!response.isSuccessful) return@responseScope null
+                if (!response.isSuccessful) {
+                    destFile.delete()
+                    return@responseScope null
+                }
 
-                val body = response.body ?: return@responseScope null
+                val body = response.body ?: run {
+                    destFile.delete()
+                    return@responseScope null
+                }
                 val contentLength = body.contentLength()
 
                 // Close both streams before any size check so the FD is released
