@@ -37,8 +37,14 @@ jobs:
           VERSION="${TAG#android-}"
           # Numeric version (no leading v) for embedding in the APK
           NUM="${VERSION#v}"
+          # Validate strict X.Y.Z format — each segment must be a non-negative integer
+          if ! [[ "$NUM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: '$VERSION' (expected X.Y.Z after stripping prefix)"
+            exit 1
+          fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$NUM"
-          VCODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+          # Force base-10 arithmetic; leading zeros are stripped safely with 10# prefix
+          VCODE=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "num=${NUM}" >> "$GITHUB_OUTPUT"

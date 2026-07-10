@@ -78,7 +78,10 @@ class GitHubReleaseClient(
                 val body = response.body?.string() ?: return@use null
                 val release = json.decodeFromString<GitHubRelease>(body)
 
-                val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") } ?: return@use null
+                // Prefer the expected pcontrol-v<version>.apk name, fall back to any .apk
+                val apkAsset = release.assets.firstOrNull {
+                    it.name.endsWith(".apk") && it.name.startsWith("pcontrol-")
+                } ?: release.assets.firstOrNull { it.name.endsWith(".apk") } ?: return@use null
                 val version = Version.parse(release.tagName) ?: return@use null
 
                 UpdateInfo(

@@ -1,6 +1,7 @@
 package com.pcontrol.app.update
 
 import android.content.Context
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -12,7 +13,7 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 class SignatureVerifierTest {
 
-    private lateinit var context: android.content.Context
+    private lateinit var context: Context
 
     @Before
     fun setUp() {
@@ -20,46 +21,36 @@ class SignatureVerifierTest {
     }
 
     @Test
-    fun `matchesInstalled returns true when archive has no signing info`() {
-        // When getPackageArchiveInfo returns null signing info (common for mock/CI APKs),
-        // SignatureVerifier degrades gracefully and returns true.
+    fun `matchesInstalled returns false when archive has no signing info`() {
+        // When getPackageArchiveInfo returns null signing info, SignatureVerifier
+        // now fails closed: unreadable archive package info → rejection.
         val apkFile = File.createTempFile("test", ".apk").apply {
             writeText("dummy apk content")
             deleteOnExit()
         }
 
-        // The apk has no real signing info -> returns true (graceful degradation)
         val result = SignatureVerifier.matchesInstalled(context, apkFile)
-        assertTrue("should return true when archive signer is unavailable", result)
+        assertFalse("should return false when archive packageInfo is unreadable", result)
     }
 
     @Test
-    fun `matchesInstalled returns true when APK is from same install`() {
-        // When the install is a self-reinstall of the same APK, the
-        // installed signer and the archive signer match. Robolectric
-        // returns the same mocked signing info for both.
+    fun `matchesInstalled returns false when APK is non-installable file`() {
+        // A non-APK file with no real package info should be rejected.
         val apkFile = File.createTempFile("test", ".apk").apply {
             writeText("dummy apk content")
             deleteOnExit()
         }
 
-        // In Robolectric, the installed app has no real signing cert (returns null),
-        // so SignatureVerifier falls through to returning true.
         val result = SignatureVerifier.matchesInstalled(context, apkFile)
-        assertTrue("should return true for same-signer scenario", result)
+        assertFalse("should return false for non-installable archive", result)
     }
 
     @Test
-    fun `matchesInstalled handles package info retrieval gracefully`() {
-        val apkFile = File.createTempFile("test", ".apk").apply {
-            writeText("dummy")
-            deleteOnExit()
-        }
-
-        // Non-existent APK path -> getPackageArchiveInfo returns null
+    fun `matchesInstalled fails closed on missing file`() {
+        // Non-existent APK path → getPackageArchiveInfo returns null → reject.
         val badFile = File("/nonexistent/missing.apk")
-        // This should not throw — always true is the safe fallback
+        // This should not throw — fail closed is the graceful behavior
         val result = SignatureVerifier.matchesInstalled(context, badFile)
-        assertTrue("should not crash on missing file", result)
+        assertFalse("should return false (fail closed) on missing file", result)
     }
 }

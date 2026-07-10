@@ -57,9 +57,9 @@ object SignatureVerifier : Verifier {
 
     /**
      * Returns false if the archive's [PackageInfo.packageName] can be read
-     * and differs from [expectedPackageName]. When the archive's package name
-     * cannot be read (e.g. corrupt APK), we allow the installation to proceed
-     * so the system installer can be the final judge.
+     * and differs from [expectedPackageName], OR if the archive's package
+     * info cannot be read at all (corrupt / non-APK file). Fails closed to
+     * prevent installing a package with an unexpected identity.
      */
     private fun matchesPackageName(
         pm: PackageManager,
@@ -69,9 +69,13 @@ object SignatureVerifier : Verifier {
         val archiveInfo = try {
             pm.getPackageArchiveInfo(apkFile.absolutePath, 0)
         } catch (e: Exception) {
-            Log.w(TAG, "Cannot read archive packageInfo — trust the installer", e)
-            return true
-        } ?: return true
+            Log.w(TAG, "Cannot read archive packageInfo — rejecting", e)
+            return false
+        }
+        if (archiveInfo == null) {
+            Log.w(TAG, "getPackageArchiveInfo returned null — rejecting")
+            return false
+        }
         if (archiveInfo.packageName != expectedPackageName) {
             Log.w(TAG, "Archive packageName '${archiveInfo.packageName}' != installed '$expectedPackageName' — rejecting")
             return false
