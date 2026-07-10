@@ -17,8 +17,12 @@ android {
     val appVersionName: String = project.findProperty("appVersionName") as String? ?: "0.0.5"
     val appVersionCodeRaw = project.findProperty("appVersionCode") as String?
     val appVersionCode: Int = if (appVersionCodeRaw != null) {
-        appVersionCodeRaw.toIntOrNull()
+        val parsed = appVersionCodeRaw.toIntOrNull()
             ?: error("Invalid -PappVersionCode value: '$appVersionCodeRaw' (must be a non-negative integer)")
+        if (parsed < 0) {
+            error("Invalid -PappVersionCode value: '$appVersionCodeRaw' (must be >= 0, got $parsed)")
+        }
+        parsed
     } else {
         5
     }

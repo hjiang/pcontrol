@@ -43,8 +43,16 @@ jobs:
             exit 1
           fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$NUM"
-          # Force base-10 arithmetic using a 1000-wide slot per segment so
-          # PATCH values up to 999 never collide with the next MINOR level.
+          # Validate segment ranges: each must fit in 0..999 to avoid
+          # versionCode collisions (e.g. MINOR=1000  would collide with
+          # the next MAJOR level).
+          for SEG in "$MAJOR" "$MINOR" "$PATCH"; do
+            if [ "$((10#$SEG))" -gt 999 ]; then
+              echo "::error::Segment '$SEG' exceeds 999 (versionCode would collide)"
+              exit 1
+            fi
+          done
+          # Force base-10 arithmetic using a 1000-wide slot per segment.
           VCODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"

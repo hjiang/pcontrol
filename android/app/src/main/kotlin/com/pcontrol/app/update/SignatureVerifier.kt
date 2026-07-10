@@ -130,7 +130,8 @@ object SignatureVerifier : Verifier {
                 signingInfo.signingCertificateHistory ?: signingInfo.apkContentsSigners
             }
 
-            if (signers.isNullOrEmpty()) return null
+            // If more than one cert in the history (key rotation), defer to installer
+            if (signers.isNullOrEmpty() || signers.size > 1) return null
             return digest.digest(signers[0].toByteArray())
         }
 
@@ -167,7 +168,8 @@ object SignatureVerifier : Verifier {
         }
 
         val signatures = packageInfo?.signatures ?: return null
-        if (signatures.isEmpty()) return null
+        // If multiple signatures are present, defer to the installer
+        if (signatures.isEmpty() || signatures.size > 1) return null
         return digest.digest(signatures[0].toByteArray())
     }
 }
