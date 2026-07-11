@@ -72,17 +72,6 @@ class BlockingCoordinator(
         val zone = ZoneId.systemDefault()
         val day = UsageDay.currentKey(zone)
 
-        val allCounters = db.usageCounterDao().getDay(day).map { e ->
-            com.pcontrol.core.UsageCounter(
-                day = e.day,
-                kind = e.kind,
-                subject = e.subject,
-                label = e.label,
-                seconds = e.seconds,
-                syncedSeconds = e.syncedSeconds
-            )
-        }
-
         val policyEntity = db.cachedPolicyDao().get()
         if (policyEntity == null) {
             if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: no cached policy")
@@ -92,6 +81,17 @@ class BlockingCoordinator(
         if (policy == null) {
             if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: failed to parse cached policy")
             return false
+        }
+
+        val allCounters = db.usageCounterDao().getDay(day).map { e ->
+            com.pcontrol.core.UsageCounter(
+                day = e.day,
+                kind = e.kind,
+                subject = e.subject,
+                label = e.label,
+                seconds = e.seconds,
+                syncedSeconds = e.syncedSeconds
+            )
         }
 
         val isKnownBrowser = BrowserRegistry.isKnownBrowser(pkg)
