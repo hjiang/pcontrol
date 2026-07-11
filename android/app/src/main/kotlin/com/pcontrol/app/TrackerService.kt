@@ -291,6 +291,12 @@ class TrackerService : Service() {
             ticksWithoutDomain = 0
         }
 
+        // Counters are durable at this point. Commit the cursor before
+        // best-effort enforcement so an enforcement failure cannot replay and
+        // double-count this tick's usage.
+        currentForegroundPkg = foregroundPkg
+        lastUsageEventQueryTime = endTime
+
         // ── Day rollover: clean up old warned entries ──────────────
         val dbForRollover = AppDatabase.getInstance(this)
         if (day != lastDay) {
@@ -305,12 +311,13 @@ class TrackerService : Service() {
         }
 
         // ── Enforcement (PolicyEngine + Enforcer) ───────────────────
-        runEnforcement(day, foregroundPkg, currentDomain)
-
-        // Commit foreground state and cursor together after every side effect
-        // has succeeded. A failed tick will replay the same transitions.
-        currentForegroundPkg = foregroundPkg
-        lastUsageEventQueryTime = endTime
+        try {
+            runEnforcement(day, foregroundPkg, currentDomain)
+        } catch (e: Exception) {
+            // Usage was already recorded and cursor-committed above. Keep the
+            // next tick from replaying the same interval and double-counting.
+            Log.w(TAG, "runEnforcement exception", e)
+        }
     }
 
     private suspend fun runEnforcement(day: String, pkg: String, domain: String?) {
