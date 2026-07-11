@@ -9,7 +9,6 @@ import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
 import com.pcontrol.core.UsageDay
 import com.pcontrol.core.Verdict
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
@@ -43,8 +42,10 @@ class BlockingCoordinator(
     /**
      * Checks if [pkg] should be blocked and launches [BlockedActivity] if so.
      *
-     * Returns true if an enforcement action was taken (BLOCK_APP), false
-     * otherwise (ALLOW, WARN already-warned, no policy, never-block, etc.).
+     * Returns true if the verdict was [Verdict.BLOCK_APP], false otherwise
+     * (ALLOW, WARN, no policy, never-block, parse failure, etc.).
+     * Note: WARN and BLOCK_WEB verdicts also trigger enforcement actions
+     * (notification or back-press) but still return false.
      *
      * This is a suspend function — callers must invoke it from a coroutine
      * (e.g. on Dispatchers.IO).
@@ -83,8 +84,13 @@ class BlockingCoordinator(
         }
 
         val policyEntity = db.cachedPolicyDao().get()
-        val policy = policyEntity?.let { parsePolicy(it.json) } ?: run {
-            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: no cached policy (entity=${policyEntity != null})")
+        if (policyEntity == null) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: no cached policy")
+            return false
+        }
+        val policy = parsePolicy(policyEntity.json)
+        if (policy == null) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: failed to parse cached policy")
             return false
         }
 
@@ -104,7 +110,13 @@ class BlockingCoordinator(
             return false
         }
 
-        if (BuildConfig.DEBUG) Log.d(TAG, "  verdict=$appVerdict for $pkg — launching BlockedActivity")
+        // WARN dedupe inline — we are already in a suspend context.
+        if (appVerdict == Verdict.WARN) {
+            if (db.warnedSubjectDao().exists(day, pkg) > 0) return false
+            db.warnedSubjectDao().insert(WarnedSubjectEntity(day, pkg))
+        }
+
+        if (BuildConfig.DEBUG) Log.d(TAG, "  verdict=$appVerdict for $pkg — enforcing")
 
         val label = resolveLabel(pkg)
         val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
@@ -120,13 +132,7 @@ class BlockingCoordinator(
             day = day,
             limitMessage = limitMessage,
             allowedSites = allowedSites,
-            startActivity = startActivity,
-            isAlreadyWarned = { d, s ->
-                runBlocking { db.warnedSubjectDao().exists(d, s) > 0 }
-            },
-            recordWarning = { d, s ->
-                runBlocking { db.warnedSubjectDao().insert(WarnedSubjectEntity(d, s)) }
-            }
+            startActivity = startActivity
         )
 
         return appVerdict == Verdict.BLOCK_APP

@@ -71,6 +71,7 @@ class BrowserAccessibilityService : AccessibilityService() {
     private lateinit var blockingCoordinator: BlockingCoordinator
 
     /** Last package that was evaluated, to avoid redundant enforcement calls. */
+    @Volatile
     private var lastCheckedPkg: String? = null
 
     override fun onServiceConnected() {
@@ -106,6 +107,7 @@ class BrowserAccessibilityService : AccessibilityService() {
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Enforcement check failed for $pkg", e)
+                        lastCheckedPkg = null
                     }
                 }
             }
