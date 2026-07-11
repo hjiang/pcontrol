@@ -45,8 +45,9 @@ class BlockingCoordinator(
      *
      * Returns true if the verdict was [Verdict.BLOCK_APP], false otherwise
      * (ALLOW, WARN, no policy, never-block, parse failure, etc.).
-     * Note: WARN and BLOCK_WEB verdicts also trigger enforcement actions
-     * (notification or back-press) but still return false.
+     * Note: a WARN verdict triggers a notification but still returns false.
+     * (BLOCK_WEB is not returned by evaluateApp — it comes from evaluateWeb
+     * in [TrackerService.runEnforcement].)
      *
      * This is a suspend function — callers must invoke it from a coroutine
      * (e.g. on Dispatchers.IO).
