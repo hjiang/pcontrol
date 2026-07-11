@@ -212,11 +212,6 @@ class TrackerService : Service() {
             previousForegroundPackage = previousForegroundPkg,
             events = eventList
         )
-        // Always retain the transition result. Otherwise events observed while
-        // the display is off would be discarded and a stale app could be
-        // charged after the display becomes interactive again.
-        currentForegroundPkg = foregroundPkg
-
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!powerManager.isInteractive) {
             // Do not attribute a retained foreground package while the display
@@ -233,6 +228,7 @@ class TrackerService : Service() {
             }
             browserForegroundPkg = null
             ticksWithoutDomain = 0
+            currentForegroundPkg = foregroundPkg
             lastUsageEventQueryTime = endTime
             return
         }
@@ -246,6 +242,7 @@ class TrackerService : Service() {
                     ticksWithoutDomain = 0
                 }
             }
+            currentForegroundPkg = foregroundPkg
             lastUsageEventQueryTime = endTime
             return
         }
@@ -270,7 +267,6 @@ class TrackerService : Service() {
             }
         }
 
-        currentForegroundPkg = foregroundPkg
         val zone = ZoneId.systemDefault()
         val day = UsageDay.currentKey(zone)
 
@@ -311,8 +307,9 @@ class TrackerService : Service() {
         // ── Enforcement (PolicyEngine + Enforcer) ───────────────────
         runEnforcement(day, foregroundPkg, currentDomain)
 
-        // Advance only after every side effect of this batch has succeeded.
-        // A failed tick will retry the same transitions on its next iteration.
+        // Commit foreground state and cursor together after every side effect
+        // has succeeded. A failed tick will replay the same transitions.
+        currentForegroundPkg = foregroundPkg
         lastUsageEventQueryTime = endTime
     }
 

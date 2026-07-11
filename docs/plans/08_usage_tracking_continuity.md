@@ -33,4 +33,4 @@ On the attached Android device, pcontrol has usage access, battery-optimization 
 - [x] Add failing regression test (failed as expected before implementation)
 - [x] Implement stateful foreground tracking
 - [x] Run automated tests (`gradle test`, `:app:assembleRelease`)
-- [ ] Restart monitoring and verify on the unlocked device
+- [x] Restart monitoring and verify the foreground service and continued usage-access polling on the unlocked device
