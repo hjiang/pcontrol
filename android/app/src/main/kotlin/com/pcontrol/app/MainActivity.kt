@@ -33,7 +33,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var statusUsage: TextView
     private lateinit var statusAccessibility: TextView
-    private lateinit var statusOverlay: TextView
     private lateinit var statusNotifications: TextView
     private lateinit var statusBattery: TextView
     private lateinit var statusServer: TextView
@@ -41,7 +40,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnUsage: Button
     private lateinit var btnAccessibility: Button
-    private lateinit var btnOverlay: Button
     private lateinit var btnNotifications: Button
     private lateinit var btnBattery: Button
     private lateinit var btnServer: Button
@@ -57,7 +55,6 @@ class MainActivity : AppCompatActivity() {
 
         statusUsage = findViewById(R.id.status_usage)
         statusAccessibility = findViewById(R.id.status_accessibility)
-        statusOverlay = findViewById(R.id.status_overlay)
         statusNotifications = findViewById(R.id.status_notifications)
         statusBattery = findViewById(R.id.status_battery)
         statusServer = findViewById(R.id.status_server)
@@ -65,7 +62,6 @@ class MainActivity : AppCompatActivity() {
 
         btnUsage = findViewById(R.id.btn_usage)
         btnAccessibility = findViewById(R.id.btn_accessibility)
-        btnOverlay = findViewById(R.id.btn_overlay)
         btnNotifications = findViewById(R.id.btn_notifications)
         btnBattery = findViewById(R.id.btn_battery)
         btnServer = findViewById(R.id.btn_server)
@@ -80,9 +76,6 @@ class MainActivity : AppCompatActivity() {
         }
         btnAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        btnOverlay.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
         }
         btnNotifications.setOnClickListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -150,7 +143,6 @@ class MainActivity : AppCompatActivity() {
     private fun refreshStatus() {
         val usageOk = hasUsageStatsPermission()
         val accessibilityOk = isAccessibilityServiceEnabled()
-        val overlayOk = hasOverlayPermission()
         val notificationsOk = hasNotificationPermission()
         val batteryOk = isBatteryOptimizationIgnored()
         val serverOk = isServerConfigured()
@@ -158,7 +150,6 @@ class MainActivity : AppCompatActivity() {
 
         statusUsage.text = if (usageOk) "\u2705 Usage access" else "\u274C Usage access"
         statusAccessibility.text = if (accessibilityOk) "\u2705 Accessibility service" else "\u274C Accessibility service"
-        statusOverlay.text = if (overlayOk) "\u2705 Draw over other apps" else "\u274C Draw over other apps"
         statusNotifications.text = if (notificationsOk) "\u2705 Notifications" else "\u274C Notifications"
         statusBattery.text = if (batteryOk) "\u2705 Battery optimization off" else "\u274C Battery optimization"
         statusServer.text = if (serverOk) "\u2705 Server configured" else "\u274C Server URL + token"
@@ -172,7 +163,6 @@ class MainActivity : AppCompatActivity() {
     private fun allPermissionsGranted(): Boolean {
         return hasUsageStatsPermission() &&
             isAccessibilityServiceEnabled() &&
-            hasOverlayPermission() &&
             hasNotificationPermission() &&
             isBatteryOptimizationIgnored() &&
             isServerConfigured()
@@ -199,12 +189,6 @@ class MainActivity : AppCompatActivity() {
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: ""
         return enabledServices.split(':').any { it.equals(service, ignoreCase = true) }
-    }
-
-    private fun hasOverlayPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(this)
-        } else true
     }
 
     private fun hasNotificationPermission(): Boolean {

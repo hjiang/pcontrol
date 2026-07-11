@@ -196,6 +196,15 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   blocking side-work on a **separate coroutine** (`scope.launch { ... }`)
   so the tick loop continues independently. See the existing gotcha about
   `onSync()` early-return for related context.
+- **HyperOS blocks background activity starts even with draw-over-other-apps.**
+  Never use `startActivity` as an automatic enforcement surface: Xiaomi can
+  reject it with `Abort background activity starts`/`MIUIOP(10021)`. The bound
+  accessibility service owns a `TYPE_ACCESSIBILITY_OVERLAY`; presentation
+  failures must attempt `GLOBAL_ACTION_HOME` and notify, not fall back to an
+  activity. On HyperOS 3/API 36 an `AccessibilityService` is not a visual
+  context: create the overlay context from `createDisplayContext(defaultDisplay)`
+  before `createWindowContext`, or it throws before `addView`. Keep foreground
+  generations and overlay mutations serialized there.
 
 ## Conventions
 

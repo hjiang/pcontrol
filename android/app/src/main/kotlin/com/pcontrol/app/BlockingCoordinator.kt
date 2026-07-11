@@ -2,7 +2,6 @@ package com.pcontrol.app
 
 import android.content.Context
 import android.util.Log
-import android.view.accessibility.AccessibilityEvent
 import com.pcontrol.app.db.AppDatabase
 import com.pcontrol.app.db.WarnedSubjectEntity
 import com.pcontrol.core.BrowserContext
@@ -14,19 +13,20 @@ import kotlinx.serialization.json.Json
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 
+/** The complete, non-presentation result for one foreground observation. */
+data class ForegroundEvaluation(
+    val appVerdict: Verdict,
+    val webVerdict: Verdict,
+    val appRequest: BlockRequest?,
+    val webRequest: BlockRequest?,
+    /** A validated controller must dispatch this before the two-strike fallback. */
+    val webBack: Boolean
+)
+
 /**
- * Shared app-blocking enforcement logic used by both [TrackerService] and
- * [BrowserAccessibilityService].
- *
- * Loads the cached policy and today's usage counters, evaluates the
- * verdict via [PolicyEngine], and delegates to [Enforcer].
- *
- * The accessibility service calls this on [AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED] events
- * so app blocking works even when the TrackerService tick loop is throttled
- * by OEM battery management (e.g. MIUI).
- *
- * @param context Android context for DB, package manager, and activity launches.
- * @param db injectable for testing; defaults to the [AppDatabase] singleton.
+ * Loads cached policy/counters and returns enforcement requests without
+ * presenting them. A BLOCK_APP verdict is therefore never reported as a
+ * successful block until [BlockingController] reports a presentation outcome.
  */
 class BlockingCoordinator(
     private val context: Context,
@@ -34,136 +34,119 @@ class BlockingCoordinator(
 ) {
     companion object {
         private const val TAG = "BlockingCoordinator"
-
         private val jsonLib = Json { ignoreUnknownKeys = true }
     }
 
     private val labelCache = ConcurrentHashMap<String, String>()
 
-    /**
-     * Checks if [pkg] should be blocked and launches [BlockedActivity] if so.
-     *
-     * Returns true if the verdict was [Verdict.BLOCK_APP], false otherwise
-     * (ALLOW, WARN, no policy, never-block, parse failure, etc.).
-     * Note: a WARN verdict triggers a notification but still returns false.
-     * (BLOCK_WEB is not returned by evaluateApp — it comes from evaluateWeb
-     * in [TrackerService.runEnforcement].)
-     *
-     * This is a suspend function — callers must invoke it from a coroutine
-     * (e.g. on Dispatchers.IO).
-     */
-    suspend fun checkAndEnforceApp(
+    suspend fun evaluateForeground(
         pkg: String,
-        startActivity: (android.content.Intent) -> Boolean = { intent ->
-            try {
-                context.startActivity(intent)
-                true
-            } catch (e: Exception) {
-                Log.w(TAG, "startActivity failed", e)
-                false
-            }
+        domain: String?,
+        ticksWithoutDomain: Int = 0
+    ): ForegroundEvaluation {
+        require(pkg.isNotBlank()) { "Foreground package must not be blank" }
+        val day = UsageDay.currentKey(ZoneId.systemDefault())
+        val neverBlock = NeverBlockResolver.resolve(context)
+        if (pkg in neverBlock) {
+            return ForegroundEvaluation(Verdict.ALLOW, Verdict.ALLOW, null, null, false)
         }
-    ): Boolean {
-        if (BuildConfig.DEBUG) Log.d(TAG, "checkAndEnforceApp called for pkg=$pkg")
-        val neverBlockSet = NeverBlockResolver.resolve(context)
-        if (pkg in neverBlockSet) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: $pkg is in neverBlockSet")
-            return false
-        }
-
-        val zone = ZoneId.systemDefault()
-        val day = UsageDay.currentKey(zone)
 
         val policyEntity = db.cachedPolicyDao().get()
-        if (policyEntity == null) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: no cached policy")
-            return false
-        }
-        val policy = parsePolicy(policyEntity.json)
+        val policy = policyEntity?.let { parsePolicy(it.json) }
         if (policy == null) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: failed to parse cached policy")
-            return false
+            return ForegroundEvaluation(Verdict.ALLOW, Verdict.ALLOW, null, null, false)
         }
-
-        val allCounters = db.usageCounterDao().getDay(day).map { e ->
+        val counters = db.usageCounterDao().getDay(day).map { entry ->
             com.pcontrol.core.UsageCounter(
-                day = e.day,
-                kind = e.kind,
-                subject = e.subject,
-                label = e.label,
-                seconds = e.seconds,
-                syncedSeconds = e.syncedSeconds
+                day = entry.day,
+                kind = entry.kind,
+                subject = entry.subject,
+                label = entry.label,
+                seconds = entry.seconds,
+                syncedSeconds = entry.syncedSeconds
             )
         }
-
-        val isKnownBrowser = BrowserRegistry.isKnownBrowser(pkg)
-        val browserContext = if (isKnownBrowser) {
-            BrowserContext(isRegistered = true, currentDomain = null, ticksWithoutDomain = 0)
+        val knownBrowser = BrowserRegistry.isKnownBrowser(pkg)
+        val browserContext = if (knownBrowser) {
+            BrowserContext(true, domain, ticksWithoutDomain)
         } else null
-
-        val appSeconds = allCounters
-            .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
+        val appSeconds = counters.firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
         val appVerdict = PolicyEngine.evaluateApp(
-            pkg, appSeconds, allCounters, policy, browserContext, neverBlockSet
+            pkg, appSeconds, counters, policy, browserContext, neverBlock
         )
-
-        if (appVerdict == Verdict.ALLOW) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "  verdict=ALLOW for $pkg (appSeconds=$appSeconds, policy has ${policy.limits.size} limits)")
-            return false
-        }
-
-        // WARN dedupe inline — we are already in a suspend context.
-        if (appVerdict == Verdict.WARN) {
-            if (db.warnedSubjectDao().exists(day, pkg) > 0) return false
-            db.warnedSubjectDao().insert(WarnedSubjectEntity(day, pkg))
-        }
-
-        if (BuildConfig.DEBUG) Log.d(TAG, "  verdict=$appVerdict for $pkg — enforcing")
-
         val label = resolveLabel(pkg)
-        val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
-        val allowedSites = policy.exclusions
-            .filter { it.kind == "web" }
-            .map { it.subject }
-
-        Enforcer.handleVerdict(
-            context = context,
-            verdict = appVerdict,
-            subject = pkg,
-            label = label,
-            day = day,
-            limitMessage = limitMessage,
-            allowedSites = allowedSites,
-            startActivity = startActivity
+        val allowedSites = policy.exclusions.filter { it.kind == "web" }.map { it.subject }
+        val appAction = handleVerdict(
+            appVerdict, pkg, label, day,
+            buildLimitMessage(pkg, label, appVerdict, appSeconds, policy), allowedSites
         )
 
-        return appVerdict == Verdict.BLOCK_APP
+        val webSeconds = counters.firstOrNull { it.kind == "web" && it.subject == domain }?.seconds ?: 0
+        val webVerdict = if (knownBrowser) {
+            PolicyEngine.evaluateWeb(domain, webSeconds, counters, policy, ticksWithoutDomain)
+        } else {
+            Verdict.ALLOW
+        }
+        val webSubject = domain ?: pkg
+        // An app-level block wins the composite decision, so do not dispatch
+        // a web BACK action behind an app overlay.
+        val webAction = if (appAction is EnforcementAction.Show) {
+            EnforcementAction.None
+        } else {
+            handleVerdict(
+                webVerdict, webSubject, label, day,
+                buildLimitMessage(webSubject, label, webVerdict, webSeconds, policy), allowedSites
+            )
+        }
+        return ForegroundEvaluation(
+            appVerdict = appVerdict,
+            webVerdict = webVerdict,
+            appRequest = (appAction as? EnforcementAction.Show)?.request,
+            webRequest = (webAction as? EnforcementAction.Show)?.request,
+            webBack = webAction == EnforcementAction.Back
+        )
     }
 
-    // ── shared helpers (extracted from TrackerService) ────────────────
-
-    fun parsePolicy(json: String): PolicyV2? {
-        return try {
-            val resp = jsonLib.decodeFromString<PolicyResponse>(json)
-            PolicyV2(
-                version = resp.version,
-                totalDailyLimitMinutes = resp.totalDailyLimitMinutes,
-                warnThresholdPercent = resp.warnThresholdPercent,
-                limits = resp.limits.map { l ->
-                    com.pcontrol.core.LimitDef(
-                        kind = l.kind,
-                        subject = l.subject,
-                        dailyLimitMinutes = l.dailyLimitMinutes
-                    )
-                },
-                exclusions = resp.exclusions.map { e ->
-                    com.pcontrol.core.ExclusionDef(kind = e.kind, subject = e.subject)
-                }
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse cached policy JSON", e)
-            null
+    private suspend fun handleVerdict(
+        verdict: Verdict,
+        subject: String,
+        label: String,
+        day: String,
+        message: String,
+        allowedSites: List<String>
+    ): EnforcementAction {
+        if (verdict == Verdict.WARN && db.warnedSubjectDao().exists(day, subject) > 0) {
+            return EnforcementAction.None
         }
+        return Enforcer.handleVerdict(
+            context = context,
+            verdict = verdict,
+            subject = subject,
+            label = label,
+            day = day,
+            limitMessage = message,
+            allowedSites = allowedSites,
+            isAlreadyWarned = { _, _ -> false },
+            recordWarning = { d, s ->
+                kotlinx.coroutines.runBlocking { db.warnedSubjectDao().insert(WarnedSubjectEntity(d, s)) }
+            }
+        )
+    }
+
+    fun parsePolicy(json: String): PolicyV2? = try {
+        val response = jsonLib.decodeFromString<PolicyResponse>(json)
+        PolicyV2(
+            version = response.version,
+            totalDailyLimitMinutes = response.totalDailyLimitMinutes,
+            warnThresholdPercent = response.warnThresholdPercent,
+            limits = response.limits.map {
+                com.pcontrol.core.LimitDef(it.kind, it.subject, it.dailyLimitMinutes)
+            },
+            exclusions = response.exclusions.map { com.pcontrol.core.ExclusionDef(it.kind, it.subject) }
+        )
+    } catch (e: Exception) {
+        Log.w(TAG, "Failed to parse cached policy JSON", e)
+        null
     }
 
     fun buildLimitMessage(
@@ -172,38 +155,29 @@ class BlockingCoordinator(
         verdict: Verdict,
         seconds: Int,
         policy: PolicyV2?
-    ): String {
-        return when (verdict) {
-            Verdict.BLOCK_APP -> "$label: limit reached"
-            Verdict.BLOCK_WEB -> "$label: site blocked"
-            Verdict.WARN -> {
-                if (policy != null) {
-                    val appLimit = policy.limits.firstOrNull {
-                        (it.kind == "app" || it.kind == "web") && it.subject == subject
-                    }
-                    if (appLimit != null) {
-                        "$label: ${seconds / 60} of ${appLimit.dailyLimitMinutes} minutes used"
-                    } else if (policy.totalDailyLimitMinutes != null) {
-                        "$label: ${seconds / 60} of ${policy.totalDailyLimitMinutes} minutes used"
-                    } else {
-                        "$label: $subject limit warning"
-                    }
-                } else {
-                    "$label: limit warning"
-                }
+    ): String = when (verdict) {
+        Verdict.BLOCK_APP -> "$label: limit reached"
+        Verdict.BLOCK_WEB -> "$label: site blocked"
+        Verdict.WARN -> {
+            val limit = policy?.limits?.firstOrNull {
+                (it.kind == "app" || it.kind == "web") && it.subject == subject
             }
-            else -> "$label: $subject"
+            when {
+                limit != null -> "$label: ${seconds / 60} of ${limit.dailyLimitMinutes} minutes used"
+                policy?.totalDailyLimitMinutes != null -> "$label: ${seconds / 60} of ${policy.totalDailyLimitMinutes} minutes used"
+                else -> "$label: limit warning"
+            }
         }
+        Verdict.ALLOW -> "$label: $subject"
     }
 
     fun resolveLabel(pkg: String): String {
         labelCache[pkg]?.let { return it }
         return try {
-            val appInfo = context.packageManager.getApplicationInfo(pkg, 0)
-            val label = context.packageManager.getApplicationLabel(appInfo).toString()
-            labelCache[pkg] = label
-            label
-        } catch (e: Exception) {
+            context.packageManager.getApplicationLabel(
+                context.packageManager.getApplicationInfo(pkg, 0)
+            ).toString().also { labelCache[pkg] = it }
+        } catch (_: Exception) {
             pkg
         }
     }

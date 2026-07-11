@@ -18,5 +18,6 @@ pcontrol is a self-hosted parental-control system. A Go server provides a JSON A
 ## Enforcement and privacy
 
 - Enforcement must operate from the cached policy when the server is unavailable.
+- A policy-blocked foreground app or browser domain must be made unusable without relying on a background activity launch permission. The accessibility-owned blocking surface consumes app touches; if it cannot attach, the client must attempt to return the user Home and show a block notification.
 - Device bearer tokens are stored only as hashes on the server.
 - Usage access and the required Android permissions must be granted before monitoring can start.

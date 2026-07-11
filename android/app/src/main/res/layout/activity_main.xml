@@ -46,20 +46,6 @@
             android:layout_marginBottom="12dp" />
 
         <TextView
-            android:id="@+id/status_overlay"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="❌ Draw over other apps"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/btn_overlay"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Grant Overlay Permission"
-            android:layout_marginBottom="12dp" />
-
-        <TextView
             android:id="@+id/status_notifications"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
