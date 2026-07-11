@@ -67,6 +67,7 @@ object Enforcer {
                 context.startActivity(intent)
                 true
             } catch (e: Exception) {
+                android.util.Log.w("Enforcer", "startActivity failed", e)
                 false
             }
         },
@@ -162,6 +163,7 @@ object Enforcer {
                 context.startActivity(intent)
                 true
             } catch (e: Exception) {
+                android.util.Log.w("Enforcer", "startActivity failed", e)
                 false
             }
         },
