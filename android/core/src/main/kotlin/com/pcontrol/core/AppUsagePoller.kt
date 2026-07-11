@@ -9,7 +9,8 @@ object AppUsagePoller {
     /**
      * Returns the foreground package after applying [events] to an empty state.
      *
-     * This convenience method is for a self-contained event sequence. Call
+     * Precondition: [events] is ordered oldest first. This convenience method
+     * is for a self-contained event sequence. Call
      * [updateForegroundPackage] when processing successive event batches.
      */
     fun extractForegroundPackage(events: List<AppEvent>): String? =

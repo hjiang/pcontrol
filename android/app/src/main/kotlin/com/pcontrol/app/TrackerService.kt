@@ -203,7 +203,12 @@ class TrackerService : Service() {
             val event = android.app.usage.UsageEvents.Event()
             usageEvents.getNextEvent(event)
             val pkg = event.packageName ?: continue
-            eventList.add(AppEvent(pkg, event.eventType))
+            when (event.eventType) {
+                AppEvent.ACTIVITY_RESUMED,
+                AppEvent.ACTIVITY_PAUSED,
+                AppEvent.MOVE_TO_FOREGROUND,
+                AppEvent.MOVE_TO_BACKGROUND -> eventList.add(AppEvent(pkg, event.eventType))
+            }
         }
         // UsageEvents does not implement Closeable; resources freed by GC
 
