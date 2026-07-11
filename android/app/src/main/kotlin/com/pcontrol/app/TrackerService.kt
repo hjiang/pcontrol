@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.atomic.AtomicBoolean
@@ -49,6 +50,7 @@ class TrackerService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var tickJob: Job? = null
     private var lastSyncTime = 0L
+    private var lastUsageEventQueryTime: Long? = null
     private var currentForegroundPkg: String? = null
 
     /** Guards against concurrent update checks in the tick loop (Stage 9). */
@@ -90,6 +92,7 @@ class TrackerService : Service() {
             // §9: sync immediately on service start, then every 60s.
             // 0 forces the first post-tick sync check to fire right away.
             lastSyncTime = 0L
+            lastUsageEventQueryTime = null
 
             val updateState = UpdateState(this@TrackerService)
 
@@ -185,9 +188,13 @@ class TrackerService : Service() {
     private suspend fun onTick() {
         val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
 
-        // Query events from the last 60 seconds
+        // Bootstrap from a short window, then consume each event only once.
+        // Foreground events are transitions, not periodic heartbeats, so a
+        // rolling window would forget an app that stays open for over a minute.
         val endTime = System.currentTimeMillis()
-        val startTime = endTime - 60_000
+        val startTime = lastUsageEventQueryTime
+            ?.takeIf { it <= endTime }
+            ?: (endTime - 60_000)
 
         val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
         val eventList = mutableListOf<AppEvent>()
@@ -196,15 +203,43 @@ class TrackerService : Service() {
             val event = android.app.usage.UsageEvents.Event()
             usageEvents.getNextEvent(event)
             val pkg = event.packageName ?: continue
-            eventList.add(AppEvent(pkg, event.eventType))
+            when (event.eventType) {
+                AppEvent.ACTIVITY_RESUMED,
+                AppEvent.ACTIVITY_PAUSED,
+                AppEvent.MOVE_TO_FOREGROUND,
+                AppEvent.MOVE_TO_BACKGROUND -> eventList.add(AppEvent(pkg, event.eventType))
+            }
         }
         // UsageEvents does not implement Closeable; resources freed by GC
 
-        val foregroundPkg = AppUsagePoller.extractForegroundPackage(eventList)
+        val previousForegroundPkg = currentForegroundPkg
+        val foregroundPkg = AppUsagePoller.updateForegroundPackage(
+            previousForegroundPackage = previousForegroundPkg,
+            events = eventList
+        )
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!powerManager.isInteractive) {
+            // Do not attribute a retained foreground package while the display
+            // is off. Browser domain state is not valid across this boundary.
+            previousForegroundPkg?.let { pkg ->
+                if (BrowserRegistry.isKnownBrowser(pkg)) {
+                    BrowserAccessibilityService.domainCache.clear(pkg)
+                }
+            }
+            foregroundPkg?.let { pkg ->
+                if (BrowserRegistry.isKnownBrowser(pkg)) {
+                    BrowserAccessibilityService.domainCache.clear(pkg)
+                }
+            }
+            browserForegroundPkg = null
+            ticksWithoutDomain = 0
+            currentForegroundPkg = foregroundPkg
+            lastUsageEventQueryTime = endTime
+            return
+        }
 
         if (foregroundPkg == null) {
-            // Screen off or no activity — no attribution this tick
-            currentForegroundPkg?.let { pkg ->
+            previousForegroundPkg?.let { pkg ->
                 // Browser left foreground
                 if (BrowserRegistry.isKnownBrowser(pkg)) {
                     BrowserAccessibilityService.domainCache.clear(pkg)
@@ -212,11 +247,12 @@ class TrackerService : Service() {
                     ticksWithoutDomain = 0
                 }
             }
-            currentForegroundPkg = null
+            currentForegroundPkg = foregroundPkg
+            lastUsageEventQueryTime = endTime
             return
         }
 
-        val prevPkg = currentForegroundPkg
+        val prevPkg = previousForegroundPkg
 
         // Handle browser foreground transitions
         if (prevPkg != foregroundPkg) {
@@ -236,7 +272,6 @@ class TrackerService : Service() {
             }
         }
 
-        currentForegroundPkg = foregroundPkg
         val zone = ZoneId.systemDefault()
         val day = UsageDay.currentKey(zone)
 
@@ -261,6 +296,12 @@ class TrackerService : Service() {
             ticksWithoutDomain = 0
         }
 
+        // Counters are durable at this point. Commit the cursor before
+        // best-effort enforcement so an enforcement failure cannot replay and
+        // double-count this tick's usage.
+        currentForegroundPkg = foregroundPkg
+        lastUsageEventQueryTime = endTime
+
         // ── Day rollover: clean up old warned entries ──────────────
         val dbForRollover = AppDatabase.getInstance(this)
         if (day != lastDay) {
@@ -275,7 +316,13 @@ class TrackerService : Service() {
         }
 
         // ── Enforcement (PolicyEngine + Enforcer) ───────────────────
-        runEnforcement(day, foregroundPkg, currentDomain)
+        try {
+            runEnforcement(day, foregroundPkg, currentDomain)
+        } catch (e: Exception) {
+            // Usage was already recorded and cursor-committed above. Keep the
+            // next tick from replaying the same interval and double-counting.
+            Log.w(TAG, "runEnforcement exception", e)
+        }
     }
 
     private suspend fun runEnforcement(day: String, pkg: String, domain: String?) {

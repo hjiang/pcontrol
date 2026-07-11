@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Per-browser foreground-session cache for the last successfully parsed domain.
@@ -18,7 +19,8 @@ import kotlinx.coroutines.launch
  * - `get(pkg)`: returns the last good domain, or null if never read.
  */
 class BrowserDomainCache {
-    private val cache = mutableMapOf<String, String>()
+    // Read by TrackerService while this accessibility service writes it.
+    private val cache = ConcurrentHashMap<String, String>()
 
     /** Update the cache for [pkg] with [domain]. null values are ignored (keep last good). */
     fun update(pkg: String, domain: String?) {
