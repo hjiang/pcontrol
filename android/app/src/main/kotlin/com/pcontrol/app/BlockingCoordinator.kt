@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Loads the cached policy and today's usage counters, evaluates the
  * verdict via [PolicyEngine], and delegates to [Enforcer].
  *
- * The accessibility service calls this on [TYPE_WINDOW_STATE_CHANGED] events
+ * The accessibility service calls this on [AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED] events
  * so app blocking works even when the TrackerService tick loop is throttled
  * by OEM battery management (e.g. MIUI).
  *

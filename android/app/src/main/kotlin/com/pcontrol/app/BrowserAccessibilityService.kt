@@ -43,7 +43,7 @@ class BrowserDomainCache {
  * 1. **Reads the URL bar** of known browsers (updates [domainCache] when
  *    the URL bar content changes in a registered browser).
  *
- * 2. **Enforces app blocking** on [TYPE_WINDOW_STATE_CHANGED] events.
+ * 2. **Enforces app blocking** on [AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED] events.
  *    When an app comes to the foreground, the service checks
  *    the cached policy and usage counters via [BlockingCoordinator]. If
  *    the app has exceeded its limit, [BlockedActivity] is launched
@@ -74,7 +74,7 @@ class BrowserAccessibilityService : AccessibilityService() {
     private var lastCheckedPkg: String? = null
 
     override fun onServiceConnected() {
-        Log.w(TAG, "onServiceConnected — accessibility service bound")
+        if (BuildConfig.DEBUG) Log.d(TAG, "onServiceConnected — accessibility service bound")
         instance = this
         blockingCoordinator = BlockingCoordinator(this)
     }
