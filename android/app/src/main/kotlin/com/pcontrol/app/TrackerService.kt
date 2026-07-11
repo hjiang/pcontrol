@@ -64,6 +64,7 @@ class TrackerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        blockingCoordinator = BlockingCoordinator(this)
         createNotificationChannels()
         startForeground(NOTIFICATION_ID, buildNotification())
     }
@@ -81,20 +82,7 @@ class TrackerService : Service() {
         super.onDestroy()
     }
 
-    /** Cache for resolved application labels. */
-    private val labelCache = mutableMapOf<String, String>()
-
-    private fun resolveLabel(pkg: String): String {
-        labelCache[pkg]?.let { return it }
-        return try {
-            val appInfo = packageManager.getApplicationInfo(pkg, 0)
-            val label = packageManager.getApplicationLabel(appInfo).toString()
-            labelCache[pkg] = label
-            label
-        } catch (e: Exception) {
-            pkg // fallback to package name
-        }
-    }
+    private lateinit var blockingCoordinator: BlockingCoordinator
 
     private fun startTicks() {
         tickJob?.cancel()
@@ -254,7 +242,7 @@ class TrackerService : Service() {
 
         // Record app usage
         val db = AppDatabase.getInstance(this)
-        val label = resolveLabel(foregroundPkg)
+        val label = blockingCoordinator.resolveLabel(foregroundPkg)
 
         incrementCounter(db, day, "app", foregroundPkg, label)
 
@@ -306,7 +294,7 @@ class TrackerService : Service() {
 
         // Load cached policy
         val policyEntity = db.cachedPolicyDao().get()
-        val policy = policyEntity?.let { parsePolicy(it.json) }
+        val policy = policyEntity?.let { blockingCoordinator.parsePolicy(it.json) }
 
         val isKnownBrowser = BrowserRegistry.isKnownBrowser(pkg)
         val browserContext = if (isKnownBrowser) {
@@ -332,7 +320,7 @@ class TrackerService : Service() {
         val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy, browserContext, neverBlockSet)
 
         if (appVerdict != com.pcontrol.core.Verdict.ALLOW) {
-            val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
+            val limitMessage = blockingCoordinator.buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
             Enforcer.handleVerdict(
                 context = this,
                 verdict = appVerdict,
@@ -358,7 +346,7 @@ class TrackerService : Service() {
         )
 
         if (webVerdict != com.pcontrol.core.Verdict.ALLOW) {
-            val limitMessage = buildLimitMessage(domain ?: pkg, label, webVerdict, webSeconds, policy)
+            val limitMessage = blockingCoordinator.buildLimitMessage(domain ?: pkg, label, webVerdict, webSeconds, policy)
             Enforcer.handleVerdict(
                 context = this,
                 verdict = webVerdict,
@@ -385,57 +373,7 @@ class TrackerService : Service() {
         }
     }
 
-    private fun parsePolicy(json: String): PolicyV2? {
-        return try {
-            val jsonLib = Json { ignoreUnknownKeys = true }
-            val resp = jsonLib.decodeFromString<PolicyResponse>(json)
-            PolicyV2(
-                version = resp.version,
-                totalDailyLimitMinutes = resp.totalDailyLimitMinutes,
-                warnThresholdPercent = resp.warnThresholdPercent,
-                limits = resp.limits.map { l ->
-                    com.pcontrol.core.LimitDef(kind = l.kind, subject = l.subject, dailyLimitMinutes = l.dailyLimitMinutes)
-                },
-                exclusions = resp.exclusions.map { e ->
-                    com.pcontrol.core.ExclusionDef(kind = e.kind, subject = e.subject)
-                }
-            )
-        } catch (e: Exception) {
-            null
-        }
-    }
 
-    private fun buildLimitMessage(
-        subject: String,
-        label: String,
-        verdict: com.pcontrol.core.Verdict,
-        seconds: Int,
-        policy: PolicyV2?
-    ): String {
-        return when (verdict) {
-            com.pcontrol.core.Verdict.BLOCK_APP -> "$label: limit reached"
-            com.pcontrol.core.Verdict.BLOCK_WEB -> "$label: site blocked"
-            com.pcontrol.core.Verdict.WARN -> {
-                val policyVersion = policy
-                if (policyVersion != null) {
-                    // Try to find per-app/per-site limit
-                    val appLimit = policyVersion.limits.firstOrNull {
-                        (it.kind == "app" || it.kind == "web") && it.subject == subject
-                    }
-                    if (appLimit != null) {
-                        "$label: ${seconds / 60} of ${appLimit.dailyLimitMinutes} minutes used"
-                    } else if (policyVersion.totalDailyLimitMinutes != null) {
-                        "$label: ${seconds / 60} of ${policyVersion.totalDailyLimitMinutes} minutes used"
-                    } else {
-                        "$label: $subject limit warning"
-                    }
-                } else {
-                    "$label: limit warning"
-                }
-            }
-            else -> "$label: $subject"
-        }
-    }
 
     private suspend fun incrementCounter(
         db: AppDatabase,

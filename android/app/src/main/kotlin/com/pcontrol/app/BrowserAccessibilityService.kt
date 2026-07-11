@@ -80,10 +80,8 @@ class BrowserAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        Log.w(TAG, "onAccessibilityEvent called: eventIsNull=${event == null}")
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
-        Log.w(TAG, "event type=${event.eventType} pkg=$pkg class=${event.className}")
 
         // ── 1. Browser URL-bar reading (existing behaviour) ──────────
         val urlBarId = BrowserRegistry.urlBarViewId(pkg)
@@ -100,12 +98,12 @@ class BrowserAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (pkg != lastCheckedPkg) {
                 lastCheckedPkg = pkg
-                Log.w(TAG, "TYPE_WINDOW_STATE_CHANGED for $pkg — checking enforcement")
+                if (BuildConfig.DEBUG) Log.d(TAG, "TYPE_WINDOW_STATE_CHANGED for $pkg — checking enforcement")
                 scope.launch {
                     try {
                         val blocked = blockingCoordinator.checkAndEnforceApp(pkg)
                         if (blocked) {
-                            Log.w(TAG, "Blocked app $pkg via accessibility event")
+                            if (BuildConfig.DEBUG) Log.d(TAG, "Blocked app $pkg via accessibility event")
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Enforcement check failed for $pkg", e)

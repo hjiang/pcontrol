@@ -12,6 +12,7 @@ import com.pcontrol.core.Verdict
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.time.ZoneId
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Shared app-blocking enforcement logic used by both [TrackerService] and
@@ -33,9 +34,11 @@ class BlockingCoordinator(
 ) {
     companion object {
         private const val TAG = "BlockingCoordinator"
+
+        private val jsonLib = Json { ignoreUnknownKeys = true }
     }
 
-    private val labelCache = mutableMapOf<String, String>()
+    private val labelCache = ConcurrentHashMap<String, String>()
 
     /**
      * Checks if [pkg] should be blocked and launches [BlockedActivity] if so.
@@ -58,10 +61,10 @@ class BlockingCoordinator(
             }
         }
     ): Boolean {
-        Log.w(TAG, "checkAndEnforceApp called for pkg=$pkg")
+        if (BuildConfig.DEBUG) Log.d(TAG, "checkAndEnforceApp called for pkg=$pkg")
         val neverBlockSet = NeverBlockResolver.resolve(context)
         if (pkg in neverBlockSet) {
-            Log.w(TAG, "  skipped: $pkg is in neverBlockSet")
+            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: $pkg is in neverBlockSet")
             return false
         }
 
@@ -81,7 +84,7 @@ class BlockingCoordinator(
 
         val policyEntity = db.cachedPolicyDao().get()
         val policy = policyEntity?.let { parsePolicy(it.json) } ?: run {
-            Log.w(TAG, "  skipped: no cached policy (entity=${policyEntity != null})")
+            if (BuildConfig.DEBUG) Log.d(TAG, "  skipped: no cached policy (entity=${policyEntity != null})")
             return false
         }
 
@@ -97,11 +100,11 @@ class BlockingCoordinator(
         )
 
         if (appVerdict == Verdict.ALLOW) {
-            Log.w(TAG, "  verdict=ALLOW for $pkg (appSeconds=$appSeconds, policy has ${policy.limits.size} limits)")
+            if (BuildConfig.DEBUG) Log.d(TAG, "  verdict=ALLOW for $pkg (appSeconds=$appSeconds, policy has ${policy.limits.size} limits)")
             return false
         }
 
-        Log.w(TAG, "  verdict=$appVerdict for $pkg — launching BlockedActivity")
+        if (BuildConfig.DEBUG) Log.d(TAG, "  verdict=$appVerdict for $pkg — launching BlockedActivity")
 
         val label = resolveLabel(pkg)
         val limitMessage = buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
@@ -133,7 +136,6 @@ class BlockingCoordinator(
 
     fun parsePolicy(json: String): PolicyV2? {
         return try {
-            val jsonLib = Json { ignoreUnknownKeys = true }
             val resp = jsonLib.decodeFromString<PolicyResponse>(json)
             PolicyV2(
                 version = resp.version,
