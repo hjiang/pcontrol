@@ -56,7 +56,7 @@ class BlockingCoordinator(
                 context.startActivity(intent)
                 true
             } catch (e: Exception) {
-                Log.w(TAG, "startActivity failed: ${e.message}")
+                Log.w(TAG, "startActivity failed", e)
                 false
             }
         }

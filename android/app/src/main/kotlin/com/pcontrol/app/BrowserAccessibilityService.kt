@@ -87,7 +87,6 @@ class BrowserAccessibilityService : AccessibilityService() {
         val urlBarId = BrowserRegistry.urlBarViewId(pkg)
         if (urlBarId != null) {
             handleBrowserUrlBar(pkg, urlBarId)
-            return
         }
 
         // ── 2. App-blocking enforcement (new) ────────────────────────
