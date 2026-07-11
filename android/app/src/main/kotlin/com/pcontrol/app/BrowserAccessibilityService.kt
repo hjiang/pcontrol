@@ -103,10 +103,18 @@ class BrowserAccessibilityService : AccessibilityService() {
                         val blocked = blockingCoordinator.checkAndEnforceApp(
                             pkg,
                             startActivity = { intent ->
-                                // Don’t catch — let exceptions propagate so the
-                                // outer catch clears lastCheckedPkg for retry.
-                                this@BrowserAccessibilityService.startActivity(intent)
-                                true
+                                // Guard against stale enforcement: if the user
+                                // switched apps while the check was running,
+                                // don't block the wrong foreground app.
+                                if (lastCheckedPkg != pkg) {
+                                    if (BuildConfig.DEBUG) Log.d(TAG, "skipping stale block for $pkg")
+                                    false
+                                } else {
+                                    // Don't catch — let exceptions propagate so the
+                                    // outer catch clears lastCheckedPkg for retry.
+                                    this@BrowserAccessibilityService.startActivity(intent)
+                                    true
+                                }
                             }
                         )
                         if (blocked) {
