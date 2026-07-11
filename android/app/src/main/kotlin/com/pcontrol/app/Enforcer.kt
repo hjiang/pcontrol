@@ -162,6 +162,7 @@ object Enforcer {
                 context.startActivity(intent)
                 true
             } catch (e: Exception) {
+                android.util.Log.w("Enforcer", "startActivity failed: ${e.javaClass.name}: ${e.message}")
                 false
             }
         },

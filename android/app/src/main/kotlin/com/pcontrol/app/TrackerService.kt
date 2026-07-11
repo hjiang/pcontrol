@@ -109,7 +109,7 @@ class TrackerService : Service() {
                 try {
                     onTick()
                 } catch (e: Exception) {
-                    // Log and continue
+                    Log.w(TAG, "onTick exception", e)
                 }
 
                 val now = System.currentTimeMillis()
@@ -119,7 +119,7 @@ class TrackerService : Service() {
                     try {
                         onSync()
                     } catch (e: Exception) {
-                        // Log and continue
+                        Log.w(TAG, "onSync exception", e)
                     }
                     lastSyncTime = now
                 }
