@@ -305,7 +305,7 @@ class TrackerService : Service() {
             )
         } else null
 
-        val label = pkg
+        val label = blockingCoordinator.resolveLabel(pkg)
 
         // Web exclusions = sites still allowed after the daily limit (Stage 6 task 3).
         val allowedSites = policy?.exclusions

@@ -8,6 +8,7 @@ import com.pcontrol.core.DomainParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -67,7 +68,7 @@ class BrowserAccessibilityService : AccessibilityService() {
         val domainCache = BrowserDomainCache()
     }
 
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var blockingCoordinator: BlockingCoordinator
 
     /** Last package that was evaluated, to avoid redundant enforcement calls. */
