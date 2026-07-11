@@ -100,7 +100,15 @@ class BrowserAccessibilityService : AccessibilityService() {
                 if (BuildConfig.DEBUG) Log.d(TAG, "TYPE_WINDOW_STATE_CHANGED for $pkg — checking enforcement")
                 scope.launch {
                     try {
-                        val blocked = blockingCoordinator.checkAndEnforceApp(pkg)
+                        val blocked = blockingCoordinator.checkAndEnforceApp(
+                            pkg,
+                            startActivity = { intent ->
+                                // Don’t catch — let exceptions propagate so the
+                                // outer catch clears lastCheckedPkg for retry.
+                                this@BrowserAccessibilityService.startActivity(intent)
+                                true
+                            }
+                        )
                         if (blocked) {
                             if (BuildConfig.DEBUG) Log.d(TAG, "Blocked app $pkg via accessibility event")
                         }
