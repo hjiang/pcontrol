@@ -45,7 +45,7 @@ class BrowserDomainCache {
  *    the URL bar content changes in a registered browser).
  *
  * 2. **Enforces app blocking** on [TYPE_WINDOW_STATE_CHANGED] events.
- *    When a non-browser app comes to the foreground, the service checks
+ *    When an app comes to the foreground, the service checks
  *    the cached policy and usage counters via [BlockingCoordinator]. If
  *    the app has exceeded its limit, [BlockedActivity] is launched
  *    immediately.
@@ -107,7 +107,11 @@ class BrowserAccessibilityService : AccessibilityService() {
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Enforcement check failed for $pkg", e)
-                        lastCheckedPkg = null
+                        // Only clear the debounce if this pkg still matches —
+                        // a newer event for a different pkg may have updated it.
+                        if (lastCheckedPkg == pkg) {
+                            lastCheckedPkg = null
+                        }
                     }
                 }
             }
