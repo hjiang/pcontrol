@@ -206,7 +206,6 @@ class TrackerService : Service() {
             eventList.add(AppEvent(pkg, event.eventType))
         }
         // UsageEvents does not implement Closeable; resources freed by GC
-        lastUsageEventQueryTime = endTime
 
         val previousForegroundPkg = currentForegroundPkg
         val foregroundPkg = AppUsagePoller.updateForegroundPackage(
@@ -234,6 +233,7 @@ class TrackerService : Service() {
             }
             browserForegroundPkg = null
             ticksWithoutDomain = 0
+            lastUsageEventQueryTime = endTime
             return
         }
 
@@ -246,6 +246,7 @@ class TrackerService : Service() {
                     ticksWithoutDomain = 0
                 }
             }
+            lastUsageEventQueryTime = endTime
             return
         }
 
@@ -309,6 +310,10 @@ class TrackerService : Service() {
 
         // ── Enforcement (PolicyEngine + Enforcer) ───────────────────
         runEnforcement(day, foregroundPkg, currentDomain)
+
+        // Advance only after every side effect of this batch has succeeded.
+        // A failed tick will retry the same transitions on its next iteration.
+        lastUsageEventQueryTime = endTime
     }
 
     private suspend fun runEnforcement(day: String, pkg: String, domain: String?) {
