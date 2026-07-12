@@ -17,9 +17,16 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.activity.enableEdgeToEdge
 import com.pcontrol.app.update.UpdateCoordinator
 import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
+import com.pcontrol.app.ui.CapabilityRenderer
+import com.pcontrol.app.ui.CapabilityViews
+import com.pcontrol.app.ui.CapabilityFacts
+import com.pcontrol.app.ui.SetupUiState
+import com.pcontrol.app.ui.UpdateUiMapper
+import com.pcontrol.app.ui.validateServerConfiguration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchAutoUpdate: SwitchCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -118,7 +126,7 @@ class MainActivity : AppCompatActivity() {
             if (allPermissionsGranted()) {
                 startTrackerService()
             } else {
-                Toast.makeText(this, "Grant all permissions first", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.hero_setup_needed, Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -147,23 +155,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatus() {
-        val usageOk = hasUsageStatsPermission()
-        val accessibilityOk = isAccessibilityServiceEnabled()
-        val notificationsOk = hasNotificationPermission()
-        val batteryOk = isBatteryOptimizationIgnored()
-        val serverOk = isServerConfigured()
-        val updaterOk = hasInstallPermission()
+        // Collect system facts once, build one state, and render through a
+        // replaceable seam. Accessibility overlays are owned by the bound
+        // accessibility service and require no ordinary overlay permission.
+        val facts = CapabilityFacts(
+            usage = hasUsageStatsPermission(),
+            accessibility = isAccessibilityServiceEnabled(),
+            notifications = hasNotificationPermission(),
+            battery = isBatteryOptimizationIgnored(),
+            server = isServerConfigured(),
+            updater = hasInstallPermission(),
+        )
+        renderSetupState(SetupUiState.build(facts))
+    }
 
-        statusUsage.text = if (usageOk) "\u2705 Usage access" else "\u274C Usage access"
-        statusAccessibility.text = if (accessibilityOk) "\u2705 Accessibility service" else "\u274C Accessibility service"
-        statusNotifications.text = if (notificationsOk) "\u2705 Notifications" else "\u274C Notifications"
-        statusBattery.text = if (batteryOk) "\u2705 Battery optimization off" else "\u274C Battery optimization"
-        statusServer.text = if (serverOk) "\u2705 Server configured" else "\u274C Server URL + token"
-        statusUpdater.text = if (updaterOk) "\u2705 Install unknown apps" else "\u274C Install unknown apps"
-
-        val allOk = allPermissionsGranted()
-        btnStart.isEnabled = allOk
-        btnStart.text = if (allOk) "Start monitoring" else "Grant all permissions above"
+    /** Render the pure [SetupUiState] into status views. */
+    private fun renderSetupState(state: SetupUiState) {
+        CapabilityRenderer(this).render(
+            state,
+            CapabilityViews(
+                usage = statusUsage,
+                accessibility = statusAccessibility,
+                notifications = statusNotifications,
+                battery = statusBattery,
+                server = statusServer,
+                updater = statusUpdater,
+                startBtn = btnStart,
+            )
+        )
     }
 
     private fun allPermissionsGranted(): Boolean {
@@ -231,23 +250,12 @@ class MainActivity : AppCompatActivity() {
                     versionName = BuildConfig.VERSION_NAME
                 )
                 val result = coordinator.runOnce(force = true)
-
-                val message = when (result) {
-                    is UpdateResult.INSTALL_TRIGGERED -> "System install dialog opened"
-                    is UpdateResult.UP_TO_DATE -> "You're up to date"
-                    is UpdateResult.VERSION_ERROR -> "Version comparison error"
-                    is UpdateResult.NETWORK_ERROR -> "Could not fetch update info"
-                    is UpdateResult.DOWNLOAD_FAILED -> "Download failed"
-                    is UpdateResult.SIGNATURE_MISMATCH -> "Update available (manual) — signature mismatch"
-                    is UpdateResult.INSTALL_FAILED -> "Could not open install dialog"
-                    is UpdateResult.IN_PROGRESS -> "Update check already in progress"
-                    is UpdateResult.DISABLED -> "Auto-update is disabled"
-                    is UpdateResult.SKIPPED -> "Check again later"
-                }
+                val uiState = UpdateUiMapper.fromResult(result)
 
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                        val msgRes = uiState.messageResId ?: R.string.update_result_up_to_date
+                        Toast.makeText(this@MainActivity, msgRes, Toast.LENGTH_LONG).show()
                         refreshStatus()
                     }
                 }
@@ -268,34 +276,53 @@ class MainActivity : AppCompatActivity() {
 
         val inputUrl = android.widget.EditText(this).apply {
             setText(currentUrl)
-            hint = "https://pcontrol.example.com"
+            hint = getString(R.string.dialog_server_url_hint)
+            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
         }
         val inputToken = android.widget.EditText(this).apply {
             setText(currentToken)
-            hint = "Device token from server"
+            hint = getString(R.string.dialog_server_token_hint)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
 
         val layout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            addView(android.widget.TextView(this@MainActivity).apply { text = "Server URL" })
+            addView(android.widget.TextView(this@MainActivity).apply { text = getString(R.string.dialog_server_url_label) })
             addView(inputUrl)
             addView(android.widget.TextView(this@MainActivity).apply {
-                text = "Device Token"
+                text = getString(R.string.dialog_server_token_label)
                 setPadding(0, 32, 0, 0)
             })
             addView(inputToken)
             setPadding(32, 16, 32, 16)
         }
 
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Server Configuration")
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.dialog_server_title)
             .setView(layout)
-            .setPositiveButton("Save") { _, _ ->
-                prefs.setServerUrl(inputUrl.text.toString().trimEnd('/'))
-                prefs.setDeviceToken(inputToken.text.toString().trim())
-                refreshStatus()
+            .setPositiveButton(R.string.dialog_server_save) { _, _ ->
+                val result = validateServerConfiguration(
+                    inputUrl.text.toString(), inputToken.text.toString()
+                )
+                if (result.isOk) {
+                    prefs.setServerUrl(result.cleanedUrl)
+                    prefs.setDeviceToken(result.cleanedToken)
+                    refreshStatus()
+                } else {
+                    // Keep the dialog open and show field-level errors.
+                    val errRes = when (result.error) {
+                        com.pcontrol.app.ui.ServerConfigError.URL_BLANK -> R.string.dialog_server_url_error_blank
+                        com.pcontrol.app.ui.ServerConfigError.URL_BAD_SCHEME -> R.string.dialog_server_url_error_scheme
+                        com.pcontrol.app.ui.ServerConfigError.URL_NO_HOST -> R.string.dialog_server_url_error_host
+                        com.pcontrol.app.ui.ServerConfigError.URL_QUERY_OR_FRAGMENT -> R.string.dialog_server_url_error_query
+                        com.pcontrol.app.ui.ServerConfigError.TOKEN_BLANK -> R.string.dialog_server_token_error_blank
+                        null -> R.string.dialog_server_url_error_blank
+                    }
+                    Toast.makeText(this, errRes, Toast.LENGTH_LONG).show()
+                }
             }
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton(R.string.dialog_server_cancel, null)
             .show()
     }
 
@@ -306,6 +333,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
-        Toast.makeText(this, "Tracker service started", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, R.string.toast_tracker_started, Toast.LENGTH_SHORT).show()
     }
 }

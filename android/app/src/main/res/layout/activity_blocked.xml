@@ -4,51 +4,45 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:gravity="center"
-    android:background="#FF0000"
-    android:padding="32dp">
+    android:background="?attr/colorErrorContainer"
+    android:padding="@dimen/spacing_xxl">
 
     <TextView
         android:id="@+id/blocked_message"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Time limit reached"
-        android:textColor="#FFFFFF"
-        android:textSize="24sp"
-        android:textStyle="bold" />
+        android:text="@string/blocked_default_message"
+        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedHeadline" />
 
     <TextView
         android:id="@+id/blocked_subject"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text=""
-        android:textColor="#FFFFFF"
-        android:textSize="18sp"
-        android:layout_marginTop="16dp" />
+        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedSubject"
+        android:layout_marginTop="@dimen/spacing_lg" />
 
     <TextView
         android:id="@+id/blocked_allowed_sites"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text=""
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:layout_marginTop="16dp"
+        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedSubject"
+        android:layout_marginTop="@dimen/spacing_lg"
         android:visibility="gone" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Resets at midnight"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:layout_marginTop="32dp"
-        android:alpha="0.7" />
+        android:text="@string/blocked_reset"
+        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedMuted"
+        android:layout_marginTop="@dimen/spacing_xxl" />
 
     <Button
         android:id="@+id/blocked_go_home"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:text="Go home" />
+        android:layout_marginTop="@dimen/spacing_xl"
+        android:text="@string/blocked_go_home" />
 
 </LinearLayout>

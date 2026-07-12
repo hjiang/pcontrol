@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Dark palette variants. -->
+
+    <!-- Primary (blue, lifted) -->
+    <color name="pcontrol_primary">#A8C7FF</color>
+    <color name="pcontrol_on_primary">#002F66</color>
+    <color name="pcontrol_primary_container">#00468E</color>
+    <color name="pcontrol_on_primary_container">#D6E3FF</color>
+
+    <!-- Secondary (teal) -->
+    <color name="pcontrol_secondary">#4CD9E2</color>
+    <color name="pcontrol_on_secondary">#00373A</color>
+    <color name="pcontrol_secondary_container">#004F53</color>
+    <color name="pcontrol_on_secondary_container">#6FF6FE</color>
+
+    <!-- Tertiary (amber) -->
+    <color name="pcontrol_tertiary">#E0C46D</color>
+    <color name="pcontrol_on_tertiary">#3D2E00</color>
+    <color name="pcontrol_tertiary_container">#584400</color>
+    <color name="pcontrol_on_tertiary_container">#FEE086</color>
+
+    <!-- Error -->
+    <color name="pcontrol_error">#FFB4AB</color>
+    <color name="pcontrol_on_error">#690005</color>
+    <color name="pcontrol_error_container">#93000A</color>
+    <color name="pcontrol_on_error_container">#FFDAD6</color>
+
+    <!-- Background / surface roles -->
+    <color name="pcontrol_background">#1A1B1F</color>
+    <color name="pcontrol_on_background">#E3E2E6</color>
+    <color name="pcontrol_surface">#1A1B1F</color>
+    <color name="pcontrol_on_surface">#E3E2E6</color>
+    <color name="pcontrol_surface_variant">#43474E</color>
+    <color name="pcontrol_on_surface_variant">#C4C6CF</color>
+    <color name="pcontrol_surface_container">#2E3036</color>
+    <color name="pcontrol_surface_container_high">#393A40</color>
+
+    <!-- Outline -->
+    <color name="pcontrol_outline">#8E9199</color>
+    <color name="pcontrol_outline_variant">#43474E</color>
+
+    <!-- Blocked screen warm surface -->
+    <color name="blocked_background">#300003</color>
+    <color name="blocked_on_background">#FFDAD6</color>
+    <color name="blocked_surface">#3B0B0D</color>
+    <color name="blocked_on_surface">#FFDAD6</color>
+    <color name="blocked_error">#FFB4AB</color>
+    <color name="blocked_on_error">#690005</color>
+    <color name="blocked_muted">#F0AAA7</color>
+</resources>

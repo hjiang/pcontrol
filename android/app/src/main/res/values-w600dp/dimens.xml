@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- On expanded/wide windows, widen content padding and cap line length. -->
+    <dimen name="content_padding_h">24dp</dimen>
+    <dimen name="content_padding_v">24dp</dimen>
+</resources>

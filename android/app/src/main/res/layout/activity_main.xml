@@ -1,125 +1,134 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="@dimen/spacing_xl">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="pcontrol Setup"
-            android:textSize="24sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="24dp" />
+            android:text="@string/app_name"
+            android:textAppearance="@style/TextAppearance.Pcontrol.HeroTitle"
+            android:layout_marginBottom="@dimen/spacing_lg" />
 
         <TextView
             android:id="@+id/status_usage"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="❌ Usage access"
-            android:textSize="16sp" />
+            android:text="@string/cap_usage_title"
+            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
         <Button
             android:id="@+id/btn_usage"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Grant Usage Access"
-            android:layout_marginBottom="12dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/cap_usage_action"
+            android:layout_marginBottom="@dimen/spacing_md" />
 
         <TextView
             android:id="@+id/status_accessibility"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="❌ Accessibility service"
-            android:textSize="16sp" />
+            android:text="@string/cap_accessibility_title"
+            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
         <Button
             android:id="@+id/btn_accessibility"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Enable Accessibility Service"
-            android:layout_marginBottom="12dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/cap_accessibility_action"
+            android:layout_marginBottom="@dimen/spacing_md" />
 
         <TextView
             android:id="@+id/status_notifications"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="❌ Notifications"
-            android:textSize="16sp" />
+            android:text="@string/cap_notifications_title"
+            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
         <Button
             android:id="@+id/btn_notifications"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Enable Notifications"
-            android:layout_marginBottom="12dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/cap_notifications_action"
+            android:layout_marginBottom="@dimen/spacing_md" />
 
         <TextView
             android:id="@+id/status_battery"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="❌ Battery optimization"
-            android:textSize="16sp" />
+            android:text="@string/cap_battery_title"
+            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
         <Button
             android:id="@+id/btn_battery"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Disable Battery Optimization"
-            android:layout_marginBottom="12dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/cap_battery_action"
+            android:layout_marginBottom="@dimen/spacing_md" />
 
         <TextView
             android:id="@+id/status_server"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="❌ Server configuration"
-            android:textSize="16sp" />
+            android:text="@string/section_server"
+            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
         <Button
             android:id="@+id/btn_server"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Configure Server URL + Token"
-            android:layout_marginBottom="12dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/server_action_edit"
+            android:layout_marginBottom="@dimen/spacing_md" />
 
         <TextView
             android:id="@+id/status_updater"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="❌ Install unknown apps"
-            android:textSize="16sp" />
+            android:text="@string/updater_title"
+            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
         <Button
             android:id="@+id/btn_updater"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Allow Install Unknown Apps"
-            android:layout_marginBottom="24dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/updater_action"
+            android:layout_marginBottom="@dimen/spacing_xl" />
 
         <Button
             android:id="@+id/btn_check_update"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Check for updates"
-            android:layout_marginBottom="12dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/updates_check_action"
+            android:layout_marginBottom="@dimen/spacing_md" />
 
         <androidx.appcompat.widget.SwitchCompat
             android:id="@+id/switch_auto_update"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Auto-update enabled"
-            android:layout_marginBottom="24dp" />
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/updates_auto_update"
+            android:layout_marginBottom="@dimen/spacing_xl" />
 
         <Button
             android:id="@+id/btn_start"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Grant all permissions above"
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/start_monitoring"
             android:enabled="false"
             android:textSize="18sp" />
 

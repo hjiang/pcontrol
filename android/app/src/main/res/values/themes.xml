@@ -1,8 +1,108 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- AppCompat theme required by AppCompatActivity-based activities.
-         The manifest previously declared no android:theme, so activities
-         fell back to the platform Theme.DeviceDefault, which threw
-         "You need to use a Theme.AppCompat theme" in setContentView. -->
-    <style name="Pcontrol" parent="Theme.AppCompat.DayNight.DarkActionBar" />
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Base Material 3 DayNight theme (no action bar). Shared by both v26 and
+         v27+ variants; the latter add a light navigation bar. -->
+    <style name="Pcontrol.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/pcontrol_primary</item>
+        <item name="colorOnPrimary">@color/pcontrol_on_primary</item>
+        <item name="colorPrimaryContainer">@color/pcontrol_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/pcontrol_on_primary_container</item>
+
+        <item name="colorSecondary">@color/pcontrol_secondary</item>
+        <item name="colorOnSecondary">@color/pcontrol_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/pcontrol_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/pcontrol_on_secondary_container</item>
+
+        <item name="colorTertiary">@color/pcontrol_tertiary</item>
+        <item name="colorOnTertiary">@color/pcontrol_on_tertiary</item>
+        <item name="colorTertiaryContainer">@color/pcontrol_tertiary_container</item>
+        <item name="colorOnTertiaryContainer">@color/pcontrol_on_tertiary_container</item>
+
+        <item name="colorError">@color/pcontrol_error</item>
+        <item name="colorOnError">@color/pcontrol_on_error</item>
+        <item name="colorErrorContainer">@color/pcontrol_error_container</item>
+        <item name="colorOnErrorContainer">@color/pcontrol_on_error_container</item>
+
+        <item name="android:colorBackground">@color/pcontrol_background</item>
+        <item name="colorOnBackground">@color/pcontrol_on_background</item>
+        <item name="colorSurface">@color/pcontrol_surface</item>
+        <item name="colorOnSurface">@color/pcontrol_on_surface</item>
+        <item name="colorSurfaceVariant">@color/pcontrol_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/pcontrol_on_surface_variant</item>
+        <item name="colorSurfaceContainer">@color/pcontrol_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/pcontrol_surface_container_high</item>
+
+        <item name="colorOutline">@color/pcontrol_outline</item>
+        <item name="colorOutlineVariant">@color/pcontrol_outline_variant</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">@bool/window_light_status_bar</item>
+    </style>
+
+    <!-- Main theme (minSdk 26). v27+ variant in values-v27/themes.xml adds the
+         light navigation bar attribute, which is unavailable on API 26. -->
+    <style name="Pcontrol" parent="Pcontrol.Base" />
+
+    <!-- Blocked activity: warm, urgent surface without saturated full-red flood. -->
+    <style name="Pcontrol.Blocked.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/blocked_error</item>
+        <item name="colorOnPrimary">@color/blocked_on_error</item>
+        <item name="colorError">@color/blocked_error</item>
+        <item name="colorOnError">@color/blocked_on_error</item>
+        <item name="colorErrorContainer">@color/blocked_surface</item>
+        <item name="colorOnErrorContainer">@color/blocked_on_surface</item>
+        <item name="android:colorBackground">@color/blocked_background</item>
+        <item name="colorOnBackground">@color/blocked_on_background</item>
+        <item name="colorSurface">@color/blocked_surface</item>
+        <item name="colorOnSurface">@color/blocked_on_surface</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">@bool/window_light_status_bar</item>
+    </style>
+
+    <style name="Pcontrol.Blocked" parent="Pcontrol.Blocked.Base" />
+
+    <!-- Typography: heading for section cards. -->
+    <style name="TextAppearance.Pcontrol.SectionHeading" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.HeroTitle" parent="TextAppearance.Material3.HeadlineSmall">
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.CapabilityTitle" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.StateReady" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:textColor">?attr/colorSecondary</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.StateNeeded" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:textColor">?attr/colorError</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.BlockedHeadline" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/blocked_on_background</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.BlockedSubject" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textColor">@color/blocked_on_surface</item>
+    </style>
+
+    <style name="TextAppearance.Pcontrol.BlockedMuted" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">@color/blocked_muted</item>
+        <item name="android:alpha">0.8</item>
+    </style>
+
+    <!-- Card style for capability cards. -->
+    <style name="Widget.Pcontrol.CardView" parent="Widget.Material3.CardView.Filled">
+        <item name="cardCornerRadius">@dimen/card_radius</item>
+        <item name="cardElevation">@dimen/card_elevation</item>
+        <item name="contentPadding">@dimen/spacing_lg</item>
+    </style>
 </resources>

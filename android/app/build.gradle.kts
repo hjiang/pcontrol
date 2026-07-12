@@ -77,12 +77,20 @@ android {
     kotlin {
         compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
     implementation(project(":core"))
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.13.0")
+    implementation("androidx.activity:activity-ktx:1.11.0")
 
     // Room
     implementation("androidx.room:room-runtime:2.8.4")

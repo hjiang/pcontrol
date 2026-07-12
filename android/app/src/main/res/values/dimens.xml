@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Spacing tokens -->
+    <dimen name="spacing_xs">4dp</dimen>
+    <dimen name="spacing_sm">8dp</dimen>
+    <dimen name="spacing_md">12dp</dimen>
+    <dimen name="spacing_lg">16dp</dimen>
+    <dimen name="spacing_xl">24dp</dimen>
+    <dimen name="spacing_xxl">32dp</dimen>
+
+    <!-- Card -->
+    <dimen name="card_radius">16dp</dimen>
+    <dimen name="card_elevation">0dp</dimen>
+
+    <!-- Content max width (centered on wide windows) -->
+    <dimen name="content_max_width">600dp</dimen>
+
+    <!-- Touch target minimum -->
+    <dimen name="touch_target_min">48dp</dimen>
+
+    <!-- App bar height -->
+    <dimen name="app_bar_height">56dp</dimen>
+
+    <!-- Blocked illustration -->
+    <dimen name="blocked_shield_size">120dp</dimen>
+
+    <!-- Content horizontal padding for the scroll surface -->
+    <dimen name="content_padding_h">16dp</dimen>
+    <dimen name="content_padding_v">16dp</dimen>
+</resources>

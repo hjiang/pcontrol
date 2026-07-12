@@ -87,12 +87,22 @@ class AccessibilityBlockingSurface(
 
     private fun bind(view: View, request: BlockRequest) {
         view.findViewById<TextView>(R.id.blocked_message).text = request.message
-        view.findViewById<TextView>(R.id.blocked_subject).text = request.subject
+
+        val subject = view.findViewById<TextView>(R.id.blocked_subject)
+        subject.text = request.subject
+        subject.visibility = if (request.subject.isBlank()) View.GONE else View.VISIBLE
+
         val allowed = view.findViewById<TextView>(R.id.blocked_allowed_sites)
         if (request.allowedSites.isEmpty()) {
             allowed.visibility = View.GONE
         } else {
-            allowed.text = "Allowed: ${request.allowedSites.joinToString(", ")}"
+            allowed.text = buildString {
+                append(view.context.getString(R.string.blocked_allowed_sites_label))
+                request.allowedSites.forEach { site ->
+                    append("\n•  ")
+                    append(site)
+                }
+            }
             allowed.visibility = View.VISIBLE
         }
         view.findViewById<Button>(R.id.blocked_go_home).setOnClickListener { onGoHome() }
