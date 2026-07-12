@@ -13,7 +13,7 @@
     <string name="hero_setup_needed">Setup needed</string>
     <string name="hero_ready">Ready to monitor</string>
     <plurals name="hero_progress">
-        <item quantity="one">%1$d of %2$d required step complete</item>
+        <item quantity="one">%1$d of %2$d required steps complete</item>
         <item quantity="other">%1$d of %2$d required steps complete</item>
     </plurals>
     <string name="hero_next_step">Next step: %1$s</string>
