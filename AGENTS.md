@@ -104,6 +104,10 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - Web templates are embedded via `go:embed` in `web/render.go`; adding a
   template means adding a `.gohtml` file under `web/templates/` (the glob
   picks it up) and a view-model struct in `web/templatesData.go`.
+- **Dashboard status needs visible text.** A timestamp in a badge `title`
+  attribute is hover-only and does not satisfy a requirement to show it;
+  render report timestamps as card text and cover both populated and `never`
+  states in dashboard tests.
 - **Session cookie `Secure` must follow the transport, not be hard-coded.**
   A hard-coded `Secure: true` makes the browser discard the session cookie
   over plain HTTP, so login silently fails on a LAN-only Unraid deploy

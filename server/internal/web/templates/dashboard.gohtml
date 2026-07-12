@@ -17,6 +17,7 @@
           🔋 {{.BatteryPercent}}%{{if .BatteryCharging}} ⚡{{end}}
         </span>
       {{end}}
+      <div class="muted">Last usage report: {{.LastSeenAt}}</div>
     </div>
     <div style="margin-top:8px">
       Today: <strong>{{.TotalMinutes}} min</strong>

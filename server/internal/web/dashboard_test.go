@@ -71,6 +71,38 @@ func TestDashboard_WithDevice(t *testing.T) {
 	if !strings.Contains(bodyStr, "0 min") {
 		t.Error("expected '0 min' usage on dashboard for new device")
 	}
+	if !strings.Contains(bodyStr, "Last usage report: never") {
+		t.Error("expected never as last usage report for a device that has not reported")
+	}
+}
+
+func TestDashboard_ShowsLastUsageReportTime(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("reporting-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	reportedAt := time.Date(2026, 7, 12, 14, 30, 0, 0, time.UTC)
+	if err := s.TouchLastSeen(dev.ID, reportedAt); err != nil {
+		t.Fatalf("TouchLastSeen: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Last usage report: 2026-07-12T14:30:00Z") {
+		t.Errorf("expected visible last usage report time, got body: %s", body)
+	}
 }
 
 func TestDashboard_DeviceNewFormShown(t *testing.T) {
