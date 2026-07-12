@@ -228,6 +228,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   context: create the overlay context from `createDisplayContext(defaultDisplay)`
   before `createWindowContext`, or it throws before `addView`. Keep foreground
   generations and overlay mutations serialized there.
+- **An accessibility overlay has no manifest activity theme.**
+  `AccessibilityBlockingSurface` must wrap its display-associated window
+  context in `Pcontrol.Blocked` before inflating `activity_blocked.xml`; using
+  the application `Pcontrol` theme silently drops the dedicated blocked-screen
+  palette. Continue obtaining `WindowManager` from the unwrapped visual context
+  so theme wrapping does not change window ownership.
 - **HyperOS Greeze can freeze an active foreground-service/accessibility UID.**
   On the diagnosed HyperOS 3 device, battery `Unrestricted`, Autostart, a bound
   accessibility service, and a foreground service were all insufficient;

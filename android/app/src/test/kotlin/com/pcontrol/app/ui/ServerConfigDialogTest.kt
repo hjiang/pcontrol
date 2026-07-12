@@ -21,13 +21,11 @@ import org.robolectric.shadows.ShadowLooper
 /** Stage 4 dialog contract: token is masked, reveal exists, and invalid input
  *  keeps the dialog open without persisting.
  *
- *  IMPORTANT: `SecretPrefs` depends on the Android KeyStore, which is not
- *  available in Robolectric. These tests open the dialog by directly inflating
- *  `dialog_server_config.xml` and wiring the same validation listener, rather
- *  than clicking the "Configure server" button (which would crash). The
- *  production button click path (`showServerConfigDialog`) also calls
- *  `SecretPrefs` — that integration is validated by the manual build + device
- *  checklist in Stage 7. */
+ *  `SecretPrefs` depends on the Android KeyStore, which is unavailable in
+ *  Robolectric. Production catches that failure and reports it to the user;
+ *  these focused tests bypass persistence by inflating
+ *  `dialog_server_config.xml` and mirroring the validation listener. Successful
+ *  secure persistence remains part of the Stage 7 device checklist. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [26])
 class ServerConfigDialogTest {

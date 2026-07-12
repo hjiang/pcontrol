@@ -26,8 +26,11 @@ import org.robolectric.annotation.Config
 @Config(sdk = [26])
 class MainActivityLayoutTest {
 
-    private fun buildActivity(): MainActivity =
-        Robolectric.buildActivity(MainActivity::class.java).create().get()
+    private fun buildActivity(): MainActivity {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).create().get()
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        return activity
+    }
 
     // ── Section headings present ─────────────────────────────────────
 
@@ -44,7 +47,7 @@ class MainActivityLayoutTest {
         assertNotNull(hero)
         assertTrue(hero.text.toString().contains(activity.getString(R.string.hero_setup_needed)))
         val progressText = activity.resources.getQuantityString(R.plurals.hero_progress, 0, 0, 5)
-        assertTrue(hero.text.toString().contains(progressText))
+        assertTrue("hero missing progress: '${hero.text}'", hero.text.toString().contains(progressText))
     }
 
     @Test

@@ -5,12 +5,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
-import androidx.appcompat.view.ContextThemeWrapper
 import androidx.test.core.app.ApplicationProvider
 import com.pcontrol.app.AccessibilityBlockingContentRenderer
 import com.pcontrol.app.BlockKind
 import com.pcontrol.app.BlockRequest
 import com.pcontrol.app.R
+import com.pcontrol.app.blockingThemeContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -30,9 +30,8 @@ import org.robolectric.annotation.Config
 class AccessibilityBlockingSurfaceLayoutTest {
 
     private fun inflate(): View {
-        val context = ContextThemeWrapper(
+        val context = blockingThemeContext(
             ApplicationProvider.getApplicationContext(),
-            R.style.Pcontrol,
         )
         return LayoutInflater.from(context).inflate(R.layout.activity_blocked, null, false)
     }

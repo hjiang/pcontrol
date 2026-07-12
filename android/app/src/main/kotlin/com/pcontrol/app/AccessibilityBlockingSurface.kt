@@ -5,6 +5,7 @@ import android.content.Context
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.util.Log
+import android.view.ContextThemeWrapper
 import android.view.Display
 import android.view.LayoutInflater
 import android.view.View
@@ -53,7 +54,7 @@ class AccessibilityBlockingSurface(
 
         return try {
             val overlayContext = overlayContext()
-            val inflated = LayoutInflater.from(overlayContext)
+            val inflated = LayoutInflater.from(blockingThemeContext(overlayContext))
                 .inflate(R.layout.activity_blocked, null, false)
             bind(inflated, request)
             configureWindowInsets(inflated)
@@ -147,6 +148,16 @@ class AccessibilityBlockingSurface(
  * Postconditions: content and visibility match [request], allowed sites remain
  * non-clickable, and the Home control invokes [onGoHome] once per click.
  */
+/**
+ * Wraps a display-associated overlay context in the dedicated blocked-screen
+ * palette without changing which context owns the accessibility window.
+ *
+ * Postcondition: resources inflated from the result resolve `Pcontrol.Blocked`
+ * theme attributes while window services still delegate to [base].
+ */
+internal fun blockingThemeContext(base: Context): Context =
+    ContextThemeWrapper(base, R.style.Pcontrol_Blocked)
+
 internal object AccessibilityBlockingContentRenderer {
     fun render(view: View, request: BlockRequest, onGoHome: () -> Unit) {
         requireNotNull(view.findViewById<TextView>(R.id.blocked_message)).text = request.message

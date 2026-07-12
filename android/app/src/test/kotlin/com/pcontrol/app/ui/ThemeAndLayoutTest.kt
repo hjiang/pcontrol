@@ -3,10 +3,11 @@ package com.pcontrol.app.ui
 import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
-import androidx.appcompat.view.ContextThemeWrapper
+import androidx.core.content.ContextCompat
 import androidx.test.core.app.ApplicationProvider
 import com.pcontrol.app.MainActivity
 import com.pcontrol.app.R
+import com.pcontrol.app.blockingThemeContext
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -96,9 +97,18 @@ class ThemeAndLayoutTest {
     }
 
     private fun assertAccessibilityBlockLayoutInflates() {
-        val themedContext = ContextThemeWrapper(context, R.style.Pcontrol)
+        val themedContext = blockingThemeContext(context)
         val view = LayoutInflater.from(themedContext)
             .inflate(R.layout.activity_blocked, null, false)
+        val attrs = themedContext.obtainStyledAttributes(
+            intArrayOf(com.google.android.material.R.attr.colorErrorContainer)
+        )
+        val errorContainer = attrs.getColor(0, android.graphics.Color.TRANSPARENT)
+        attrs.recycle()
+        assertTrue(
+            "blocking surface must use the dedicated warm palette",
+            errorContainer == ContextCompat.getColor(context, R.color.blocked_surface),
+        )
         assertNotNull(view.findViewById(R.id.blocked_message))
         assertNotNull(view.findViewById(R.id.blocked_subject))
         assertNotNull(view.findViewById(R.id.blocked_allowed_sites))
@@ -117,7 +127,7 @@ class ThemeAndLayoutTest {
 
     @Test
     fun blockedScreen_inflates() {
-        val themedContext = ContextThemeWrapper(context, R.style.Pcontrol)
+        val themedContext = blockingThemeContext(context)
         val view = LayoutInflater.from(themedContext)
             .inflate(R.layout.activity_blocked, null, false)
         assertNotNull(view.findViewById<View>(R.id.blocked_go_home))

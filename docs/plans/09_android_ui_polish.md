@@ -459,8 +459,9 @@ Toast; auto-update preference behavior is unchanged.
 presentation inflated by `AccessibilityBlockingSurface`, a
 `TYPE_ACCESSIBILITY_OVERLAY` owned by the bound accessibility service.
 `BlockedActivity`, background activity launching, and the ordinary overlay
-permission remain removed. The layout uses a themed, scrollable
-shield/headline/subject-card hierarchy, `MaxWidthLinearLayout` for compact and
+permission remain removed. The display-associated accessibility window context
+is wrapped in `Pcontrol.Blocked` before inflating the themed, scrollable
+shield/headline/subject-card hierarchy. `MaxWidthLinearLayout` handles compact and
 wide windows, a non-clickable vertical allowed-sites list, muted reset copy,
 and a visible Go-home control. Empty optional views leave no spacing gap.
 
