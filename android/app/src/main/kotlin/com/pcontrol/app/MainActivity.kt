@@ -48,10 +48,11 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        /** Stable int op id for [AppOpsManager.OP_GET_USAGE_STATS] (API 21+).
-         * The public int constant was deleted from the SDK at API 37, so we
-         * use the literal when targeting the legacy checkOpNoThrow path. */
-        private const val LEGACY_OP_GET_USAGE_STATS = 43
+        /** Stable int op id for GET_USAGE_STATS (historically 43 on API 21+).
+         * Prefer the platform constant when present, but keep a safe fallback for newer SDK stubs. */
+        private val LEGACY_OP_GET_USAGE_STATS: Int by lazy {
+            runCatching { AppOpsManager::class.java.getDeclaredField("OP_GET_USAGE_STATS").getInt(null) }.getOrDefault(43)
+        }
     }
 
     private val checkUpdateScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
