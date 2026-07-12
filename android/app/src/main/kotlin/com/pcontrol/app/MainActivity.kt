@@ -135,8 +135,14 @@ class MainActivity : AppCompatActivity() {
         checkUpdateScope.cancel()
     }
 
+    override fun onPause() {
+        BrowserAccessibilityService.notifyMainActivityBackground()
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        BrowserAccessibilityService.notifyMainActivityForeground()
         refreshStatus()
     }
 

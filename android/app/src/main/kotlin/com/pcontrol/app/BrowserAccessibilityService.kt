@@ -33,6 +33,7 @@ class BrowserDomainCache {
 class BrowserAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "BrowserAS"
+        private const val KEEP_ALIVE_RETRY_MS = 10_000L
 
         @Volatile
         var instance: BrowserAccessibilityService? = null
@@ -54,7 +55,24 @@ class BrowserAccessibilityService : AccessibilityService() {
             if (service == null) {
                 callback(null)
             } else {
-                service.mainHandler.post { callback(service.activeRootPackage()) }
+                service.mainHandler.post {
+                    service.ensureKeepAlive()
+                    callback(service.foregroundPackageForTracker())
+                }
+            }
+        }
+
+        fun notifyMainActivityForeground() {
+            val service = instance ?: return
+            service.mainHandler.post {
+                if (instance === service) service.showMainActivityForeground()
+            }
+        }
+
+        fun notifyMainActivityBackground() {
+            val service = instance ?: return
+            service.mainHandler.post {
+                if (instance === service) service.mainActivityForeground = false
             }
         }
     }
@@ -63,16 +81,31 @@ class BrowserAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var coordinator: BlockingCoordinator
     private lateinit var controller: BlockingController
+    private lateinit var keepAliveController: AccessibilityKeepAliveController
     private var lastLoggedEvaluation: String? = null
     private var lastContentCheckPkg: String? = null
     private var lastContentCheckMs = 0L
     private val windowTitlePackages = ConcurrentHashMap<String, String>()
     private val windowIdPackages = ConcurrentHashMap<Int, String>()
     private val transitionGuard = ForegroundTransitionGuard()
+    private val foregroundObservation = ForegroundObservation()
+    private var mainActivityForeground = false
+    private var keepAliveRetryScheduled = false
+    private val keepAliveRetry = Runnable {
+        keepAliveRetryScheduled = false
+        ensureKeepAlive()
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        if (::controller.isInitialized) controller.onServiceDestroyed()
+        if (::keepAliveController.isInitialized) keepAliveController.stop()
+        mainHandler.removeCallbacks(keepAliveRetry)
+        keepAliveRetryScheduled = false
+
         instance = this
+        keepAliveController = AccessibilityKeepAliveController(AccessibilityKeepAliveOverlay(this))
+        ensureKeepAlive()
         coordinator = BlockingCoordinator(this)
         controller = BlockingController(
             surface = AccessibilityBlockingSurface(this) { mainHandler.post { controller.goHome() } },
@@ -87,6 +120,7 @@ class BrowserAccessibilityService : AccessibilityService() {
         latestTrackerObservation?.let { observeAndEvaluate(it.pkg, it.domain, 0) }
         mainHandler.postDelayed({
             activeRootPackage()?.takeUnless { it == packageName }?.let { pkg ->
+                foregroundObservation.observe(pkg)
                 observeAndEvaluate(pkg, domainCache.get(pkg), 0)
             }
         }, 300L)
@@ -95,6 +129,7 @@ class BrowserAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::controller.isInitialized) return
+        ensureKeepAlive()
         val pkg = event.packageName?.toString() ?: return
         if (event.windowId >= 0) windowIdPackages[event.windowId] = pkg
         // Real MainActivity navigation is an ALLOW transition. Other self
@@ -108,7 +143,7 @@ class BrowserAccessibilityService : AccessibilityService() {
                     mainActivityClass = MainActivity::class.java.name
                 )
             ) {
-                observeAndEvaluate(pkg, null, 0)
+                showMainActivityForeground()
             }
             return
         }
@@ -120,11 +155,21 @@ class BrowserAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
             focusedApplicationEvent && pkg != packageName
         ) {
+            val blockedForeground = controller.currentToken()?.packageName
+            if (controller.isBlocking() && pkg != blockedForeground) return
             val now = android.os.SystemClock.elapsedRealtime()
             if (pkg != lastContentCheckPkg || now - lastContentCheckMs >= 2_000L) {
                 lastContentCheckPkg = pkg
                 lastContentCheckMs = now
-                observeAndEvaluate(pkg, domainCache.get(pkg), 0)
+                val effectivePkg = transitionGuard.select(
+                    eventPkg = pkg,
+                    eventIsNeverBlock = isTransientPackage(pkg),
+                    blocking = controller.isBlocking(),
+                    focusedPkg = pkg,
+                    nowMs = now
+                )
+                foregroundObservation.observe(effectivePkg)
+                observeAndEvaluate(effectivePkg, domainCache.get(effectivePkg), 0)
             }
             return
         }
@@ -150,17 +195,54 @@ class BrowserAccessibilityService : AccessibilityService() {
             // HyperOS emits System UI/Search/launcher events during an app
             // switch. Preserve the real app event briefly while its Room
             // evaluation completes; once blocked, focused Home wins immediately.
-            val eventIsNeverBlock = pkg in NeverBlockResolver.resolve(this) ||
-                pkg == "com.android.quicksearchbox" ||
-                pkg == "com.miui.personalassistant"
             val effectivePkg = transitionGuard.select(
                 eventPkg = pkg,
-                eventIsNeverBlock = eventIsNeverBlock,
+                eventIsNeverBlock = isTransientPackage(pkg),
                 blocking = controller.isBlocking(),
                 focusedPkg = focusedPkg,
                 nowMs = android.os.SystemClock.elapsedRealtime()
             )
+            foregroundObservation.observe(effectivePkg)
             observeAndEvaluate(effectivePkg, domainCache.get(effectivePkg), 0)
+        }
+    }
+
+    private fun showMainActivityForeground() {
+        if (!::controller.isInitialized) return
+        mainActivityForeground = true
+        foregroundObservation.observe(packageName)
+        val token = controller.foregroundChanged(packageName, null) ?: return
+        controller.present(token, null, null)
+    }
+
+    private fun foregroundPackageForTracker(): String? {
+        if (mainActivityForeground) return packageName
+        if (controller.isBlocking()) return foregroundObservation.current()
+        val focusedPackage = activeRootPackage()?.takeUnless { it == packageName }
+        val recentPackage = if (focusedPackage == null) recentNonSelfUsagePackage() else null
+        return foregroundObservation.reconcile(
+            resolvedPackage = focusedPackage ?: recentPackage,
+            retainCurrent = false
+        )
+    }
+
+    private fun recentNonSelfUsagePackage(): String? {
+        val manager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val now = System.currentTimeMillis()
+        return try {
+            selectRecentForegroundPackage(
+                candidates = manager.queryUsageStats(
+                    UsageStatsManager.INTERVAL_DAILY,
+                    now - 120_000L,
+                    now
+                ).map { PackageLastUsed(it.packageName, it.lastTimeUsed) },
+                selfPackage = packageName,
+                nowMs = now,
+                maxAgeMs = 30_000L
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to bootstrap foreground from recent usage", e)
+            null
         }
     }
 
@@ -189,6 +271,8 @@ class BrowserAccessibilityService : AccessibilityService() {
     private fun applyTrackerEvaluation(pkg: String, domain: String?, evaluation: ForegroundEvaluation) {
         mainHandler.post {
             if (!::controller.isInitialized || pkg == packageName) return@post
+            val observedPkg = foregroundObservation.current()
+            if (observedPkg != null && observedPkg != pkg) return@post
             // UsageEvents can miss a resumed task on HyperOS. The periodic
             // path is authoritative only when the accessibility root agrees;
             // then it advances the same generation/controller as an event.
@@ -207,6 +291,11 @@ class BrowserAccessibilityService : AccessibilityService() {
             logOutcome(pkg, outcome)
         }
     }
+
+    private fun isTransientPackage(pkg: String): Boolean =
+        pkg in NeverBlockResolver.resolve(this) ||
+            pkg == "com.android.quicksearchbox" ||
+            pkg == "com.miui.personalassistant"
 
     private fun isFocusedApplicationWindow(windowId: Int): Boolean {
         return windows.any { window ->
@@ -310,12 +399,25 @@ class BrowserAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun ensureKeepAlive() {
+        if (!::keepAliveController.isInitialized || keepAliveController.start()) return
+        if (!keepAliveRetryScheduled) {
+            keepAliveRetryScheduled = true
+            mainHandler.postDelayed(keepAliveRetry, KEEP_ALIVE_RETRY_MS)
+            Log.w(TAG, "Accessibility keep-alive unavailable; retry scheduled")
+        }
+    }
+
     override fun onInterrupt() {
         if (::controller.isInitialized) controller.onServiceInterrupted()
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(keepAliveRetry)
+        keepAliveRetryScheduled = false
         if (::controller.isInitialized) controller.onServiceDestroyed()
+        if (::keepAliveController.isInitialized) keepAliveController.stop()
+        foregroundObservation.clear()
         ioScope.cancel()
         if (instance === this) instance = null
         super.onDestroy()

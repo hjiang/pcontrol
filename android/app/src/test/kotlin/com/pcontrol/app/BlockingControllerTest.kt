@@ -7,6 +7,50 @@ import org.junit.Test
 
 class BlockingControllerTest {
     @Test
+    fun `recent foreground bootstrap rejects stale and self packages`() {
+        val now = 100_000L
+        assertEquals(
+            "com.tencent.mm",
+            selectRecentForegroundPackage(
+                candidates = listOf(
+                    PackageLastUsed("com.pcontrol.app", now),
+                    PackageLastUsed("com.tencent.mm", now - 1_000L)
+                ),
+                selfPackage = "com.pcontrol.app",
+                nowMs = now,
+                maxAgeMs = 30_000L
+            )
+        )
+        assertEquals(
+            null,
+            selectRecentForegroundPackage(
+                candidates = listOf(PackageLastUsed("com.tencent.mm", now - 30_001L)),
+                selfPackage = "com.pcontrol.app",
+                nowMs = now,
+                maxAgeMs = 30_000L
+            )
+        )
+    }
+
+    @Test
+    fun `observed foreground remains authoritative over stale periodic fallback`() {
+        val observation = ForegroundObservation()
+        assertEquals("com.miui.home", observation.currentOr("com.miui.home"))
+        observation.observe("com.tencent.mm")
+        assertEquals("com.tencent.mm", observation.currentOr("com.miui.home"))
+        observation.observe("com.miui.home")
+        assertEquals("com.miui.home", observation.currentOr("com.tencent.mm"))
+        assertEquals(
+            "com.tencent.mm",
+            observation.reconcile("com.tencent.mm", retainCurrent = false)
+        )
+        assertEquals(
+            "com.tencent.mm",
+            observation.reconcile("com.miui.home", retainCurrent = true)
+        )
+    }
+
+    @Test
     fun `only the real main activity counts as a self foreground event`() {
         assertTrue(isRealSelfActivityEvent(
             eventPackage = "com.pcontrol.app",

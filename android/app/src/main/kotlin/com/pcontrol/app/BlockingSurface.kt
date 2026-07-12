@@ -39,6 +39,45 @@ fun interface BlockingNotificationSink {
     fun postBlockFailure(message: String)
 }
 
+data class PackageLastUsed(val packageName: String, val lastTimeUsedMs: Long)
+
+fun selectRecentForegroundPackage(
+    candidates: List<PackageLastUsed>,
+    selfPackage: String,
+    nowMs: Long,
+    maxAgeMs: Long
+): String? {
+    require(maxAgeMs >= 0L) { "Maximum foreground age must be non-negative" }
+    return candidates
+        .asSequence()
+        .filter { it.packageName != selfPackage }
+        .maxByOrNull { it.lastTimeUsedMs }
+        ?.takeIf { nowMs - it.lastTimeUsedMs in 0L..maxAgeMs }
+        ?.packageName
+}
+
+class ForegroundObservation {
+    private var observedPackage: String? = null
+
+    fun observe(packageName: String) {
+        require(packageName.isNotBlank()) { "Observed package must not be blank" }
+        observedPackage = packageName
+    }
+
+    fun currentOr(fallback: String?): String? = observedPackage ?: fallback
+
+    fun current(): String? = observedPackage
+
+    fun reconcile(resolvedPackage: String?, retainCurrent: Boolean): String? {
+        if (!retainCurrent && resolvedPackage != null) observe(resolvedPackage)
+        return observedPackage ?: resolvedPackage
+    }
+
+    fun clear() {
+        observedPackage = null
+    }
+}
+
 fun isRealSelfActivityEvent(
     eventPackage: String,
     eventClass: String?,

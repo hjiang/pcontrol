@@ -2,9 +2,16 @@ package com.pcontrol.app
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import okhttp3.Call
+import okhttp3.EventListener
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -12,10 +19,72 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class SyncClientTest {
+
+    @Test
+    fun `sync total call timeout bounds a server that never responds`() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        server.start()
+        val client = SyncClient(
+            serverUrl = "http://127.0.0.1:${server.port}",
+            deviceToken = "test-token",
+            callTimeoutSeconds = 1
+        )
+
+        try {
+            val started = System.nanoTime()
+            val response = runBlocking {
+                client.sync(SyncRequest("2026-07-12T00:00:00Z", 1, emptyList()))
+            }
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+            assertNull(response)
+            assertNotNull("server should receive the timed-out request", server.takeRequest(1, TimeUnit.SECONDS))
+            assertTrue("call should be bounded, elapsed=${elapsedMs}ms", elapsedMs < 3_000)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `cancelling sync cancels the OkHttp call`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        server.start()
+        val callFailed = CountDownLatch(1)
+        val httpClient = OkHttpClient.Builder()
+            .eventListener(object : EventListener() {
+                override fun callFailed(call: Call, ioe: IOException) {
+                    callFailed.countDown()
+                }
+            })
+            .build()
+        val client = SyncClient(
+            serverUrl = "http://127.0.0.1:${server.port}",
+            deviceToken = "test-token",
+            httpClient = httpClient
+        )
+
+        try {
+            val job = launch(Dispatchers.IO) {
+                client.sync(SyncRequest("2026-07-12T00:00:00Z", 1, emptyList()))
+            }
+            assertNotNull("server should receive request", server.takeRequest(2, TimeUnit.SECONDS))
+
+            job.cancelAndJoin()
+
+            assertTrue("cancelling coroutine should cancel HTTP call", callFailed.await(2, TimeUnit.SECONDS))
+        } finally {
+            server.shutdown()
+        }
+    }
 
     @Test
     fun `sync sends events and receives policy`() {

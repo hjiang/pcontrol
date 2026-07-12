@@ -1,6 +1,6 @@
 # Plan 10: Make blocking independent of background activity launches
 
-**Status:** Implemented locally — automated tests pass; connected-device validation remains required.
+**Status:** Implemented and validated on the diagnosed HyperOS device; automated tests pass.
 
 ## Problem
 
@@ -28,7 +28,7 @@ USB-debugging checks confirmed all normal prerequisites:
 - `TrackerService` is running as a foreground service;
 - draw-over-other-apps is allowed;
 - pcontrol is exempt from battery optimization;
-- the process is alive and not frozen.
+- HyperOS Autostart and unrestricted background battery use are enabled.
 
 While WeChat was foreground, pcontrol queried the cached policy and counters,
 reached `BLOCK_APP`, and attempted to start `BlockedActivity` every ten seconds.
@@ -50,6 +50,18 @@ even when `SYSTEM_ALERT_WINDOW` is granted.
 
 The server's `BLOCKED` label is a policy state, not proof that Android displayed
 the blocking UI.
+
+A second device-only failure appeared after replacing `BlockedActivity`: HyperOS
+Greeze froze pcontrol's UID within seconds of it becoming background-idle, even
+though its foreground service and accessibility service remained registered.
+This suspended usage ticks, sync heartbeats, and accessibility callbacks. Opening
+pcontrol produced `GreezeManager: THAW ... reason: Activity Start`, delivered
+queued WeChat events, and showed a delayed block over pcontrol. A partial wake
+lock was acquired successfully but HyperOS explicitly disabled it with
+`reason: greeze`. The validated fix is a separate one-pixel, non-touchable
+`TYPE_ACCESSIBILITY_OVERLAY` retained for the accessibility-service lifetime,
+which keeps the UID window-visible while the full-screen blocking overlay remains
+independently managed.
 
 ## Goals
 
@@ -325,7 +337,7 @@ attach/remove failures. Avoid noisy per-tick logs when state has not changed.
 
 ### Stage 5 — Validation
 
-**Status:** Android JVM validation passed (`gradle :app:testDebugUnitTest` and `gradle test`); physical HyperOS validation remains required.
+**Status:** Complete. `gradle test` passes and physical validation succeeded on Xiaomi `2602BRT18C` / HyperOS `OS3.0.304.0.WPLCNXM` with pcontrol validation build `0.0.28`.
 
 Run local validation:
 
@@ -358,6 +370,15 @@ leaving `MIUIOP(10021)` denied:
     domains, and system settings remain reachable.
 11. Run for at least five minutes and inspect `dumpsys window`/logcat for leaked
     or duplicate overlay windows.
+
+Connected-device validation confirmed that while WeChat remained open:
+
+- the server last-seen timestamp continued advancing;
+- WeChat usage continued increasing and synchronizing;
+- the full-screen blocking overlay appeared and prevented interaction;
+- the persistent marker remained a single `1x1` non-touchable accessibility
+  window; and
+- no background activity launch was used.
 
 ## Acceptance criteria
 
