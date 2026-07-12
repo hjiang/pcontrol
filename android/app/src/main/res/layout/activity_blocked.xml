@@ -1,48 +1,105 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:background="?attr/colorErrorContainer"
-    android:padding="@dimen/spacing_xxl">
+    android:fillViewport="true"
+    android:fitsSystemWindows="true"
+    android:background="?attr/colorErrorContainer">
 
-    <TextView
-        android:id="@+id/blocked_message"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/blocked_default_message"
-        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedHeadline" />
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="@dimen/spacing_xxl"
+        android:minWidth="@dimen/content_max_width">
 
-    <TextView
-        android:id="@+id/blocked_subject"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedSubject"
-        android:layout_marginTop="@dimen/spacing_lg" />
+        <!-- 1) Shield illustration. Decorative — labeled with a content
+             description rather than separately focusable. -->
+        <ImageView
+            android:id="@+id/blocked_shield"
+            android:layout_width="@dimen/blocked_shield_size"
+            android:layout_height="@dimen/blocked_shield_size"
+            android:contentDescription="@string/cd_blocked_shield"
+            android:src="@drawable/ic_shield"
+            android:importantForAccessibility="yes"
+            android:focusable="false"
+            android:clickable="false" />
 
-    <TextView
-        android:id="@+id/blocked_allowed_sites"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedSubject"
-        android:layout_marginTop="@dimen/spacing_lg"
-        android:visibility="gone" />
+        <!-- 2) Clear headline. -->
+        <TextView
+            android:id="@+id/blocked_message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_lg"
+            android:gravity="center"
+            android:text="@string/blocked_default_message"
+            android:textAppearance="@style/TextAppearance.Pcontrol.BlockedHeadline" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/blocked_reset"
-        android:textAppearance="@style/TextAppearance.Pcontrol.BlockedMuted"
-        android:layout_marginTop="@dimen/spacing_xxl" />
+        <!-- 3) Subject in a readable surface card. -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/blocked_subject_card"
+            style="@style/Widget.Pcontrol.CardView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_lg"
+            android:layout_gravity="center"
+            app:cardBackgroundColor="?attr/colorSurface"
+            app:strokeColor="?attr/colorOutlineVariant"
+            app:strokeWidth="1dp">
 
-    <Button
-        android:id="@+id/blocked_go_home"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/spacing_xl"
-        android:text="@string/blocked_go_home" />
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center">
 
-</LinearLayout>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/blocked_subject_label"
+                    android:textAppearance="@style/TextAppearance.Pcontrol.BlockedMuted" />
+
+                <TextView
+                    android:id="@+id/blocked_subject"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_xs"
+                    android:text=""
+                    android:textAppearance="@style/TextAppearance.Pcontrol.BlockedSubject"
+                    android:textAlignment="center" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 4) Optional sites still available. -->
+        <TextView
+            android:id="@+id/blocked_allowed_sites"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_lg"
+            android:textAppearance="@style/TextAppearance.Pcontrol.BlockedSubject"
+            android:visibility="gone"
+            android:clickable="false"
+            android:focusable="false"
+            android:longClickable="false" />
+
+        <!-- 5) Muted reset explanation. -->
+        <TextView
+            android:id="@+id/blocked_reset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_xxl"
+            android:text="@string/blocked_reset"
+            android:textAppearance="@style/TextAppearance.Pcontrol.BlockedMuted" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/blocked_go_home"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_xl"
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/blocked_go_home" />
+
+    </LinearLayout>
+</ScrollView>

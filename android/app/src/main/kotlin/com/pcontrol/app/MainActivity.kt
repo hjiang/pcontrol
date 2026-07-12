@@ -352,59 +352,57 @@ class MainActivity : AppCompatActivity() {
 
     private fun showServerConfigDialog() {
         val prefs = SecretPrefs.getInstance(this)
-        val currentUrl = prefs.getServerUrl()
-        val currentToken = prefs.getDeviceToken()
-
-        val inputUrl = android.widget.EditText(this).apply {
-            setText(currentUrl)
-            hint = getString(R.string.dialog_server_url_hint)
-            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
-        }
-        val inputToken = android.widget.EditText(this).apply {
-            setText(currentToken)
-            hint = getString(R.string.dialog_server_token_hint)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            addView(android.widget.TextView(this@MainActivity).apply { text = getString(R.string.dialog_server_url_label) })
-            addView(inputUrl)
-            addView(android.widget.TextView(this@MainActivity).apply {
-                text = getString(R.string.dialog_server_token_label)
-                setPadding(0, 32, 0, 0)
-            })
-            addView(inputToken)
-            setPadding(32, 16, 32, 16)
-        }
+        val content = layoutInflater.inflate(R.layout.dialog_server_config, null)
+        val urlLayout = content.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.input_server_url_layout)
+        val tokenLayout = content.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.input_server_token_layout)
+        val inputUrl = content.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.input_server_url)
+        val inputToken = content.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.input_server_token)
+        inputUrl.setText(prefs.getServerUrl())
+        inputToken.setText(prefs.getDeviceToken())
 
         val dialog = android.app.AlertDialog.Builder(this)
             .setTitle(R.string.dialog_server_title)
-            .setView(layout)
-            .setPositiveButton(R.string.dialog_server_save) { _, _ ->
+            .setView(content)
+            .setPositiveButton(R.string.dialog_server_save, null)
+            .setNegativeButton(R.string.dialog_server_cancel, null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val result = validateServerConfiguration(
-                    inputUrl.text.toString(), inputToken.text.toString()
+                    inputUrl.text?.toString().orEmpty(), inputToken.text?.toString().orEmpty()
                 )
+                urlLayout.error = null
+                tokenLayout.error = null
                 if (result.isOk) {
                     prefs.setServerUrl(result.cleanedUrl)
                     prefs.setDeviceToken(result.cleanedToken)
+                    dialog.dismiss()
                     refreshStatus()
                 } else {
-                    // Keep the dialog open and show field-level errors.
-                    val errRes = when (result.error) {
-                        com.pcontrol.app.ui.ServerConfigError.URL_BLANK -> R.string.dialog_server_url_error_blank
-                        com.pcontrol.app.ui.ServerConfigError.URL_BAD_SCHEME -> R.string.dialog_server_url_error_scheme
-                        com.pcontrol.app.ui.ServerConfigError.URL_NO_HOST -> R.string.dialog_server_url_error_host
-                        com.pcontrol.app.ui.ServerConfigError.URL_QUERY_OR_FRAGMENT -> R.string.dialog_server_url_error_query
-                        com.pcontrol.app.ui.ServerConfigError.TOKEN_BLANK -> R.string.dialog_server_token_error_blank
-                        null -> R.string.dialog_server_url_error_blank
+                    when (result.error) {
+                        com.pcontrol.app.ui.ServerConfigError.URL_BLANK,
+                        com.pcontrol.app.ui.ServerConfigError.URL_BAD_SCHEME,
+                        com.pcontrol.app.ui.ServerConfigError.URL_NO_HOST,
+                        com.pcontrol.app.ui.ServerConfigError.URL_QUERY_OR_FRAGMENT -> {
+                            urlLayout.error = getString(when (result.error) {
+                                com.pcontrol.app.ui.ServerConfigError.URL_BLANK -> R.string.dialog_server_url_error_blank
+                                com.pcontrol.app.ui.ServerConfigError.URL_BAD_SCHEME -> R.string.dialog_server_url_error_scheme
+                                com.pcontrol.app.ui.ServerConfigError.URL_NO_HOST -> R.string.dialog_server_url_error_host
+                                else -> R.string.dialog_server_url_error_query
+                            })
+                            inputUrl.requestFocus()
+                        }
+                        com.pcontrol.app.ui.ServerConfigError.TOKEN_BLANK -> {
+                            tokenLayout.error = getString(R.string.dialog_server_token_error_blank)
+                            inputToken.requestFocus()
+                        }
+                        null -> Unit
                     }
-                    Toast.makeText(this, errRes, Toast.LENGTH_LONG).show()
                 }
             }
-            .setNegativeButton(R.string.dialog_server_cancel, null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun startTrackerService() {

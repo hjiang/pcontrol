@@ -86,26 +86,7 @@ class AccessibilityBlockingSurface(
     override fun isAttached(): Boolean = view?.isAttachedToWindow == true
 
     private fun bind(view: View, request: BlockRequest) {
-        view.findViewById<TextView>(R.id.blocked_message).text = request.message
-
-        val subject = view.findViewById<TextView>(R.id.blocked_subject)
-        subject.text = request.subject
-        subject.visibility = if (request.subject.isBlank()) View.GONE else View.VISIBLE
-
-        val allowed = view.findViewById<TextView>(R.id.blocked_allowed_sites)
-        if (request.allowedSites.isEmpty()) {
-            allowed.visibility = View.GONE
-        } else {
-            allowed.text = buildString {
-                append(view.context.getString(R.string.blocked_allowed_sites_label))
-                request.allowedSites.forEach { site ->
-                    append("\n•  ")
-                    append(site)
-                }
-            }
-            allowed.visibility = View.VISIBLE
-        }
-        view.findViewById<Button>(R.id.blocked_go_home).setOnClickListener { onGoHome() }
+        AccessibilityBlockingContentRenderer.render(view, request, onGoHome)
     }
 
     private fun overlayContext(): Context {
@@ -131,4 +112,39 @@ class AccessibilityBlockingSurface(
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
         android.graphics.PixelFormat.OPAQUE
     )
+}
+
+/**
+ * Binds one validated [BlockRequest] to the accessibility-owned blocking view.
+ *
+ * Preconditions: [view] is inflated from `activity_blocked.xml`; [request]
+ * satisfies its nonblank subject/message invariant.
+ * Postconditions: content and visibility match [request], allowed sites remain
+ * non-clickable, and the Home control invokes [onGoHome] once per click.
+ */
+internal object AccessibilityBlockingContentRenderer {
+    fun render(view: View, request: BlockRequest, onGoHome: () -> Unit) {
+        requireNotNull(view.findViewById<TextView>(R.id.blocked_message)).text = request.message
+
+        val subjectCard = requireNotNull(view.findViewById<View>(R.id.blocked_subject_card))
+        val subject = requireNotNull(view.findViewById<TextView>(R.id.blocked_subject))
+        subject.text = request.subject
+        subjectCard.visibility = if (request.subject.isBlank()) View.GONE else View.VISIBLE
+
+        val allowed = requireNotNull(view.findViewById<TextView>(R.id.blocked_allowed_sites))
+        if (request.allowedSites.isEmpty()) {
+            allowed.visibility = View.GONE
+        } else {
+            allowed.text = buildString {
+                append(view.context.getString(R.string.blocked_allowed_sites_label))
+                request.allowedSites.forEach { site ->
+                    append("\n•  ")
+                    append(site)
+                }
+            }
+            allowed.visibility = View.VISIBLE
+        }
+        requireNotNull(view.findViewById<Button>(R.id.blocked_go_home))
+            .setOnClickListener { onGoHome() }
+    }
 }

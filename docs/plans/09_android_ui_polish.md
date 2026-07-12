@@ -317,7 +317,21 @@ existing Settings intents and start-service behavior are unchanged.
 
 ### Stage 3 — Redesign `MainActivity`
 
-**Status:** Not Started
+**Status:** Done — `activity_main.xml` replaced with the hierarchy in
+Section 4.2: `CoordinatorLayout` + MaterialToolbar app bar (`navigationIcon`
+shield/check mark with a content description), a `status_hero` live-region,
+“Required setup”, “Server connection”, and “Updates (optional)” section
+headings, `MaterialCardView` capability cards (title + one-sentence rationale +
+textual state + 48dp-touch stacked action — actions stack below the text so 200%
+fonts do not collide with trailing controls), a `MaterialSwitch` auto-update
+toggle (with a separate subtext `TextView`, since MaterialSwitch exposes no
+`subText` attribute), an inline `ProgressBar`+status `TextView` for update
+feedback, and a persistent bottom CTA in a `colorSurfaceContainer` bar that
+stays above system navigation. Wide windows center the content via
+`content_max_width`. [MainActivityLayoutTest] asserts section headings, hero,
+start-button disabled-until-ready, optional updater labeling, and XML view
+order. `MainActivity.onCreate` now does an initial `refreshStatus()` so the
+screen is populated on the first frame.
 
 **Test first:** add Robolectric tests for the incomplete and complete states.
 Assert section headings, textual state, start-button enabled state, optional
@@ -345,7 +359,7 @@ Settings destinations.
 
 ### Stage 4 — Replace the server configuration dialog
 
-**Status:** Partial — pure [validateServerConfiguration(url, token)] helper
+**Status:** Done — pure [validateServerConfiguration(url, token)] helper
 and [ServerConfigError] enum live in
 `app/src/main/kotlin/com/pcontrol/app/ui/ServerConfigValidator.kt` (Android-free
 URI validation: absolute `http`/`https` only, nonblank host, no query/fragment,
@@ -364,12 +378,14 @@ dialog test for field-level `TextInputLayout` errors lands — deferred because
 moving the dialog into a separate `dialog_server_config.xml` is part of the
 remaining Stage 4 work.):
 
-  - Replace the inline `LinearLayout` build with `dialog_server_config.xml`
-    using Material `TextInputLayout` fields and an accessible token reveal
-    toggle, with field-level errors (not a Toast) on invalid save.
-  - Add the dialog Robolectric test for masked token input and
-    non-dismissal on validation error.
-  - IME insets keep the focused field visible.
+  - `dialog_server_config.xml` uses Material `TextInputLayout` fields, URI
+    input for the URL, masked token input, and an accessible password-reveal
+    toggle.
+  - The positive action validates before persistence, sets field-level errors,
+    keeps the dialog open on invalid input, and dismisses only after both fields
+    pass. `ServerConfigDialogTest` covers masking/reveal and pre-persistence
+    rejection.
+  - IME inset behavior remains a manual API 26–37 verification item.
 
 **Test first:** extract a pure `validateServerConfiguration(url, token)` helper
 and test blank values, malformed URLs, non-HTTP schemes, whitespace trimming,
@@ -396,7 +412,7 @@ LAN HTTP and VPS HTTPS configurations still work; token handling remains in
 
 ### Stage 5 — Make update feedback durable and accessible
 
-**Status:** Partial — pure [UpdateUiState] / [UpdateUiStatus] (IDLE, CHECKING,
+**Status:** Done — pure [UpdateUiState] / [UpdateUiStatus] (IDLE, CHECKING,
 SUCCESS, ACTION_REQUIRED, ERROR) presentation model and [UpdateUiMapper.fromResult]
 live in `app/src/main/kotlin/com/pcontrol/app/ui/UpdateUiState.kt`.
 [UpdateUiMapperTest] covers every [UpdateResult] variant for the correct
@@ -406,12 +422,12 @@ checking carry none).
 `MainActivity.checkForUpdates()` now resolves the message through
 `UpdateUiMapper.fromResult` instead of a hardcoded Kotlin `when` expression. 
 
-**Remaining** (durable inline UI):
-  - Add an `update_status` TextView with `accessibilityLiveRegion` set to the
-    Updates card, replace the Toast with inline display, and expose a progress
-    announcement while CHECKING.
-  - Add the internal update-runner seam with an injected test dispatcher so the
-    Robolectric test can assert that CHECKING disables duplicate requests.
+**Status:** Done — `update_progress` + `update_status` views live in the
+Updates card; `renderUpdateState` translates the pure state machine to view
+visibility/text; `Toast` is demoted to brief confirmation while errors and
+manual-action guidance remain inline. `accessibilityLiveRegion=polite` is set
+on `update_status`. `UpdateCheckProgressTest` covers idle/checking visibility
+and the in-flight duplicate-request guard.
 
 **Test first:** add pure mapping tests from every `UpdateResult` to a small
 `UpdateUiState` (`idle`, `checking`, `success`, `actionRequired`, `error`) and
@@ -436,20 +452,23 @@ Toast; auto-update preference behavior is unchanged.
 
 ### Stage 6 — Redesign the accessibility blocking surface
 
-**Status:** Partial — main replaced `BlockedActivity` with
-`AccessibilityBlockingSurface`, a `TYPE_ACCESSIBILITY_OVERLAY` owned by the
-bound accessibility service. The ordinary overlay permission and background
-activity launch path remain removed. The shared `activity_blocked.xml` now uses
-the Material theme's error-container surface and resource-backed typography.
-Empty subject and allowed-sites views are hidden, and allowed sites are rendered
-as a vertical bulleted list. The visible “Go home” control and HOME fallback
-remain part of the HyperOS-safe blocking contract.
+**Status:** Done — the shared `activity_blocked.xml` is now the Material 3
+presentation inflated by `AccessibilityBlockingSurface`, a
+`TYPE_ACCESSIBILITY_OVERLAY` owned by the bound accessibility service.
+`BlockedActivity`, background activity launching, and the ordinary overlay
+permission remain removed. The layout uses a themed error-container surface,
+a scrollable shield/headline/subject-card hierarchy, a non-clickable vertical
+allowed-sites list, muted reset copy, and a visible Go-home control. Empty
+optional views leave no spacing gap.
 
-**Remaining:** the redesigned `activity_blocked.xml` uses the existing
-single-column linear layout — the Material-card hierarchy of Stage 6 tasks 1–4
-(shield illustration, subject surface card, allowed-sites list card, muted
-reset), per-element typography, accessibility-window inset handling, and
-binding tests remain.
+`AccessibilityBlockingContentRenderer` is an activity-independent binding seam
+that preserves the `BlockRequest` message/subject/allowed-sites contract and
+wires the Go-home callback. [AccessibilityBlockingSurfaceLayoutTest] covers
+message and subject rendering, shield/themed hierarchy, optional-site hiding,
+vertical-list/non-clickable behavior, content order, and the Home callback.
+The existing blocking-controller tests retain the HyperOS overlay lifecycle and
+HOME-fallback coverage; API 37/inset behavior remains part of Stage 7 manual
+verification.
 
 **Test first:** add Robolectric tests for default content, subject rendering,
 allowed-sites hidden/visible states, content order, and the Go-home callback.
@@ -474,7 +493,20 @@ message combinations are legible and accessible.
 
 ### Stage 7 — Accessibility, adaptive, and visual verification
 
-**Status:** Not Started
+**Status:** Partial — automated tests/builds and resource/layout contracts are
+green; manual device/emulator verification is deferred because no emulator or
+physical device is available in this environment.
+
+Completed: `gradle test`, debug/release APK builds, Robolectric API 26 light/
+dark inflation and behavior tests, XML 48dp minimum touch targets for actions,
+semantic textual status, live regions, edge-to-edge setup, wide-window
+resources, and before/after screenshot README checklists under
+`docs/ui/android/`. `gradle :app:lintDebug` reports only the pre-existing
+`PACKAGE_USAGE_STATS` ProtectedPermissions finding.
+
+Deferred: API 26/API 37 physical validation, TalkBack, hardware keyboard/D-pad,
+Accessibility Scanner, gesture/three-button navigation, 200% font scale,
+IME/landscape/split-screen screenshots, and matching after screenshots.
 
 1. Add Android UI tests only where Robolectric cannot establish critical focus,
    Settings-intent, or semantics behavior. If instrumentation tests are added,
@@ -551,8 +583,9 @@ expected. Do not change signing or CI release behavior in this project.
   capability set in pure state tests before replacing layouts.
 - **Large-font failures hide bottom actions:** allow reflow/scrolling and test
   200% font scale before visual approval.
-- **Blocked screen becomes bypassable:** retain intent flags and Back-to-home
-  regression tests; do not add links or override actions.
+- **Blocked surface becomes bypassable:** retain the touch-consuming accessibility
+  overlay, Go-home callback, and blocking-controller regression tests; do not add
+  links or override actions or restore background activity launching.
 - **Sensitive token exposure:** mask by default, never place it in status text,
   screenshots, logs, or accessibility announcements.
 - **Scope creep into a device dashboard:** any new service health, usage, policy,
