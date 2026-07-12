@@ -36,6 +36,7 @@
         android:hint="@string/dialog_server_token_label"
         app:boxBackgroundMode="outline"
         app:endIconMode="password_toggle"
+        app:endIconContentDescription="@string/dialog_server_token_reveal"
         app:placeholderText="@string/dialog_server_token_hint">
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/input_server_token"
