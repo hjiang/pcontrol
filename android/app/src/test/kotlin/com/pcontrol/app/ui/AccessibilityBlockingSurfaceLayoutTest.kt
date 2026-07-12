@@ -82,8 +82,8 @@ class AccessibilityBlockingSurfaceLayoutTest {
         val allowed = view.findViewById<TextView>(R.id.blocked_allowed_sites)
 
         assertEquals(View.VISIBLE, allowed.visibility)
-        assertTrue(allowed.text.toString().contains("\n•  schoolsite.com"))
-        assertTrue(allowed.text.toString().contains("\n•  wikipedia.org"))
+        assertTrue(allowed.text.toString().contains("\n•\tschoolsite.com"))
+        assertTrue(allowed.text.toString().contains("\n•\twikipedia.org"))
         assertFalse(allowed.text.toString().contains("schoolsite.com, wikipedia.org"))
         assertFalse(allowed.isClickable)
     }

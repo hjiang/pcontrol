@@ -2,16 +2,15 @@
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:fitsSystemWindows="true">
+    android:layout_height="match_parent">
 
     <!-- Persistent app bar; no in-content duplicate screen title. -->
     <com.google.android.material.appbar.AppBarLayout
         android:id="@+id/app_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:fitsSystemWindows="true"
         app:liftOnScroll="true">
 
         <com.google.android.material.appbar.MaterialToolbar
@@ -29,17 +28,20 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:fillViewport="true"
+        android:clipToPadding="false"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-        <LinearLayout
+        <com.pcontrol.app.ui.MaxWidthLinearLayout
+            android:id="@+id/content_column"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
             android:orientation="vertical"
             android:paddingStart="@dimen/content_padding_h"
             android:paddingEnd="@dimen/content_padding_h"
             android:paddingTop="@dimen/content_padding_v"
             android:paddingBottom="@dimen/spacing_xxl"
-            android:minWidth="@dimen/content_max_width">
+            app:maxContentWidth="@dimen/content_max_width">
 
             <!-- Status hero: filled in by CapabilityRenderer. -->
             <TextView
@@ -48,6 +50,7 @@
                 android:layout_height="wrap_content"
                 android:textAppearance="@style/TextAppearance.Pcontrol.HeroTitle"
                 android:importantForAccessibility="yes"
+                android:accessibilityHeading="true"
                 android:accessibilityLiveRegion="polite" />
 
             <!-- ─── Required setup ────────────────────────────────────── -->
@@ -57,6 +60,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_xl"
                 android:text="@string/section_required"
+                android:accessibilityHeading="true"
                 android:textAppearance="@style/TextAppearance.Pcontrol.SectionHeading" />
 
             <com.google.android.material.card.MaterialCardView
@@ -74,8 +78,7 @@
                         android:id="@+id/status_usage"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
-                        android:labelFor="@id/btn_usage" />
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
                     <TextView
                         android:layout_width="match_parent"
@@ -109,8 +112,7 @@
                         android:id="@+id/status_accessibility"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
-                        android:labelFor="@id/btn_accessibility" />
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
                     <TextView
                         android:layout_width="match_parent"
@@ -144,8 +146,7 @@
                         android:id="@+id/status_notifications"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
-                        android:labelFor="@id/btn_notifications" />
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
                     <TextView
                         android:layout_width="match_parent"
@@ -179,8 +180,7 @@
                         android:id="@+id/status_battery"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
-                        android:labelFor="@id/btn_battery" />
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
                     <TextView
                         android:layout_width="match_parent"
@@ -206,6 +206,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_xl"
                 android:text="@string/section_server"
+                android:accessibilityHeading="true"
                 android:textAppearance="@style/TextAppearance.Pcontrol.SectionHeading" />
 
             <com.google.android.material.card.MaterialCardView
@@ -249,6 +250,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_xl"
                 android:text="@string/section_updates"
+                android:accessibilityHeading="true"
                 android:textAppearance="@style/TextAppearance.Pcontrol.SectionHeading" />
 
             <com.google.android.material.card.MaterialCardView
@@ -266,8 +268,7 @@
                         android:id="@+id/status_updater"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
-                        android:labelFor="@id/btn_updater" />
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
 
                     <TextView
                         android:layout_width="match_parent"
@@ -328,7 +329,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-        </LinearLayout>
+        </com.pcontrol.app.ui.MaxWidthLinearLayout>
     </androidx.core.widget.NestedScrollView>
 
     <!-- Persistent bottom CTA. -->
@@ -339,8 +340,7 @@
         android:orientation="vertical"
         android:layout_gravity="bottom"
         android:background="?attr/colorSurfaceContainer"
-        android:elevation="0dp"
-        android:fitsSystemWindows="true">
+        android:elevation="0dp">
 
         <Button
             android:id="@+id/btn_start"

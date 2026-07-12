@@ -3,6 +3,8 @@ package com.pcontrol.app.ui
 import android.view.View
 import com.pcontrol.app.MainActivity
 import com.pcontrol.app.R
+import com.pcontrol.app.ui.CapabilityFacts
+import com.pcontrol.app.ui.SetupUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
@@ -35,8 +37,12 @@ class MainActivityLayoutTest {
     }
 
     @Test
-    fun statusHeroPresent() {
-        findViewById(R.id.status_hero, buildActivity())
+    fun statusHeroSummarizesIncompleteSetup() {
+        val activity = buildActivity()
+        val hero = activity.findViewById<android.widget.TextView>(R.id.status_hero)
+        assertNotNull(hero)
+        assertTrue(hero.text.toString().contains("Setup needed"))
+        assertTrue(hero.text.toString().contains("of 5 required steps complete"))
     }
 
     @Test
@@ -87,34 +93,56 @@ class MainActivityLayoutTest {
             text.contains("Install unknown apps", ignoreCase = true))
     }
 
+    @Test
+    fun completeSetupRendersReadyHeroAndStableStartAction() {
+        val activity = buildActivity()
+        activity.renderSetupState(
+            SetupUiState.build(
+                CapabilityFacts(
+                    usage = true,
+                    accessibility = true,
+                    notifications = true,
+                    battery = true,
+                    server = true,
+                    updater = false,
+                )
+            )
+        )
+
+        assertTrue(activity.findViewById<android.widget.TextView>(R.id.status_hero).text
+            .toString().contains("Ready to monitor"))
+        val start = activity.findViewById<android.widget.Button>(R.id.btn_start)
+        assertTrue(start.isEnabled)
+        assertEquals(activity.getString(R.string.start_monitoring), start.text.toString())
+    }
+
     // ── Logical view order matches visual/TalkBack order ─────────────
 
     @Test
     fun appBarBeforeStatusHeroBeforeSections() {
         val activity = buildActivity()
-        val appBarY = activity.findViewById<View>(R.id.app_bar).top
-        val heroY = activity.findViewById<View>(R.id.status_hero).top
-        val secReqY = activity.findViewById<View>(R.id.section_required).top
-        val secSrvY = activity.findViewById<View>(R.id.section_server).top
-        val secUpdY = activity.findViewById<View>(R.id.section_updates).top
-        // Roughly: each successive element should be below the previous one in
-        // XML ordering. We assert by hierarchy traversal position instead.
         val contentView = activity.findViewById<View>(android.R.id.content)
         val order = listOf(
             R.id.app_bar, R.id.status_hero,
             R.id.section_required, R.id.section_server, R.id.section_updates,
         ).map { viewPosition(contentView, it) }
+        assertTrue("all ordered views must exist: $order", order.all { it >= 0 })
         assertEquals(order, order.sorted())
     }
 
     private fun viewPosition(root: View, id: Int): Int {
-        if (root.id == id) return 0
-        if (root !is android.view.ViewGroup) return -1
-        for (i in 0 until root.childCount) {
-            val child = root.getChildAt(i)
-            if (child.id == id) return i
+        var position = 0
+        fun visit(view: View): Int? {
+            if (view.id == id) return position
+            position += 1
+            if (view is android.view.ViewGroup) {
+                for (index in 0 until view.childCount) {
+                    visit(view.getChildAt(index))?.let { return it }
+                }
+            }
+            return null
         }
-        return -1
+        return visit(root) ?: -1
     }
 
     // ── Bottom CTA visible (not clipped) ─────────────────────────────
@@ -123,6 +151,13 @@ class MainActivityLayoutTest {
     fun startButtonVisible() {
         val activity = buildActivity()
         assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.btn_start).visibility)
+    }
+
+    @Test
+    fun startButtonRemainsNamedStartMonitoringWhenSetupIsIncomplete() {
+        val activity = buildActivity()
+        val start = activity.findViewById<android.widget.Button>(R.id.btn_start)
+        assertEquals(activity.getString(R.string.start_monitoring), start.text.toString())
     }
 
     private fun findViewById(id: Int, activity: MainActivity) {

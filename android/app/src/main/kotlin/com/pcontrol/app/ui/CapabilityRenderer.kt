@@ -34,25 +34,37 @@ class CapabilityRenderer(private val context: Context) {
         } else {
             context.getString(R.string.server_state_needed)
         }
-        views.server.text = "${context.getString(R.string.section_server)} — $serverText"
+        views.server.text = context.getString(
+            R.string.capability_state_format,
+            context.getString(R.string.section_server),
+            serverText,
+        )
 
         renderCapability(state.capabilities.first { it.id == CapabilityId.UPDATER }, views.updater)
 
-        // Start CTA.
-        views.startBtn.isEnabled = state.canStart
-        views.startBtn.text = if (state.canStart) {
-            context.getString(R.string.start_monitoring)
+        val progress = context.resources.getQuantityString(
+            R.plurals.hero_progress,
+            state.requiredComplete,
+            state.requiredComplete,
+            state.requiredTotal,
+        )
+        views.hero.text = if (state.canStart) {
+            context.getString(R.string.hero_complete_summary, context.getString(R.string.hero_ready), progress)
         } else {
-            val next = state.firstIncompleteRequired
-            if (next == null) {
-                context.getString(R.string.start_monitoring)
-            } else {
-                context.getString(
-                    R.string.hero_next_step,
-                    context.getString(next.id.titleRes())
-                )
+            val next = checkNotNull(state.firstIncompleteRequired) {
+                "Incomplete setup must have a next required capability"
             }
+            context.getString(
+                R.string.hero_incomplete_summary,
+                context.getString(R.string.hero_setup_needed),
+                progress,
+                context.getString(R.string.hero_next_step, context.getString(next.id.titleRes())),
+            )
         }
+
+        // The primary action remains stable; the hero identifies the next step.
+        views.startBtn.isEnabled = state.canStart
+        views.startBtn.text = context.getString(R.string.start_monitoring)
     }
 
     private fun renderCapability(cap: SetupCapability, view: TextView) {
@@ -60,12 +72,13 @@ class CapabilityRenderer(private val context: Context) {
         val state = context.getString(
             if (cap.granted) R.string.state_ready else R.string.state_action_needed
         )
-        view.text = "$title — $state"
+        view.text = context.getString(R.string.capability_state_format, title, state)
     }
 }
 
 /** Bag of main-screen status views passed into [CapabilityRenderer.render]. */
 data class CapabilityViews(
+    val hero: TextView,
     val usage: TextView,
     val accessibility: TextView,
     val notifications: TextView,

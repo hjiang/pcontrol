@@ -15,11 +15,17 @@ import android.widget.TextView
 import android.view.View
 import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnLayout
+import androidx.core.view.updatePadding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import com.pcontrol.app.update.UpdateCoordinator
 import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
@@ -35,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -49,6 +56,10 @@ class MainActivity : AppCompatActivity() {
 
     private val checkUpdateScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /** Test seam; production initializes this with the real coordinator in [onCreate]. */
+    internal var updateRunner: (suspend () -> UpdateResult)? = null
+
+    private lateinit var statusHero: TextView
     private lateinit var statusUsage: TextView
     private lateinit var statusAccessibility: TextView
     private lateinit var statusNotifications: TextView
@@ -74,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        statusHero = findViewById(R.id.status_hero)
         statusUsage = findViewById(R.id.status_usage)
         statusAccessibility = findViewById(R.id.status_accessibility)
         statusNotifications = findViewById(R.id.status_notifications)
@@ -93,6 +105,14 @@ class MainActivity : AppCompatActivity() {
         switchAutoUpdate = findViewById(R.id.switch_auto_update)
         updateProgress = findViewById(R.id.update_progress)
         updateStatus = findViewById(R.id.update_status)
+
+        updateRunner = {
+            UpdateCoordinator(
+                context = applicationContext,
+                versionName = BuildConfig.VERSION_NAME,
+            ).runOnce(force = true)
+        }
+        configureWindowInsets()
 
         btnUsage.setOnClickListener {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -188,11 +208,12 @@ class MainActivity : AppCompatActivity() {
         renderSetupState(SetupUiState.build(facts))
     }
 
-    /** Render the pure [SetupUiState] into status views. */
-    private fun renderSetupState(state: SetupUiState) {
+    /** Test seam: render the pure [SetupUiState] into status views. */
+    internal fun renderSetupState(state: SetupUiState) {
         CapabilityRenderer(this).render(
             state,
             CapabilityViews(
+                hero = statusHero,
                 usage = statusUsage,
                 accessibility = statusAccessibility,
                 notifications = statusNotifications,
@@ -287,38 +308,33 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun checkForUpdates() {
+    internal fun checkForUpdates() {
         // In-flight guard: disable the button so only one check runs at a time.
         // The durable inline status (rather than only a Toast) preserves the
         // last result beside the controls until replaced (Stage 5).
+        if (!btnCheckUpdate.isEnabled) return
         btnCheckUpdate.isEnabled = false
         renderUpdateState(UpdateUiMapper.checking)
 
         checkUpdateScope.launch {
-            try {
-                val coordinator = UpdateCoordinator(
-                    context = applicationContext,
-                    versionName = BuildConfig.VERSION_NAME
-                )
-                val result = coordinator.runOnce(force = true)
-                val uiState = UpdateUiMapper.fromResult(result)
+            val uiState = try {
+                UpdateUiMapper.fromResult(checkNotNull(updateRunner) { "update runner not initialized" }.invoke())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                UpdateUiMapper.fromResult(UpdateResult.NETWORK_ERROR)
+            }
 
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        renderUpdateState(uiState)
-                        // A short Snackbar-style Toast remains for confirmation;
-                        // errors/action-required status stay visible inline too.
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    renderUpdateState(uiState)
+                    if (uiState.status == UpdateUiStatus.SUCCESS) {
                         uiState.messageResId?.let { msgRes ->
-                            Toast.makeText(this@MainActivity, msgRes, Toast.LENGTH_LONG).show()
+                            Snackbar.make(findViewById(R.id.main_root), msgRes, Snackbar.LENGTH_LONG).show()
                         }
-                        refreshStatus()
                     }
-                }
-            } finally {
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        btnCheckUpdate.isEnabled = true
-                    }
+                    refreshStatus()
+                    btnCheckUpdate.isEnabled = true
                 }
             }
         }
@@ -342,10 +358,7 @@ class MainActivity : AppCompatActivity() {
                 updateProgress.visibility = View.GONE
                 updateStatus.text = state.messageResId?.let { getString(it) } ?: ""
                 updateStatus.visibility = if (updateStatus.text.isBlank()) View.GONE else View.VISIBLE
-                if (state.status == UpdateUiStatus.ACTION_REQUIRED) {
-                    // Android still requires an explicit install confirmation.
-                    Toast.makeText(this, R.string.updates_install_pending, Toast.LENGTH_LONG).show()
-                }
+
             }
         }
     }
@@ -360,7 +373,7 @@ class MainActivity : AppCompatActivity() {
         inputUrl.setText(prefs.getServerUrl())
         inputToken.setText(prefs.getDeviceToken())
 
-        val dialog = android.app.AlertDialog.Builder(this)
+        val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.dialog_server_title)
             .setView(content)
             .setPositiveButton(R.string.dialog_server_save, null)
@@ -403,6 +416,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dialog.show()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+    }
+
+    /** Assigns exactly one owner to the top and bottom system-bar insets. */
+    private fun configureWindowInsets() {
+        val root = findViewById<View>(R.id.main_root)
+        val appBar = findViewById<View>(R.id.app_bar)
+        val content = findViewById<View>(R.id.content_scroll)
+        val bottomBar = findViewById<View>(R.id.bottom_bar)
+
+        ViewCompat.setOnApplyWindowInsetsListener(appBar) { view, insets ->
+            view.updatePadding(top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top)
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(bottomBar) { view, insets ->
+            view.updatePadding(bottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom)
+            view.post { content.updatePadding(bottom = bottomBar.height) }
+            insets
+        }
+        bottomBar.doOnLayout { content.updatePadding(bottom = it.height) }
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun startTrackerService() {

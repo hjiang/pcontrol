@@ -12,9 +12,13 @@
     <!-- Status hero -->
     <string name="hero_setup_needed">Setup needed</string>
     <string name="hero_ready">Ready to monitor</string>
-    <string name="hero_progress_needed">%1$d of %2$d required steps complete</string>
-    <string name="hero_progress_ready">All %1$d required steps complete</string>
+    <plurals name="hero_progress">
+        <item quantity="one">%1$d of %2$d required step complete</item>
+        <item quantity="other">%1$d of %2$d required steps complete</item>
+    </plurals>
     <string name="hero_next_step">Next step: %1$s</string>
+    <string name="hero_incomplete_summary">%1$s\n%2$s\n%3$s</string>
+    <string name="hero_complete_summary">%1$s\n%2$s</string>
 
     <!-- Section headings -->
     <string name="section_required">Required setup</string>
@@ -95,11 +99,14 @@
     <!-- Generic state -->
     <string name="state_ready">Ready</string>
     <string name="state_action_needed">Action needed</string>
+    <string name="capability_state_format">%1$s — %2$s</string>
 
     <!-- Blocked screen -->
     <string name="blocked_default_message">Time limit reached</string>
     <string name="blocked_subject_label">Blocked</string>
     <string name="blocked_allowed_sites_label">Sites still available</string>
+    <string name="blocked_allowed_sites_format">%1$s:\n%2$s</string>
+    <string name="blocked_allowed_site_item">•\t%1$s</string>
     <string name="blocked_reset">Resets at midnight</string>
     <string name="blocked_go_home">Go home</string>
     <string name="cd_blocked_shield">Time limit reached</string>

@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/blocked_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
-    android:fitsSystemWindows="true"
     android:background="?attr/colorErrorContainer">
 
-    <LinearLayout
+    <com.pcontrol.app.ui.MaxWidthLinearLayout
+        android:id="@+id/blocked_content"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
         android:orientation="vertical"
         android:gravity="center"
         android:padding="@dimen/spacing_xxl"
-        android:minWidth="@dimen/content_max_width">
+        app:maxContentWidth="@dimen/content_max_width">
 
         <!-- 1) Shield illustration. Decorative — labeled with a content
              description rather than separately focusable. -->
@@ -21,9 +23,9 @@
             android:id="@+id/blocked_shield"
             android:layout_width="@dimen/blocked_shield_size"
             android:layout_height="@dimen/blocked_shield_size"
-            android:contentDescription="@string/cd_blocked_shield"
+            android:contentDescription="@null"
             android:src="@drawable/ic_shield"
-            android:importantForAccessibility="yes"
+            android:importantForAccessibility="no"
             android:focusable="false"
             android:clickable="false" />
 
@@ -101,5 +103,5 @@
             android:minHeight="@dimen/touch_target_min"
             android:text="@string/blocked_go_home" />
 
-    </LinearLayout>
+    </com.pcontrol.app.ui.MaxWidthLinearLayout>
 </ScrollView>

@@ -105,6 +105,22 @@ class ServerConfigValidatorTest {
     }
 
     @Test
+    fun emptyQueryRejected() {
+        assertEquals(
+            ServerConfigError.URL_QUERY_OR_FRAGMENT,
+            validate("https://example.com?", "abc").error
+        )
+    }
+
+    @Test
+    fun emptyFragmentRejected() {
+        assertEquals(
+            ServerConfigError.URL_QUERY_OR_FRAGMENT,
+            validate("https://example.com#", "abc").error
+        )
+    }
+
+    @Test
     fun validHttpsAccepted() {
         val r = validate("https://pcontrol.example.com", "token")
         assertTrue(r.isOk)

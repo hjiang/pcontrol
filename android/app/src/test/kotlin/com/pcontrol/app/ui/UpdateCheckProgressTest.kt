@@ -12,6 +12,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import android.view.View
 import android.widget.Button
+import com.pcontrol.app.update.UpdateResult
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Stage 5 Robolectric tests: when `renderUpdateState(CHECKING)` is set, the
@@ -51,13 +55,27 @@ class UpdateCheckProgressTest {
     }
 
     @Test
-    fun inFlightGuardDisablesCheckButtonWhileCheckIsRunning() {
+    fun inFlightGuardPreventsDuplicateProductionChecks() {
         val a = buildActivity()
         val btn = a.findViewById<Button>(R.id.btn_check_update)
-        assertTrue("button enabled at rest", btn.isEnabled)
-        // Simulate the production in-flight guard: disable before launching IO.
-        btn.isEnabled = false
-        assertFalse("button must be disabled while a check is running", btn.isEnabled)
+        val calls = AtomicInteger()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        a.updateRunner = {
+            calls.incrementAndGet()
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            UpdateResult.UP_TO_DATE
+        }
+
+        a.checkForUpdates()
+        assertTrue("runner should start", started.await(5, TimeUnit.SECONDS))
+        assertFalse("button disabled while production check runs", btn.isEnabled)
+        a.checkForUpdates()
+        assertEquals("second tap must not invoke the runner", 1, calls.get())
+
+        release.countDown()
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
     }
 
     private fun buildActivity(): MainActivity =

@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:paddingStart="@dimen/spacing_lg"
-    android:paddingEnd="@dimen/spacing_lg"
-    android:paddingTop="@dimen/spacing_sm"
-    android:paddingBottom="@dimen/spacing_sm">
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/spacing_lg"
+        android:paddingEnd="@dimen/spacing_lg"
+        android:paddingTop="@dimen/spacing_sm"
+        android:paddingBottom="@dimen/spacing_sm">
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/input_server_url_layout"
@@ -39,4 +44,5 @@
             android:inputType="textPassword"
             android:hint="@string/dialog_server_token_hint" />
     </com.google.android.material.textfield.TextInputLayout>
-</LinearLayout>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

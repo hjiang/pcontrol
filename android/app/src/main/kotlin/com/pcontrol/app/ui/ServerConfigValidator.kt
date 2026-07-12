@@ -74,7 +74,7 @@ fun validateServerConfiguration(rawUrl: String, rawToken: String): ValidationRes
     if (hostMissing) {
         return ValidationResult(ServerConfigError.URL_NO_HOST, url, token)
     }
-    if (!uri.rawQuery.isNullOrBlank() || !uri.fragment.isNullOrBlank()) {
+    if (uri.rawQuery != null || uri.fragment != null) {
         return ValidationResult(ServerConfigError.URL_QUERY_OR_FRAGMENT, url, token)
     }
     if (token.isEmpty()) {

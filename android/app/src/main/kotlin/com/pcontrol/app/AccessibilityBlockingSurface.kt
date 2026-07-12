@@ -11,6 +11,9 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 
 /**
  * A touch-consuming overlay attached by the bound accessibility service.
@@ -53,12 +56,14 @@ class AccessibilityBlockingSurface(
             val inflated = LayoutInflater.from(overlayContext)
                 .inflate(R.layout.activity_blocked, null, false)
             bind(inflated, request)
+            configureWindowInsets(inflated)
             val manager = overlayContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             // Establish ownership before addView so a partially attached view
             // is still removed by the catch-path cleanup.
             view = inflated
             windowManager = manager
             manager.addView(inflated, layoutParams())
+            ViewCompat.requestApplyInsets(inflated)
             this.request = request
             PresentationOutcome.SHOWN
         } catch (e: Exception) {
@@ -87,6 +92,22 @@ class AccessibilityBlockingSurface(
 
     private fun bind(view: View, request: BlockRequest) {
         AccessibilityBlockingContentRenderer.render(view, request, onGoHome)
+    }
+
+    /** Applies system-bar insets once to the accessibility-owned scroll content. */
+    private fun configureWindowInsets(view: View) {
+        val root = requireNotNull(view.findViewById<View>(R.id.blocked_root))
+        val content = requireNotNull(view.findViewById<View>(R.id.blocked_content))
+        val baseTop = content.paddingTop
+        val baseBottom = content.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            content.updatePadding(
+                top = baseTop + bars.top,
+                bottom = baseBottom + bars.bottom,
+            )
+            insets
+        }
     }
 
     private fun overlayContext(): Context {
@@ -135,13 +156,14 @@ internal object AccessibilityBlockingContentRenderer {
         if (request.allowedSites.isEmpty()) {
             allowed.visibility = View.GONE
         } else {
-            allowed.text = buildString {
-                append(view.context.getString(R.string.blocked_allowed_sites_label))
-                request.allowedSites.forEach { site ->
-                    append("\n•  ")
-                    append(site)
-                }
+            val sites = request.allowedSites.joinToString(separator = "\n") { site ->
+                view.context.getString(R.string.blocked_allowed_site_item, site)
             }
+            allowed.text = view.context.getString(
+                R.string.blocked_allowed_sites_format,
+                view.context.getString(R.string.blocked_allowed_sites_label),
+                sites,
+            )
             allowed.visibility = View.VISIBLE
         }
         requireNotNull(view.findViewById<Button>(R.id.blocked_go_home))

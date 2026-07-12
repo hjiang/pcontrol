@@ -191,8 +191,8 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   crashing the setup screen.
 - **UI verification coverage.** `gradle test` covers pure presentation,
   activity inflation, server-dialog fields, update progress, and blocked-screen
-  behavior. `gradle :app:lintDebug` currently reports only the pre-existing
-  `PACKAGE_USAGE_STATS` ProtectedPermissions finding. Physical/emulator
+  behavior; `gradle :app:lintDebug` is clean after documenting the legitimate
+  Settings-granted `PACKAGE_USAGE_STATS` app-op permission. Physical/emulator
   screenshots, TalkBack, Accessibility Scanner, API 37, and large-font manual
   checks remain required before release.
 
