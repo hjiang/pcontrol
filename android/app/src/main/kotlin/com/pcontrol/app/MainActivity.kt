@@ -84,8 +84,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchAutoUpdate: SwitchCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
         statusHero = findViewById(R.id.status_hero)
