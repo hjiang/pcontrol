@@ -1,136 +1,355 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:fitsSystemWindows="true">
 
+    <!-- Persistent app bar; no in-content duplicate screen title. -->
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/app_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fitsSystemWindows="true"
+        app:liftOnScroll="true">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/app_bar_height"
+            app:title="@string/app_bar_title"
+            app:navigationIcon="@drawable/ic_shield_check"
+            app:navigationContentDescription="@string/cd_app_logo" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <!-- Scrollable content. Centered and width-capped on wide windows. -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/content_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/content_padding_h"
+            android:paddingEnd="@dimen/content_padding_h"
+            android:paddingTop="@dimen/content_padding_v"
+            android:paddingBottom="@dimen/spacing_xxl"
+            android:minWidth="@dimen/content_max_width">
+
+            <!-- Status hero: filled in by CapabilityRenderer. -->
+            <TextView
+                android:id="@+id/status_hero"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/TextAppearance.Pcontrol.HeroTitle"
+                android:importantForAccessibility="yes"
+                android:accessibilityLiveRegion="polite" />
+
+            <!-- ─── Required setup ────────────────────────────────────── -->
+            <TextView
+                android:id="@+id/section_required"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_xl"
+                android:text="@string/section_required"
+                android:textAppearance="@style/TextAppearance.Pcontrol.SectionHeading" />
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.Pcontrol.CardView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_sm">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/status_usage"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
+                        android:labelFor="@id/btn_usage" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/cap_usage_rationale"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_usage"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/cap_usage_action" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.Pcontrol.CardView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_md">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/status_accessibility"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
+                        android:labelFor="@id/btn_accessibility" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/cap_accessibility_rationale"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_accessibility"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/cap_accessibility_action" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.Pcontrol.CardView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_md">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/status_notifications"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
+                        android:labelFor="@id/btn_notifications" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/cap_notifications_rationale"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_notifications"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/cap_notifications_action" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.Pcontrol.CardView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_md">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/status_battery"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
+                        android:labelFor="@id/btn_battery" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/cap_battery_rationale"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_battery"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/cap_battery_action" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ─── Server connection ───────────────────────────────── -->
+            <TextView
+                android:id="@+id/section_server"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_xl"
+                android:text="@string/section_server"
+                android:textAppearance="@style/TextAppearance.Pcontrol.SectionHeading" />
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.Pcontrol.CardView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_sm">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/status_server"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/server_rationale"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_server"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/server_action_edit" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- ─── Updates (optional) ───────────────────────────────── -->
+            <TextView
+                android:id="@+id/section_updates"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_xl"
+                android:text="@string/section_updates"
+                android:textAppearance="@style/TextAppearance.Pcontrol.SectionHeading" />
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.Pcontrol.CardView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_sm">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/status_updater"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle"
+                        android:labelFor="@id/btn_updater" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/updater_rationale"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_updater"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/updater_action" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_auto_update"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/updates_auto_update" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_xs"
+                        android:text="@string/updates_auto_update_subtext"
+                        android:textAppearance="?attr/textAppearanceBodySmall" />
+
+                    <Button
+                        android:id="@+id/btn_check_update"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target_min"
+                        android:layout_marginTop="@dimen/spacing_md"
+                        android:text="@string/updates_check_action" />
+
+                    <!-- Stage 5: durable inline update status. -->
+                    <ProgressBar
+                        android:id="@+id/update_progress"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_sm"
+                        android:indeterminate="true"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/update_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_sm"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:accessibilityLiveRegion="polite"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Persistent bottom CTA. -->
     <LinearLayout
+        android:id="@+id/bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="@dimen/spacing_xl">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/app_name"
-            android:textAppearance="@style/TextAppearance.Pcontrol.HeroTitle"
-            android:layout_marginBottom="@dimen/spacing_lg" />
-
-        <TextView
-            android:id="@+id/status_usage"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/cap_usage_title"
-            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
-
-        <Button
-            android:id="@+id/btn_usage"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/cap_usage_action"
-            android:layout_marginBottom="@dimen/spacing_md" />
-
-        <TextView
-            android:id="@+id/status_accessibility"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/cap_accessibility_title"
-            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
-
-        <Button
-            android:id="@+id/btn_accessibility"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/cap_accessibility_action"
-            android:layout_marginBottom="@dimen/spacing_md" />
-
-        <TextView
-            android:id="@+id/status_notifications"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/cap_notifications_title"
-            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
-
-        <Button
-            android:id="@+id/btn_notifications"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/cap_notifications_action"
-            android:layout_marginBottom="@dimen/spacing_md" />
-
-        <TextView
-            android:id="@+id/status_battery"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/cap_battery_title"
-            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
-
-        <Button
-            android:id="@+id/btn_battery"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/cap_battery_action"
-            android:layout_marginBottom="@dimen/spacing_md" />
-
-        <TextView
-            android:id="@+id/status_server"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/section_server"
-            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
-
-        <Button
-            android:id="@+id/btn_server"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/server_action_edit"
-            android:layout_marginBottom="@dimen/spacing_md" />
-
-        <TextView
-            android:id="@+id/status_updater"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/updater_title"
-            android:textAppearance="@style/TextAppearance.Pcontrol.CapabilityTitle" />
-
-        <Button
-            android:id="@+id/btn_updater"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/updater_action"
-            android:layout_marginBottom="@dimen/spacing_xl" />
-
-        <Button
-            android:id="@+id/btn_check_update"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/updates_check_action"
-            android:layout_marginBottom="@dimen/spacing_md" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switch_auto_update"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target_min"
-            android:text="@string/updates_auto_update"
-            android:layout_marginBottom="@dimen/spacing_xl" />
+        android:layout_gravity="bottom"
+        android:background="?attr/colorSurfaceContainer"
+        android:elevation="0dp"
+        android:fitsSystemWindows="true">
 
         <Button
             android:id="@+id/btn_start"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="@dimen/touch_target_min"
+            android:layout_margin="@dimen/content_padding_h"
             android:text="@string/start_monitoring"
-            android:enabled="false"
-            android:textSize="18sp" />
-
+            android:enabled="false" />
     </LinearLayout>
-</ScrollView>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

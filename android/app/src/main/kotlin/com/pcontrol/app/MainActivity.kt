@@ -12,6 +12,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
+import android.view.View
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
@@ -26,6 +28,8 @@ import com.pcontrol.app.ui.CapabilityViews
 import com.pcontrol.app.ui.CapabilityFacts
 import com.pcontrol.app.ui.SetupUiState
 import com.pcontrol.app.ui.UpdateUiMapper
+import com.pcontrol.app.ui.UpdateUiState
+import com.pcontrol.app.ui.UpdateUiStatus
 import com.pcontrol.app.ui.validateServerConfiguration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +39,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** Stable int op id for [AppOpsManager.OP_GET_USAGE_STATS] (API 21+).
+         * The public int constant was deleted from the SDK at API 37, so we
+         * use the literal when targeting the legacy checkOpNoThrow path. */
+        private const val LEGACY_OP_GET_USAGE_STATS = 43
+    }
 
     private val checkUpdateScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -52,6 +63,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnServer: Button
     private lateinit var btnUpdater: Button
     private lateinit var btnCheckUpdate: Button
+    private lateinit var updateProgress: ProgressBar
+    private lateinit var updateStatus: TextView
     private lateinit var btnStart: Button
 
     private lateinit var switchAutoUpdate: SwitchCompat
@@ -78,6 +91,8 @@ class MainActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btn_start)
 
         switchAutoUpdate = findViewById(R.id.switch_auto_update)
+        updateProgress = findViewById(R.id.update_progress)
+        updateStatus = findViewById(R.id.update_status)
 
         btnUsage.setOnClickListener {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -136,6 +151,10 @@ class MainActivity : AppCompatActivity() {
         switchAutoUpdate.setOnCheckedChangeListener { _, isChecked ->
             updateState.autoUpdateEnabled = isChecked
         }
+
+        // Render an initial setup state so the screen is populated on the
+        // very first frame; onResume() re-checks after returning from Settings.
+        refreshStatus()
     }
 
     override fun onDestroy() {
@@ -194,16 +213,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hasUsageStatsPermission(): Boolean {
-        try {
+        // `unsafeCheckOpNoThrow` was added in API 29; OPSTR_GET_USAGE_STATS is
+        // the String op id since API 23. On API 26–28 neither String-overload
+        // nor OP_GET_USAGE_STATS (int) are in the public API at compileSdk 37,
+        // so fall back to reflective call on the legacy int-id overload
+        // (`checkOpNoThrow(int, int, String)`, op id 43 since API 21).
+        // Catch Throwable so an absent method on older SDKs (e.g. Robolectric
+        // SDK 26) cannot bring down the launcher.
+        return try {
             val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-            val mode = appOps.unsafeCheckOp(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                android.os.Process.myUid(),
-                packageName
-            )
-            return mode == AppOpsManager.MODE_ALLOWED
-        } catch (e: Exception) {
-            return false
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            } else {
+                val m = AppOpsManager::class.java.getMethod(
+                    "checkOpNoThrow",
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType,
+                    String::class.java
+                )
+                m.invoke(
+                    appOps,
+                    LEGACY_OP_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                ) as Int
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Throwable) {
+            false
         }
     }
 
@@ -229,7 +270,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isServerConfigured(): Boolean {
-        return SecretPrefs.getInstance(this).isConfigured()
+        // SecretPrefs lazily builds the Android Keystore master key; on Robolectric
+        // or environments where the keystore is unavailable it throws. Treat any
+        // initialization failure as “not configured” so the screen still renders.
+        return try {
+            SecretPrefs.getInstance(this).isConfigured()
+        } catch (e: Throwable) {
+            false
+        }
     }
 
     private fun hasInstallPermission(): Boolean {
@@ -241,7 +289,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkForUpdates() {
         // In-flight guard: disable the button so only one check runs at a time.
+        // The durable inline status (rather than only a Toast) preserves the
+        // last result beside the controls until replaced (Stage 5).
         btnCheckUpdate.isEnabled = false
+        renderUpdateState(UpdateUiMapper.checking)
 
         checkUpdateScope.launch {
             try {
@@ -254,8 +305,12 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        val msgRes = uiState.messageResId ?: R.string.update_result_up_to_date
-                        Toast.makeText(this@MainActivity, msgRes, Toast.LENGTH_LONG).show()
+                        renderUpdateState(uiState)
+                        // A short Snackbar-style Toast remains for confirmation;
+                        // errors/action-required status stay visible inline too.
+                        uiState.messageResId?.let { msgRes ->
+                            Toast.makeText(this@MainActivity, msgRes, Toast.LENGTH_LONG).show()
+                        }
                         refreshStatus()
                     }
                 }
@@ -264,6 +319,32 @@ class MainActivity : AppCompatActivity() {
                     if (!isFinishing && !isDestroyed) {
                         btnCheckUpdate.isEnabled = true
                     }
+                }
+            }
+        }
+    }
+
+    /** Stage 5 durable inline UI: progress + status text. */
+    private fun renderUpdateState(state: UpdateUiState) {
+        when (state.status) {
+            UpdateUiStatus.IDLE -> {
+                updateProgress.visibility = View.GONE
+                updateStatus.visibility = View.GONE
+            }
+            UpdateUiStatus.CHECKING -> {
+                updateProgress.visibility = View.VISIBLE
+                updateStatus.text = getString(R.string.updates_checking)
+                updateStatus.visibility = View.VISIBLE
+            }
+            UpdateUiStatus.SUCCESS,
+            UpdateUiStatus.ACTION_REQUIRED,
+            UpdateUiStatus.ERROR -> {
+                updateProgress.visibility = View.GONE
+                updateStatus.text = state.messageResId?.let { getString(it) } ?: ""
+                updateStatus.visibility = if (updateStatus.text.isBlank()) View.GONE else View.VISIBLE
+                if (state.status == UpdateUiStatus.ACTION_REQUIRED) {
+                    // Android still requires an explicit install confirmation.
+                    Toast.makeText(this, R.string.updates_install_pending, Toast.LENGTH_LONG).show()
                 }
             }
         }
