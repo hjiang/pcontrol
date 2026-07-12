@@ -84,6 +84,6 @@ fun validateServerConfiguration(rawUrl: String, rawToken: String): ValidationRes
     // Trim a single trailing '/' from the authority+path only after every
     // other check passes, so a host-less URL like "https://" is reported as
     // URL_NO_HOST rather than collapsed to "https:" by an eager trim.
-    val cleanedUrl = url.trimEnd('/')
+    val cleanedUrl = url.removeSuffix("/")
     return ValidationResult(null, cleanedUrl, token)
 }

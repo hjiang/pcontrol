@@ -17,8 +17,8 @@
         android:padding="@dimen/spacing_xxl"
         app:maxContentWidth="@dimen/content_max_width">
 
-        <!-- 1) Shield illustration. Decorative — labeled with a content
-             description rather than separately focusable. -->
+        <!-- 1) Shield illustration. Decorative — hidden from accessibility
+             (contentDescription="@null" + importantForAccessibility="no"). -->
         <ImageView
             android:id="@+id/blocked_shield"
             android:layout_width="@dimen/blocked_shield_size"

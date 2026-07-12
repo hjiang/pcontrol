@@ -220,7 +220,7 @@ approved; baseline states are reproducible.
 
 ### Stage 1 — Add the Material 3 foundation
 
-**Status:** Partial — `com.google.android.material:material:1.13.0` +
+**Status:** Partial — `com.google.android.material:material:1.13.0` added.
 
 Implementation is complete; API 36 Robolectric and API 37 device validation
 remain required by this stage's success criteria.
