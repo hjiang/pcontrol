@@ -11,6 +11,10 @@ pcontrol is a self-hosted parental-control system. A Go server provides a JSON A
 - The client must not attribute usage while the display is non-interactive.
 - App and web counters are synchronized as idempotent deltas; Android and server deployments remain backward-compatible.
 
+## Dashboard reporting
+
+- Every device card must visibly show the server time when it last reported usage. A device that has never reported must be shown as `never`.
+
 ## Enforcement and privacy
 
 - Enforcement must operate from the cached policy when the server is unavailable.
