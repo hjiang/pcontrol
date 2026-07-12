@@ -10,7 +10,7 @@
 
 `TrackerService` runs a 10-second monitoring tick. It reads Android `UsageEvents` from a cursor kept for the service lifetime, adapts activity transitions to core `AppEvent` values, and calls `AppUsagePoller.updateForegroundPackage` with the retained foreground package. An empty event batch preserves state because foreground events describe transitions, not a heartbeat.
 
-The service checks `PowerManager.isInteractive` before writing counters, so a retained package is not charged while the display is off. For interactive foreground use, the service increments Room `usage_counter` entries for the app and, when available, the browser domain. Sync serializes unsent counter deltas to the server. After a successful sync, the server records its UTC receipt time in `devices.last_seen_at`; the dashboard renders that value as the device's visible last usage report time.
+The service checks `PowerManager.isInteractive` before writing counters, so a retained package is not charged while the display is off. For interactive foreground use, the service increments Room `usage_counter` entries for the app and, when available, the browser domain. Sync serializes unsent counter deltas to the server. During sync handling, the server best-effort records its UTC receipt time in `devices.last_seen_at`; the dashboard renders that value as the device's visible last usage report time.
 
 ## Invariants
 
