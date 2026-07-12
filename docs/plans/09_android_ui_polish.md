@@ -466,8 +466,9 @@ and a visible Go-home control. Empty optional views leave no spacing gap.
 
 `AccessibilityBlockingContentRenderer` is an activity-independent binding seam
 that preserves the `BlockRequest` message/subject/allowed-sites contract, uses
-resource-backed list formatting, and wires the Go-home callback. The surface
-owns top/bottom system-bar inset padding through `ViewCompat`.
+resource-backed list formatting, and wires the Go-home callback. The shield is
+decorative and hidden from accessibility. The surface owns top/bottom
+system-bar inset padding through `ViewCompat`.
 [AccessibilityBlockingSurfaceLayoutTest] covers message and subject rendering,
 shield/themed hierarchy, optional-site hiding, vertical-list/non-clickable
 behavior, content order, and the Home callback. Existing blocking-controller

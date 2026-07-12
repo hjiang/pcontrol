@@ -35,8 +35,7 @@
         android:layout_marginTop="@dimen/spacing_lg"
         android:hint="@string/dialog_server_token_label"
         app:boxBackgroundMode="outline"
-        app:endIconMode="password_toggle"
-        app:endIconContentDescription="@string/dialog_server_token_reveal">
+        app:endIconMode="password_toggle">
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/input_server_token"
             android:layout_width="match_parent"
