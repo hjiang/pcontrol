@@ -441,12 +441,14 @@ class MainActivity : AppCompatActivity() {
         val bottomBar = findViewById<View>(R.id.bottom_bar)
 
         ViewCompat.setOnApplyWindowInsetsListener(appBar) { view, insets ->
-            view.updatePadding(top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(top = bars.top)
             insets
         }
         ViewCompat.setOnApplyWindowInsetsListener(bottomBar) { view, insets ->
-            view.updatePadding(bottom = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom)
-            view.post { content.updatePadding(bottom = bottomBar.height) }
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(bottom = bars.bottom, left = bars.left, right = bars.right)
+            view.post { content.updatePadding(bottom = bottomBar.height, left = bars.left, right = bars.right) }
             insets
         }
         bottomBar.doOnLayout { content.updatePadding(bottom = it.height) }

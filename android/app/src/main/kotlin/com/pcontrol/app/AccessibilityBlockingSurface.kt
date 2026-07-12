@@ -100,10 +100,14 @@ class AccessibilityBlockingSurface(
         val content = requireNotNull(view.findViewById<View>(R.id.blocked_content))
         val baseTop = content.paddingTop
         val baseBottom = content.paddingBottom
+        val baseLeft = content.paddingLeft
+        val baseRight = content.paddingRight
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             content.updatePadding(
+                left = baseLeft + bars.left,
                 top = baseTop + bars.top,
+                right = baseRight + bars.right,
                 bottom = baseBottom + bars.bottom,
             )
             insets

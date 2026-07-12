@@ -34,7 +34,7 @@ data class ValidationResult(
  *
  * Rules (Section 4, Stage 4 task 3):
  *  - trim surrounding whitespace from both fields;
- *  - trim a single trailing `/` from the URL (preserving a path component);
+ *  - trim all trailing `/` from the URL (preserving a path component);
  *  - URL must be absolute, use `http` or `https`, and have a nonblank host;
  *  - URL must not include a query or fragment;
  *  - token must be nonblank;
@@ -81,9 +81,9 @@ fun validateServerConfiguration(rawUrl: String, rawToken: String): ValidationRes
         return ValidationResult(ServerConfigError.TOKEN_BLANK, url, token)
     }
 
-    // Trim a single trailing '/' from the authority+path only after every
-    // other check passes, so a host-less URL like "https://" is reported as
+    // Trim all trailing '/' from the authority+path only after every other
+    // check passes, so a host-less URL like "https://" is reported as
     // URL_NO_HOST rather than collapsed to "https:" by an eager trim.
-    val cleanedUrl = url.removeSuffix("/")
+    val cleanedUrl = url.trimEnd('/')
     return ValidationResult(null, cleanedUrl, token)
 }
