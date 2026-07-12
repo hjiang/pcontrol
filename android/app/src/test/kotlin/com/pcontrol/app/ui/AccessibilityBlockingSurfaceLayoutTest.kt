@@ -66,7 +66,14 @@ class AccessibilityBlockingSurfaceLayoutTest {
         )
         assertEquals(View.VISIBLE, view.findViewById<View>(R.id.blocked_subject_card).visibility)
         assertNotNull(view.findViewById<View>(R.id.blocked_shield))
-        assertNotNull(view.background)
+        val background = view.background
+        assertNotNull(background)
+        if (background is android.graphics.drawable.ColorDrawable) {
+            assertTrue(
+                "background must not be saturated #FF0000",
+                background.color != android.graphics.Color.RED,
+            )
+        }
     }
 
     @Test
