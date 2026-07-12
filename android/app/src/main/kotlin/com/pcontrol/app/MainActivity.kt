@@ -77,6 +77,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var updateProgress: ProgressBar
     private lateinit var updateStatus: TextView
     private lateinit var btnStart: Button
+    private lateinit var sectionRequired: TextView
+    private lateinit var sectionServer: TextView
+    private lateinit var sectionUpdates: TextView
 
     private lateinit var switchAutoUpdate: SwitchCompat
 
@@ -105,6 +108,17 @@ class MainActivity : AppCompatActivity() {
         switchAutoUpdate = findViewById(R.id.switch_auto_update)
         updateProgress = findViewById(R.id.update_progress)
         updateStatus = findViewById(R.id.update_status)
+
+        sectionRequired = findViewById(R.id.section_required)
+        sectionServer = findViewById(R.id.section_server)
+        sectionUpdates = findViewById(R.id.section_updates)
+
+        // android:accessibilityHeading is only honored on API 28+;
+        // set it at runtime for API 26–27.
+        ViewCompat.setAccessibilityHeading(statusHero, true)
+        ViewCompat.setAccessibilityHeading(sectionRequired, true)
+        ViewCompat.setAccessibilityHeading(sectionServer, true)
+        ViewCompat.setAccessibilityHeading(sectionUpdates, true)
 
         updateRunner = {
             UpdateCoordinator(

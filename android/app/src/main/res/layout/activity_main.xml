@@ -18,8 +18,7 @@
             android:layout_width="match_parent"
             android:layout_height="@dimen/app_bar_height"
             app:title="@string/app_bar_title"
-            app:navigationIcon="@drawable/ic_shield_check"
-            app:navigationContentDescription="@string/cd_app_logo" />
+            app:logo="@drawable/ic_shield_check" />
     </com.google.android.material.appbar.AppBarLayout>
 
     <!-- Scrollable content. Centered and width-capped on wide windows. -->
