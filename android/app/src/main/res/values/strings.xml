@@ -92,6 +92,7 @@
     <string name="dialog_server_token_error_blank">Device token is required</string>
     <string name="dialog_server_token_reveal">Show token</string>
     <string name="dialog_server_token_hide">Hide token</string>
+    <string name="error_secret_store">Could not access secure storage</string>
 
     <!-- Generic state -->
     <string name="state_ready">Ready</string>

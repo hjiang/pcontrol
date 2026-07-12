@@ -378,7 +378,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showServerConfigDialog() {
-        val prefs = SecretPrefs.getInstance(this)
+        val prefs = try {
+            SecretPrefs.getInstance(this)
+        } catch (e: Throwable) {
+            Toast.makeText(this, R.string.error_secret_store, Toast.LENGTH_SHORT).show()
+            return
+        }
         val content = layoutInflater.inflate(R.layout.dialog_server_config, null)
         val urlLayout = content.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.input_server_url_layout)
         val tokenLayout = content.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.input_server_token_layout)

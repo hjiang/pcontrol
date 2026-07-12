@@ -69,11 +69,16 @@ class ServerConfigDialogTest {
                     when (result.error) {
                         ServerConfigError.URL_BLANK, ServerConfigError.URL_BAD_SCHEME,
                         ServerConfigError.URL_NO_HOST, ServerConfigError.URL_QUERY_OR_FRAGMENT -> {
-                            urlLayout.error = "URL error"
+                            urlLayout.error = activity.getString(when (result.error) {
+                                ServerConfigError.URL_BLANK -> R.string.dialog_server_url_error_blank
+                                ServerConfigError.URL_BAD_SCHEME -> R.string.dialog_server_url_error_scheme
+                                ServerConfigError.URL_NO_HOST -> R.string.dialog_server_url_error_host
+                                else -> R.string.dialog_server_url_error_query
+                            })
                             inputUrl.requestFocus()
                         }
                         ServerConfigError.TOKEN_BLANK -> {
-                            tokenLayout.error = "Token required"
+                            tokenLayout.error = activity.getString(R.string.dialog_server_token_error_blank)
                             inputToken.requestFocus()
                         }
                         null -> Unit

@@ -39,10 +39,12 @@ class MainActivityLayoutTest {
     @Test
     fun statusHeroSummarizesIncompleteSetup() {
         val activity = buildActivity()
+        activity.renderSetupState(SetupUiState.build(CapabilityFacts()))
         val hero = activity.findViewById<android.widget.TextView>(R.id.status_hero)
         assertNotNull(hero)
-        assertTrue(hero.text.toString().contains("Setup needed"))
-        assertTrue(hero.text.toString().contains("of 5 required steps complete"))
+        assertTrue(hero.text.toString().contains(activity.getString(R.string.hero_setup_needed)))
+        val progressText = activity.resources.getQuantityString(R.plurals.hero_progress, 0, 0, 5)
+        assertTrue(hero.text.toString().contains(progressText))
     }
 
     @Test
@@ -110,7 +112,7 @@ class MainActivityLayoutTest {
         )
 
         assertTrue(activity.findViewById<android.widget.TextView>(R.id.status_hero).text
-            .toString().contains("Ready to monitor"))
+            .toString().contains(activity.getString(R.string.hero_ready)))
         val start = activity.findViewById<android.widget.Button>(R.id.btn_start)
         assertTrue(start.isEnabled)
         assertEquals(activity.getString(R.string.start_monitoring), start.text.toString())
