@@ -62,7 +62,8 @@ fun validateServerConfiguration(rawUrl: String, rawToken: String): ValidationRes
     }
 
     val scheme = uri.scheme
-    val schemeOk = scheme == "http" || scheme == "https"
+    val schemeOk = scheme.equals("http", ignoreCase = true) ||
+        scheme.equals("https", ignoreCase = true)
     // A hostless absolute http(s) URL (e.g. "https://") parses with null host.
     val host = uri.host
     val hostMissing = host.isNullOrBlank()
