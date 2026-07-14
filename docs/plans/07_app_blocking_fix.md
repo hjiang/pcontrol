@@ -1,5 +1,7 @@
 # Plan 07: Fix app-blocking enforcement (MIUI tick-loop freeze + BlockedActivity self-masking)
 
+> **Superseded presentation note (Plan 10):** This plan restored the accessibility trigger but still relied on a background `BlockedActivity` launch. HyperOS can reject that launch; Plan 10 replaces it with an accessibility overlay and Home fallback.
+
 ## Problem
 
 On MIUI/Xiaomi devices, app blocking doesn't work:

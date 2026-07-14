@@ -22,12 +22,17 @@ class NeverBlockResolverTest {
     }
 
     @Test
-    fun `resolved set includes a launcher package`() {
+    fun `resolved set retains fallback launchers including Xiaomi Home`() {
         val resolved = NeverBlockResolver.resolve(context)
-        // The Robolectric default launcher resolution may return null
-        // (no default home set), in which case the fallback launcher is used
-        val launchers = resolved - setOf("com.android.systemui", "com.android.settings", "com.pcontrol.app")
-        assertTrue("Should include at least one launcher/dialer package", launchers.isNotEmpty())
+        assertTrue("Should retain Xiaomi Home when default resolution is absent or ambiguous", "com.miui.home" in resolved)
+        assertTrue("Should retain an Android launcher fallback", "com.android.launcher" in resolved)
+    }
+
+    @Test
+    fun `home candidate lookup is safe when no default home is configured`() {
+        // Robolectric normally has no preferred HOME handler; discovery must be
+        // non-throwing so fallback launchers still protect Home.
+        assertNotNull(NeverBlockResolver.resolveHomePackages(context))
     }
 
     @Test

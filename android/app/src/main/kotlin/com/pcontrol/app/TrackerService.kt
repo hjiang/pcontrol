@@ -27,11 +27,14 @@ import com.pcontrol.core.UsageDay
 import com.pcontrol.app.db.AppDatabase
 import com.pcontrol.app.db.UsageCounterEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.time.ZoneId
 import java.util.UUID
@@ -53,7 +56,8 @@ class TrackerService : Service() {
     private var lastUsageEventQueryTime: Long? = null
     private var currentForegroundPkg: String? = null
 
-    /** Guards against concurrent update checks in the tick loop (Stage 9). */
+    /** Guards long-running side work so it never stalls the 10-second tick. */
+    private val syncInFlight = AtomicBoolean(false)
     private val updateCheckInFlight = AtomicBoolean(false)
     private var ticksWithoutDomain = 0
 
@@ -63,6 +67,7 @@ class TrackerService : Service() {
     private var lastBlockedWebSubject: String? = null
     // Tracks the current day for rollover detection
     private var lastDay: String = ""
+    private var lastLoggedForegroundCandidates: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -105,14 +110,21 @@ class TrackerService : Service() {
 
                 val now = System.currentTimeMillis()
 
-                // Sync every 60 seconds
-                if (now - lastSyncTime >= SYNC_INTERVAL_MS) {
-                    try {
-                        onSync()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "onSync exception", e)
-                    }
+                // Sync every 60 seconds on a separate coroutine. Network I/O
+                // must never pause usage attribution or enforcement ticks.
+                if (now - lastSyncTime >= SYNC_INTERVAL_MS &&
+                    syncInFlight.compareAndSet(false, true)
+                ) {
                     lastSyncTime = now
+                    scope.launch {
+                        try {
+                            onSync()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "onSync exception", e)
+                        } finally {
+                            syncInFlight.set(false)
+                        }
+                    }
                 }
 
                 // Update check every 24 hours, independent of sync.
@@ -213,10 +225,24 @@ class TrackerService : Service() {
         // UsageEvents does not implement Closeable; resources freed by GC
 
         val previousForegroundPkg = currentForegroundPkg
-        val foregroundPkg = AppUsagePoller.updateForegroundPackage(
+        val eventForegroundPkg = AppUsagePoller.updateForegroundPackage(
             previousForegroundPackage = previousForegroundPkg,
             events = eventList
         )
+        // HyperOS can omit a UsageEvent when a task is resumed from Recents.
+        // The bound accessibility service can still read the active root, so
+        // prefer it for the periodic attribution/enforcement fallback.
+        val rawAccessibilityPkg = withTimeoutOrNull(1_000L) {
+            accessibilityForegroundPackage()
+        }
+        val accessibilityPkg = rawAccessibilityPkg?.takeUnless { it == packageName }
+        val foregroundPkg = accessibilityPkg ?: eventForegroundPkg
+        val candidates = "accessibility=$rawAccessibilityPkg " +
+            "events=$eventForegroundPkg selected=$foregroundPkg"
+        if (candidates != lastLoggedForegroundCandidates) {
+            lastLoggedForegroundCandidates = candidates
+            Log.i(TAG, "Foreground candidates: $candidates")
+        }
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!powerManager.isInteractive) {
             // Do not attribute a retained foreground package while the display
@@ -325,94 +351,33 @@ class TrackerService : Service() {
         }
     }
 
-    private suspend fun runEnforcement(day: String, pkg: String, domain: String?) {
-        val db = AppDatabase.getInstance(this)
-        val allCounters = db.usageCounterDao().getDay(day)
-            .map { e ->
-                com.pcontrol.core.UsageCounter(
-                    day = e.day,
-                    kind = e.kind,
-                    subject = e.subject,
-                    label = e.label,
-                    seconds = e.seconds,
-                    syncedSeconds = e.syncedSeconds
-                )
+    @OptIn(InternalCoroutinesApi::class)
+    private suspend fun accessibilityForegroundPackage(): String? =
+        suspendCancellableCoroutine { continuation ->
+            BrowserAccessibilityService.requestActiveForeground { pkg ->
+                val resumeToken = continuation.tryResume(pkg)
+                if (resumeToken != null) continuation.completeResume(resumeToken)
             }
-
-        // Load cached policy
-        val policyEntity = db.cachedPolicyDao().get()
-        val policy = policyEntity?.let { blockingCoordinator.parsePolicy(it.json) }
-
-        val isKnownBrowser = BrowserRegistry.isKnownBrowser(pkg)
-        val browserContext = if (isKnownBrowser) {
-            BrowserContext(
-                isRegistered = true,
-                currentDomain = domain,
-                ticksWithoutDomain = if (domain == null) ticksWithoutDomain else 0
-            )
-        } else null
-
-        val label = blockingCoordinator.resolveLabel(pkg)
-
-        // Web exclusions = sites still allowed after the daily limit (Stage 6 task 3).
-        val allowedSites = policy?.exclusions
-            ?.filter { it.kind == "web" }
-            ?.map { it.subject }
-            ?: emptyList()
-
-        // Evaluate app verdict (with browser context for restricted mode)
-        val appSeconds = allCounters
-            .firstOrNull { it.kind == "app" && it.subject == pkg }?.seconds ?: 0
-        val neverBlockSet = NeverBlockResolver.resolve(this)
-        val appVerdict = PolicyEngine.evaluateApp(pkg, appSeconds, allCounters, policy, browserContext, neverBlockSet)
-
-        if (appVerdict != com.pcontrol.core.Verdict.ALLOW) {
-            val limitMessage = blockingCoordinator.buildLimitMessage(pkg, label, appVerdict, appSeconds, policy)
-            Enforcer.handleVerdict(
-                context = this,
-                verdict = appVerdict,
-                subject = pkg,
-                label = label,
-                day = day,
-                limitMessage = limitMessage,
-                allowedSites = allowedSites,
-                isAlreadyWarned = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().exists(d, s) > 0 } },
-                recordWarning = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().insert(com.pcontrol.app.db.WarnedSubjectEntity(d, s)) } }
-            )
         }
 
-        // Evaluate web verdict (restricted mode, grace period for null domain)
-        val webSeconds = allCounters
-            .firstOrNull { it.kind == "web" && it.subject == domain }?.seconds ?: 0
-        val webVerdict = PolicyEngine.evaluateWeb(
+    private suspend fun runEnforcement(day: String, pkg: String, domain: String?) {
+        // Policy evaluation is shared with accessibility-triggered enforcement.
+        // Presentation is deliberately delegated to the accessibility service,
+        // whose controller rejects stale foreground generations and owns the
+        // TYPE_ACCESSIBILITY_OVERLAY lifecycle.
+        val evaluation = blockingCoordinator.evaluateForeground(
+            pkg = pkg,
             domain = domain,
-            webSeconds = webSeconds,
-            allCounters = allCounters,
-            policy = policy,
             ticksWithoutDomain = ticksWithoutDomain
         )
+        BrowserAccessibilityService.submitTrackerEvaluation(pkg, domain, evaluation)
 
-        if (webVerdict != com.pcontrol.core.Verdict.ALLOW) {
-            val limitMessage = blockingCoordinator.buildLimitMessage(domain ?: pkg, label, webVerdict, webSeconds, policy)
-            Enforcer.handleVerdict(
-                context = this,
-                verdict = webVerdict,
-                subject = domain ?: pkg,
-                label = label,
-                day = day,
-                limitMessage = limitMessage,
-                allowedSites = allowedSites,
-                isAlreadyWarned = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().exists(d, s) > 0 } },
-                recordWarning = { d, s -> kotlinx.coroutines.runBlocking { db.warnedSubjectDao().insert(com.pcontrol.app.db.WarnedSubjectEntity(d, s)) } }
-            )
-        }
-
-        // Reset BLOCK_WEB strikes when verdict changes or subject changes
+        // Reset BLOCK_WEB strikes when the web verdict/subject changes.
         val webSubject = domain ?: pkg
-        if (webVerdict != com.pcontrol.core.Verdict.BLOCK_WEB && lastBlockedWebSubject != null) {
+        if (evaluation.webVerdict != com.pcontrol.core.Verdict.BLOCK_WEB && lastBlockedWebSubject != null) {
             Enforcer.webBlockStrikes.reset(lastBlockedWebSubject!!)
             lastBlockedWebSubject = null
-        } else if (webVerdict == com.pcontrol.core.Verdict.BLOCK_WEB) {
+        } else if (evaluation.webVerdict == com.pcontrol.core.Verdict.BLOCK_WEB) {
             if (lastBlockedWebSubject != null && lastBlockedWebSubject != webSubject) {
                 Enforcer.webBlockStrikes.reset(lastBlockedWebSubject!!)
             }

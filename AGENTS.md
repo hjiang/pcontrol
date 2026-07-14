@@ -195,7 +195,30 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   silently pausing usage tracking for the duration. Launch long-running or
   blocking side-work on a **separate coroutine** (`scope.launch { ... }`)
   so the tick loop continues independently. See the existing gotcha about
-  `onSync()` early-return for related context.
+  `onSync()` early-return for related context. Every sync call also needs a
+  total call timeout and deterministic `Response.close()`/`use`; otherwise one
+  stuck or leaked HTTP exchange can hold `syncInFlight` and make the dashboard
+  report an otherwise-live device offline.
+- **HyperOS blocks background activity starts even with draw-over-other-apps.**
+  Never use `startActivity` as an automatic enforcement surface: Xiaomi can
+  reject it with `Abort background activity starts`/`MIUIOP(10021)`. The bound
+  accessibility service owns a `TYPE_ACCESSIBILITY_OVERLAY`; presentation
+  failures must attempt `GLOBAL_ACTION_HOME` and notify, not fall back to an
+  activity. On HyperOS 3/API 36 an `AccessibilityService` is not a visual
+  context: create the overlay context from `createDisplayContext(defaultDisplay)`
+  before `createWindowContext`, or it throws before `addView`. Keep foreground
+  generations and overlay mutations serialized there.
+- **HyperOS Greeze can freeze an active foreground-service/accessibility UID.**
+  On the diagnosed HyperOS 3 device, battery `Unrestricted`, Autostart, a bound
+  accessibility service, and a foreground service were all insufficient;
+  Greeze even disabled an acquired partial wake lock. The observable symptom is
+  that usage and server last-seen stop while another app is open, then queued
+  accessibility events and a stale block arrive when pcontrol is opened and the
+  UID is thawed. Keep `AccessibilityKeepAliveOverlay` attached as one non-touchable,
+  non-focusable `TYPE_ACCESSIBILITY_OVERLAY` for the accessibility-service
+  lifetime. It is separate from the full-screen blocking view and must be
+  detached exactly once on service destruction. Validated on Xiaomi
+  `2602BRT18C`, HyperOS `OS3.0.304.0.WPLCNXM`.
 
 ## Conventions
 

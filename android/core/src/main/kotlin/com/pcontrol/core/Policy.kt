@@ -28,11 +28,11 @@ enum class Verdict {
     ALLOW,
     /** Post a high-priority warning notification. */
     WARN,
-    /** Launch BlockedActivity when the app comes to the foreground. */
+    /** Request the accessibility-owned blocking surface for the foreground app. */
     BLOCK_APP,
     /**
-     * Perform a BACK action (with two-strikes fallback to BlockedActivity).
-     * Only applies to web-domain blocks in a browser.
+     * Perform a BACK action (with a two-strikes fallback to the
+     * accessibility-owned blocking surface). Only applies to browser domains.
      */
     BLOCK_WEB,
 }

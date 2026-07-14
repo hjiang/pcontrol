@@ -36,3 +36,4 @@ android/.externalNativeBuild/
 
 # Build artifacts
 pcontrol-app-release.apk
+.pi-subagents
