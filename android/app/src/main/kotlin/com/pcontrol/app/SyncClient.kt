@@ -1,6 +1,7 @@
 package com.pcontrol.app
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -14,7 +15,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 // --- JSON structures matching the server API ---
 
@@ -131,13 +131,15 @@ class SyncClient(
         }
     }
 
+    @OptIn(InternalCoroutinesApi::class)
     private suspend fun awaitResponseBody(request: Request): String? =
         suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resume(null)
+                    val resumeToken = continuation.tryResume(null)
+                    if (resumeToken != null) continuation.completeResume(resumeToken)
                 }
 
                 override fun onResponse(call: Call, response: Response) {
@@ -152,7 +154,8 @@ class SyncClient(
                             null
                         }
                     }
-                    if (continuation.isActive) continuation.resume(body)
+                    val resumeToken = continuation.tryResume(body)
+                    if (resumeToken != null) continuation.completeResume(resumeToken)
                 }
             })
         }

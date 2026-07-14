@@ -27,6 +27,7 @@ import com.pcontrol.core.UsageDay
 import com.pcontrol.app.db.AppDatabase
 import com.pcontrol.app.db.UsageCounterEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -34,7 +35,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.resume
 import kotlinx.serialization.json.Json
 import java.time.ZoneId
 import java.util.UUID
@@ -351,10 +351,12 @@ class TrackerService : Service() {
         }
     }
 
+    @OptIn(InternalCoroutinesApi::class)
     private suspend fun accessibilityForegroundPackage(): String? =
         suspendCancellableCoroutine { continuation ->
             BrowserAccessibilityService.requestActiveForeground { pkg ->
-                if (continuation.isActive) continuation.resume(pkg)
+                val resumeToken = continuation.tryResume(pkg)
+                if (resumeToken != null) continuation.completeResume(resumeToken)
             }
         }
 

@@ -273,8 +273,8 @@ class BrowserAccessibilityService : AccessibilityService() {
             try {
                 val evaluation = coordinator.evaluateForeground(pkg, domain, ticksWithoutDomain)
                 mainHandler.post {
-                    resetWebBlockStrikesIfNeeded(pkg, domain, evaluation)
                     if (controller.isCurrent(token)) {
+                        resetWebBlockStrikesIfNeeded(pkg, domain, evaluation)
                         logEvaluation(pkg, evaluation)
                         val outcome = controller.present(
                             token, evaluation.appRequest, evaluation.webRequest, evaluation.webBack
@@ -293,7 +293,6 @@ class BrowserAccessibilityService : AccessibilityService() {
         mainHandler.post {
             if (instance !== this@BrowserAccessibilityService) return@post
             if (!::controller.isInitialized || pkg == packageName) return@post
-            resetWebBlockStrikesIfNeeded(pkg, domain, evaluation)
             val observedPkg = foregroundObservation.current()
             if (observedPkg != null && observedPkg != pkg) return@post
             // UsageEvents can miss a resumed task on HyperOS. The periodic
@@ -307,6 +306,7 @@ class BrowserAccessibilityService : AccessibilityService() {
             } else {
                 controller.foregroundChanged(pkg, domain) ?: return@post
             }
+            resetWebBlockStrikesIfNeeded(pkg, domain, evaluation)
             logEvaluation(pkg, evaluation)
             val outcome = controller.present(
                 token, evaluation.appRequest, evaluation.webRequest, evaluation.webBack
