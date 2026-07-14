@@ -130,7 +130,7 @@ class BlockingController(
     private val globalActions: GlobalActionAdapter,
     private val notifications: BlockingNotificationSink,
     private val performBack: () -> Boolean = { false },
-    private val onWebBackDispatched: (ForegroundToken) -> Unit = {}
+    private val onWebBackAttempted: (ForegroundToken) -> Unit = {}
 ) {
     private var generation = 0L
     private var foreground: ForegroundToken? = null
@@ -179,7 +179,10 @@ class BlockingController(
         if (!isCurrent(token)) return PresentationOutcome.STALE
         if (awaitingHomeTransition) return PresentationOutcome.ALREADY_SHOWN
         if (webBack) {
-            if (performBack()) onWebBackDispatched(token)
+            performBack()
+            // A failed global action still consumed this enforcement attempt;
+            // count it so a blocked domain cannot avoid fallback indefinitely.
+            onWebBackAttempted(token)
             return PresentationOutcome.ALREADY_SHOWN
         }
         val request = appRequest ?: webRequest

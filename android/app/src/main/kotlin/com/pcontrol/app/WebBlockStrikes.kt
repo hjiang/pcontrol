@@ -8,7 +8,7 @@ package com.pcontrol.app
  * the third strike requests the accessibility-owned blocking surface instead.
  *
  * Usage:
- * - Call [recordAndShouldFallback] only after a BACK action is dispatched.
+ * - Call [recordStrike] after each BACK action is attempted.
  * - Call [reset] when the domain changes or the verdict is no longer BLOCK_WEB.
  * - Call [willFallbackOnNextStrike] to decide whether the next BACK would
  *   reach the blocking-surface fallback.
@@ -43,7 +43,7 @@ class WebBlockStrikes {
         return strikes.getOrDefault(key, 0) + 1 >= 3
     }
 
-    /** Record one dispatched BLOCK_WEB BACK action for the given subject+day. */
+    /** Record one attempted BLOCK_WEB BACK action for the given subject+day. */
     @Synchronized
     fun recordStrike(subject: String, day: String) {
         val key = Key(subject, day)

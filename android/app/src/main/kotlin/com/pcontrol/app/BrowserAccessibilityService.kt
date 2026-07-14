@@ -126,7 +126,7 @@ class BrowserAccessibilityService : AccessibilityService() {
                 Enforcer.postBlockFailureNotification(this, message)
             },
             performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
-            onWebBackDispatched = { token ->
+            onWebBackAttempted = { token ->
                 token.domain?.let { subject ->
                     Enforcer.webBlockStrikes.recordStrike(
                         subject,

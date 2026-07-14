@@ -144,7 +144,7 @@ class SyncClient(
                     val body = response.use {
                         if (it.isSuccessful) {
                             try {
-                                it.body.string()
+                                it.body?.string()
                             } catch (_: Exception) {
                                 null
                             }
