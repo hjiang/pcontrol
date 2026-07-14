@@ -175,7 +175,9 @@ class BrowserAccessibilityService : AccessibilityService() {
         }
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            Log.i(TAG, "Window-state event: pkg=$pkg class=${event.className}")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Window-state event: pkg=$pkg class=${event.className}")
+            }
             val blockedForeground = controller.currentToken()?.packageName
             val focusedPkg = if (focusedApplicationEvent) {
                 pkg
@@ -298,39 +300,68 @@ class BrowserAccessibilityService : AccessibilityService() {
             pkg == "com.miui.personalassistant"
 
     private fun isFocusedApplicationWindow(windowId: Int): Boolean {
-        return windows.any { window ->
-            window.id == windowId &&
-                window.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
-                (window.isActive || window.isFocused)
+        var matched = false
+        windows.forEach { window ->
+            try {
+                if (window.id == windowId &&
+                    window.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    (window.isActive || window.isFocused)
+                ) {
+                    matched = true
+                }
+            } finally {
+                window.recycle()
+            }
         }
+        return matched
     }
+
+    private data class ApplicationWindowSnapshot(
+        val id: Int,
+        val title: String?,
+        val isFocused: Boolean,
+        val isActive: Boolean,
+        val rootPackage: String?
+    )
 
     /** Returns the package backing AccessibilityService's focused/active window. */
     private fun activeRootPackage(): String? {
         // `rootInActiveWindow` can remain stale on HyperOS after a Recents
         // transition. The interactive-window list identifies the focused
-        // WeChat task correctly on the diagnosed device.
-        val applicationWindows = windows.filter {
-            it.type == AccessibilityWindowInfo.TYPE_APPLICATION
+        // WeChat task correctly on the diagnosed device. Snapshot all fields
+        // before recycling every platform-owned window instance.
+        val applicationWindows = windows.mapNotNull { window ->
+            try {
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    null
+                } else {
+                    val root = window.root
+                    val rootPackage = try {
+                        root?.packageName?.toString()
+                    } finally {
+                        root?.recycle()
+                    }
+                    ApplicationWindowSnapshot(
+                        id = window.id,
+                        title = window.title?.toString(),
+                        isFocused = window.isFocused,
+                        isActive = window.isActive,
+                        rootPackage = rootPackage
+                    )
+                }
+            } finally {
+                window.recycle()
+            }
         }
         val activeWindow = applicationWindows.firstOrNull { it.isFocused }
             ?: applicationWindows.firstOrNull { it.isActive }
             ?: return null
-        val title = activeWindow.title?.toString()
+        val title = activeWindow.title
         val cachedPackage = windowIdPackages[activeWindow.id]
             ?.takeUnless { it == packageName && !titleMatchesPackage(title, packageName) }
-        if (cachedPackage != null) {
-            activeWindow.recycle()
-            return cachedPackage
-        }
+        if (cachedPackage != null) return cachedPackage
 
-        val root = activeWindow.root
-        val rootPackage = try {
-            root?.packageName?.toString()
-        } finally {
-            root?.recycle()
-            activeWindow.recycle()
-        }
+        val rootPackage = activeWindow.rootPackage
         if (rootPackage != null && rootPackage != packageName) return rootPackage
         title?.let { resolveWindowTitlePackage(it) }?.let { return it }
         // A self root for a differently titled focused window is known-bad.

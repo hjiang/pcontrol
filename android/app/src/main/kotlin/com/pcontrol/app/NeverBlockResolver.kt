@@ -49,9 +49,9 @@ object NeverBlockResolver {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         return try {
             buildSet {
-                context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                context.packageManager.resolveActivity(intent, 0)
                     ?.activityInfo?.packageName?.let(::add)
-                context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                context.packageManager.queryIntentActivities(intent, 0)
                     .mapNotNullTo(this) { it.activityInfo?.packageName }
             }
         } catch (_: Exception) {

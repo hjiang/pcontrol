@@ -115,8 +115,11 @@ class BlockingCoordinator(
         message: String,
         allowedSites: List<String>
     ): EnforcementAction {
-        if (verdict == Verdict.WARN && db.warnedSubjectDao().exists(day, subject) > 0) {
-            return EnforcementAction.None
+        if (verdict == Verdict.WARN) {
+            if (db.warnedSubjectDao().exists(day, subject) > 0) {
+                return EnforcementAction.None
+            }
+            db.warnedSubjectDao().insert(WarnedSubjectEntity(day, subject))
         }
         return Enforcer.handleVerdict(
             context = context,
@@ -125,11 +128,7 @@ class BlockingCoordinator(
             label = label,
             day = day,
             limitMessage = message,
-            allowedSites = allowedSites,
-            isAlreadyWarned = { _, _ -> false },
-            recordWarning = { d, s ->
-                kotlinx.coroutines.runBlocking { db.warnedSubjectDao().insert(WarnedSubjectEntity(d, s)) }
-            }
+            allowedSites = allowedSites
         )
     }
 

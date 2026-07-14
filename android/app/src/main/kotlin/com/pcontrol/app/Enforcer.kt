@@ -113,7 +113,8 @@ object Enforcer {
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setOngoing(true)
+            // Keep degraded-path failures dismissible once the user has seen them.
+            .setAutoCancel(true)
             .build()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(BLOCK_NOTIFICATION_ID, notification)

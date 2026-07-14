@@ -34,10 +34,18 @@ class AccessibilityBlockingSurface(
     override fun show(request: BlockRequest): PresentationOutcome {
         val existing = view
         if (existing != null) {
-            val unchanged = this.request == request
-            bind(existing, request)
-            this.request = request
-            return if (unchanged) PresentationOutcome.ALREADY_SHOWN else PresentationOutcome.SHOWN
+            if (!existing.isAttachedToWindow) {
+                // The platform may detach an accessibility overlay without
+                // notifying the service. Clear stale ownership and reattach.
+                view = null
+                windowManager = null
+                this.request = null
+            } else {
+                val unchanged = this.request == request
+                bind(existing, request)
+                this.request = request
+                return if (unchanged) PresentationOutcome.ALREADY_SHOWN else PresentationOutcome.SHOWN
+            }
         }
 
         return try {
@@ -75,7 +83,7 @@ class AccessibilityBlockingSurface(
         }
     }
 
-    override fun isAttached(): Boolean = view != null
+    override fun isAttached(): Boolean = view?.isAttachedToWindow == true
 
     private fun bind(view: View, request: BlockRequest) {
         view.findViewById<TextView>(R.id.blocked_message).text = request.message
