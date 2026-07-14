@@ -97,7 +97,7 @@ data class ForegroundToken(
  */
 class ForegroundTransitionGuard(private val graceMs: Long = 1_500L) {
     private var appPackage: String? = null
-    private var appEventMs = Long.MIN_VALUE
+    private var appEventMs: Long? = null
 
     fun select(
         eventPkg: String,
@@ -111,8 +111,14 @@ class ForegroundTransitionGuard(private val graceMs: Long = 1_500L) {
             appEventMs = nowMs
             return eventPkg
         }
-        if (!blocking && nowMs - appEventMs < graceMs) {
-            appPackage?.let { return it }
+        if (!blocking) {
+            val previousApp = appPackage
+            val previousEventMs = appEventMs
+            if (previousApp != null && previousEventMs != null &&
+                nowMs - previousEventMs < graceMs
+            ) {
+                return previousApp
+            }
         }
         return focusedPkg ?: eventPkg
     }
