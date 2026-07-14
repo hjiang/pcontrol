@@ -112,6 +112,7 @@ class BrowserAccessibilityService : AccessibilityService() {
         keepAliveRetryScheduled = false
 
         instance = this
+        mainActivityForeground = false
         windowTitlePackages.clear()
         windowIdPackages.clear()
         keepAliveController = AccessibilityKeepAliveController(AccessibilityKeepAliveOverlay(this))
