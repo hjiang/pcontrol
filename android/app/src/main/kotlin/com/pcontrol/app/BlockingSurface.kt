@@ -240,7 +240,10 @@ class BlockingController(
         attachedRequest = null
         val homeSucceeded = try { globalActions.goHome() } catch (_: Exception) { false }
         if (homeSucceeded) {
-            awaitingHomeTransition = true
+            // The overlay is not attached, so do not wait for a foreground
+            // transition that may never arrive. A subsequent evaluation must
+            // be able to retry the surface and/or Home action.
+            awaitingHomeTransition = false
             notifications.postBlockFailure("${request.message} — returned Home because the block surface failed")
             return PresentationOutcome.EJECTED_TO_HOME
         }

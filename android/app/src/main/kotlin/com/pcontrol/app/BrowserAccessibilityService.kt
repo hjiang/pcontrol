@@ -34,6 +34,7 @@ class BrowserAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "BrowserAS"
         private const val KEEP_ALIVE_RETRY_MS = 10_000L
+        private const val MAX_WINDOW_CACHE_ENTRIES = 256
 
         @Volatile
         var instance: BrowserAccessibilityService? = null
@@ -108,6 +109,8 @@ class BrowserAccessibilityService : AccessibilityService() {
         keepAliveRetryScheduled = false
 
         instance = this
+        windowTitlePackages.clear()
+        windowIdPackages.clear()
         keepAliveController = AccessibilityKeepAliveController(AccessibilityKeepAliveOverlay(this))
         ensureKeepAlive()
         coordinator = BlockingCoordinator(this)
@@ -135,7 +138,7 @@ class BrowserAccessibilityService : AccessibilityService() {
         if (event == null || !::controller.isInitialized) return
         ensureKeepAlive()
         val pkg = event.packageName?.toString() ?: return
-        if (event.windowId >= 0) windowIdPackages[event.windowId] = pkg
+        if (event.windowId >= 0) rememberWindowPackage(event.windowId, pkg)
         // Real MainActivity navigation is an ALLOW transition. Other self
         // events originate from the overlay/service and must not dismiss it.
         if (pkg == packageName) {
@@ -397,7 +400,7 @@ class BrowserAccessibilityService : AccessibilityService() {
                 addAll(windowIdPackages.values)
             }
             val matches = candidates.filter { titleMatchesPackage(title, it) }
-            matches.singleOrNull()?.also { windowTitlePackages[normalizedTitle] = it }
+            matches.singleOrNull()?.also { rememberWindowTitle(normalizedTitle, it) }
         } catch (e: Exception) {
             Log.w(TAG, "Unable to resolve focused window title '$title'", e)
             null
@@ -413,6 +416,16 @@ class BrowserAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun rememberWindowPackage(windowId: Int, pkg: String) {
+        if (windowIdPackages.size >= MAX_WINDOW_CACHE_ENTRIES) windowIdPackages.clear()
+        windowIdPackages[windowId] = pkg
+    }
+
+    private fun rememberWindowTitle(title: String, pkg: String) {
+        if (windowTitlePackages.size >= MAX_WINDOW_CACHE_ENTRIES) windowTitlePackages.clear()
+        windowTitlePackages[title] = pkg
     }
 
     private fun normalizeWindowTitle(value: String): String =
@@ -454,6 +467,8 @@ class BrowserAccessibilityService : AccessibilityService() {
         if (::controller.isInitialized) controller.onServiceDestroyed()
         if (::keepAliveController.isInitialized) keepAliveController.stop()
         foregroundObservation.clear()
+        windowTitlePackages.clear()
+        windowIdPackages.clear()
         ioScope.cancel()
         if (instance === this) instance = null
         super.onDestroy()
