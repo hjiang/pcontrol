@@ -10,12 +10,14 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.pcontrol.core.DomainParser
+import com.pcontrol.core.UsageDay
 import com.pcontrol.core.Verdict
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 
 /** Per-browser foreground-session cache for the last successfully parsed domain. */
@@ -123,7 +125,15 @@ class BrowserAccessibilityService : AccessibilityService() {
             notifications = BlockingNotificationSink { message ->
                 Enforcer.postBlockFailureNotification(this, message)
             },
-            performBack = { performGlobalAction(GLOBAL_ACTION_BACK) }
+            performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
+            onWebBackDispatched = { token ->
+                token.domain?.let { subject ->
+                    Enforcer.webBlockStrikes.recordStrike(
+                        subject,
+                        UsageDay.currentKey(ZoneId.systemDefault())
+                    )
+                }
+            }
         )
         latestTrackerObservation?.let { observeAndEvaluate(it.pkg, it.domain, 0) }
         mainHandler.postDelayed({

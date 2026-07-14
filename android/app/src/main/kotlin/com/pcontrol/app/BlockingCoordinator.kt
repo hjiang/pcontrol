@@ -128,7 +128,10 @@ class BlockingCoordinator(
             label = label,
             day = day,
             limitMessage = message,
-            allowedSites = allowedSites
+            allowedSites = allowedSites,
+            // Accessibility and periodic evaluations may repeat rapidly; the
+            // controller records a strike only after dispatching BACK.
+            recordWebStrike = false
         )
     }
 

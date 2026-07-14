@@ -10,11 +10,13 @@ Make the Android app feel calm, trustworthy, intentional, and complete without
 changing its parental-control policy, sync protocol, enforcement behavior, or
 single-screen setup architecture.
 
-The current app has two app-owned screens:
+The current app has an app-owned setup screen and an accessibility-owned
+blocking surface:
 
 - `MainActivity`: a flat setup checklist, server-configuration dialog, and
   update controls.
-- `BlockedActivity`: a full-screen red limit-reached message.
+- `AccessibilityBlockingSurface`: a full-screen limit-reached overlay that
+  reuses `activity_blocked.xml` without starting an activity.
 
 The redesign will keep the existing XML/View stack, introduce Material 3 as a
 small design system, clarify required versus optional setup, improve forms and
@@ -47,7 +49,7 @@ no custom brand direction is supplied.
    non-clickable. Preserve the existing reset-at-midnight statement unless
    policy semantics change in a separate project.
 8. **Localization:** make all visible text owned by `MainActivity`, its server
-   dialog, and `BlockedActivity` resource-backed, but English is the only
+   dialog, and the accessibility blocking surface resource-backed, but English is the only
    translation required in this project. Notification/channel copy outside
    these surfaces is deferred.
 9. **Validation devices:** support API 26 through API 37, compact phones, a
@@ -66,7 +68,7 @@ Any change to these defaults should update this plan before implementation.
 - Clearly separate required monitoring setup, server connection, and optional
   update controls.
 - Provide durable, accessible feedback for update checks and form validation.
-- Make the blocked screen firm but humane, legible, and visually consistent.
+- Make the accessibility blocking surface firm but humane, legible, and visually consistent.
 - Correctly handle system bars, display cutouts, the keyboard, large fonts,
   dark mode, and wide windows.
 - Add automated tests for UI state and critical view behavior, plus a repeatable
@@ -338,7 +340,7 @@ progress announcement. Run first; tests must fail as expected.
 rapid taps cannot launch duplicate work; no critical result exists only in a
 Toast; auto-update preference behavior is unchanged.
 
-### Stage 6 — Redesign `BlockedActivity`
+### Stage 6 — Redesign the accessibility blocking surface
 
 **Status:** Not Started
 
@@ -347,13 +349,16 @@ allowed-sites hidden/visible states, content order, and Back-to-home behavior.
 Run against the current screen; tests must fail for the new hierarchy/state
 contract as expected.
 
-1. Implement the hierarchy in Section 4.3 with Material typography and semantic
+1. Implement the hierarchy in Section 4.3 in the accessibility-owned overlay
+   (reusing `activity_blocked.xml`) with Material typography and semantic
    surface/error-container colors.
 2. Format allowed sites as a readable vertical/bulleted list, not one comma
    string. Keep entries non-clickable and preserve their original values.
 3. Hide empty subject/allowed-site containers without leaving spacing gaps.
-4. Preserve intent extra names and defaults for compatibility with `Enforcer`.
-5. Preserve HOME navigation on Back. Migrate from deprecated callback handling
+4. Preserve `BlockRequest` fields and defaults for compatibility with
+   `Enforcer` and `AccessibilityBlockingSurface`.
+5. Preserve HOME navigation on Back through the accessibility controller.
+   Migrate from deprecated callback handling
    only if it preserves that exact behavior on API 26–37.
 6. Handle top/bottom insets, landscape, wide windows, and 200% fonts.
 
@@ -441,8 +446,8 @@ expected. Do not change signing or CI release behavior in this project.
   capability set in pure state tests before replacing layouts.
 - **Large-font failures hide bottom actions:** allow reflow/scrolling and test
   200% font scale before visual approval.
-- **Blocked screen becomes bypassable:** retain intent flags and Back-to-home
-  regression tests; do not add links or override actions.
+- **Blocking surface becomes bypassable:** retain `BlockRequest` defaults and
+  Back-to-home regression tests; do not add links or override actions.
 - **Sensitive token exposure:** mask by default, never place it in status text,
   screenshots, logs, or accessibility announcements.
 - **Scope creep into a device dashboard:** any new service health, usage, policy,

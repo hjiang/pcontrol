@@ -44,7 +44,8 @@ object Enforcer {
         limitMessage: String,
         allowedSites: List<String> = emptyList(),
         isAlreadyWarned: ((day: String, subject: String) -> Boolean)? = null,
-        recordWarning: ((day: String, subject: String) -> Unit)? = null
+        recordWarning: ((day: String, subject: String) -> Unit)? = null,
+        recordWebStrike: Boolean = true
     ): EnforcementAction {
         require(subject.isNotBlank()) { "A verdict subject must not be blank" }
         return when (verdict) {
@@ -63,7 +64,12 @@ object Enforcer {
                 BlockRequest(BlockKind.APP, subject, limitMessage, allowedSites)
             )
             Verdict.BLOCK_WEB -> {
-                if (webBlockStrikes.recordAndShouldFallback(subject, day)) {
+                val shouldFallback = if (recordWebStrike) {
+                    webBlockStrikes.recordAndShouldFallback(subject, day)
+                } else {
+                    webBlockStrikes.willFallbackOnNextStrike(subject, day)
+                }
+                if (shouldFallback) {
                     EnforcementAction.Show(
                         BlockRequest(BlockKind.WEB, subject, limitMessage, allowedSites)
                     )

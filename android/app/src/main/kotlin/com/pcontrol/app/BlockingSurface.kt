@@ -129,7 +129,8 @@ class BlockingController(
     private val surface: BlockingSurface,
     private val globalActions: GlobalActionAdapter,
     private val notifications: BlockingNotificationSink,
-    private val performBack: () -> Boolean = { false }
+    private val performBack: () -> Boolean = { false },
+    private val onWebBackDispatched: (ForegroundToken) -> Unit = {}
 ) {
     private var generation = 0L
     private var foreground: ForegroundToken? = null
@@ -178,7 +179,7 @@ class BlockingController(
         if (!isCurrent(token)) return PresentationOutcome.STALE
         if (awaitingHomeTransition) return PresentationOutcome.ALREADY_SHOWN
         if (webBack) {
-            performBack()
+            if (performBack()) onWebBackDispatched(token)
             return PresentationOutcome.ALREADY_SHOWN
         }
         val request = appRequest ?: webRequest
