@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.pcontrol.core.DomainParser
+import com.pcontrol.core.Verdict
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -262,6 +263,7 @@ class BrowserAccessibilityService : AccessibilityService() {
             try {
                 val evaluation = coordinator.evaluateForeground(pkg, domain, ticksWithoutDomain)
                 mainHandler.post {
+                    resetWebBlockStrikesIfNeeded(pkg, domain, evaluation)
                     if (controller.isCurrent(token)) {
                         logEvaluation(pkg, evaluation)
                         val outcome = controller.present(
@@ -281,6 +283,7 @@ class BrowserAccessibilityService : AccessibilityService() {
         mainHandler.post {
             if (instance !== this@BrowserAccessibilityService) return@post
             if (!::controller.isInitialized || pkg == packageName) return@post
+            resetWebBlockStrikesIfNeeded(pkg, domain, evaluation)
             val observedPkg = foregroundObservation.current()
             if (observedPkg != null && observedPkg != pkg) return@post
             // UsageEvents can miss a resumed task on HyperOS. The periodic
@@ -439,6 +442,9 @@ class BrowserAccessibilityService : AccessibilityService() {
         val domain = nodes.first().text?.toString()?.let(DomainParser::parse)
         nodes.forEach { it.recycle() }
         val oldDomain = domainCache.get(pkg)
+        if (domain != oldDomain) {
+            oldDomain?.let(Enforcer.webBlockStrikes::reset)
+        }
         domainCache.update(pkg, domain)
         if (domain != null && domain != oldDomain && ::controller.isInitialized &&
             controller.currentToken()?.packageName == pkg
@@ -446,6 +452,17 @@ class BrowserAccessibilityService : AccessibilityService() {
             // Do not dismiss until the complete decision for the new domain is known.
             observeAndEvaluate(pkg, domain, 0)
         }
+    }
+
+    private fun resetWebBlockStrikesIfNeeded(
+        pkg: String,
+        domain: String?,
+        evaluation: ForegroundEvaluation
+    ) {
+        if (evaluation.webVerdict == Verdict.BLOCK_WEB) return
+        listOfNotNull(domain, domainCache.get(pkg))
+            .distinct()
+            .forEach(Enforcer.webBlockStrikes::reset)
     }
 
     private fun ensureKeepAlive() {
