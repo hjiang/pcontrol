@@ -56,6 +56,10 @@ class BrowserAccessibilityService : AccessibilityService() {
                 callback(null)
             } else {
                 service.mainHandler.post {
+                    if (instance !== service) {
+                        callback(null)
+                        return@post
+                    }
                     service.ensureKeepAlive()
                     callback(service.foregroundPackageForTracker())
                 }
@@ -272,6 +276,7 @@ class BrowserAccessibilityService : AccessibilityService() {
     /** Called by TrackerService after it has committed this tick's counters. */
     private fun applyTrackerEvaluation(pkg: String, domain: String?, evaluation: ForegroundEvaluation) {
         mainHandler.post {
+            if (instance !== this@BrowserAccessibilityService) return@post
             if (!::controller.isInitialized || pkg == packageName) return@post
             val observedPkg = foregroundObservation.current()
             if (observedPkg != null && observedPkg != pkg) return@post

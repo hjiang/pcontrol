@@ -104,12 +104,12 @@ object Enforcer {
         manager.notify(WARN_NOTIFICATION_ID_BASE + subject.hashCode(), notification)
     }
 
-    /** Persistent/high-priority degraded-path notification. */
+    /** High-priority notification for a degraded blocking/presentation path. */
     fun postBlockFailureNotification(context: Context, message: String) {
-        ensureChannel(context, BLOCK_CHANNEL_ID, "Blocked app")
+        ensureChannel(context, BLOCK_CHANNEL_ID, "Blocking failures")
         val notification = NotificationCompat.Builder(context, BLOCK_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("pcontrol blocked app")
+            .setContentTitle("pcontrol blocking failure")
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
