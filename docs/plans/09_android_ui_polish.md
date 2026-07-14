@@ -39,8 +39,8 @@ no custom brand direction is supplied.
 5. **Toolkit:** retain Views/XML; do not rewrite the app in Compose. Add Material
    Components for Android because consistent Material 3 controls, theming,
    forms, and accessibility justify the dependency.
-6. **Setup semantics:** usage access, accessibility, overlay, notifications,
-   battery exemption, and server configuration remain required by the existing
+6. **Setup semantics:** usage access, accessibility, notifications, battery
+   exemption, and server configuration remain required by the existing
    `allPermissionsGranted()` contract. Install-unknown-apps remains optional
    and belongs in the Updates section.
 7. **Blocked screen:** preserve the Back-to-home behavior and provide no
@@ -63,7 +63,7 @@ Any change to these defaults should update this plan before implementation.
 
 - Establish reusable color, typography, shape, spacing, and component tokens.
 - Remove hardcoded visible text, colors, and pixel-based spacing from
-  `MainActivity`, its server dialog, and `BlockedActivity`.
+  `MainActivity`, its server dialog, and the accessibility blocking surface.
 - Make setup progress and the next required action understandable at a glance.
 - Clearly separate required monitoring setup, server connection, and optional
   update controls.
@@ -128,8 +128,8 @@ One activity, one scrollable content surface, and one persistent bottom action:
 1. App bar: `pcontrol`, no duplicate in-content screen title.
 2. Status hero: “Setup needed” with `n of n required steps complete`, or
    “Ready to monitor” when all required steps pass.
-3. “Required setup” cards: usage access, accessibility, overlay,
-   notifications, and battery optimization.
+3. “Required setup” cards: usage access, accessibility, notifications, and
+   battery optimization.
 4. “Server connection” card: configured/not configured and a configure/edit
    action. Never display the token.
 5. “Updates (optional)” card: install-source permission, auto-update switch,

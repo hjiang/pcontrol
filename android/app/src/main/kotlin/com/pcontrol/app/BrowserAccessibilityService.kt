@@ -127,12 +127,11 @@ class BrowserAccessibilityService : AccessibilityService() {
             },
             performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
             onWebBackAttempted = { token ->
-                token.domain?.let { subject ->
-                    Enforcer.webBlockStrikes.recordStrike(
-                        subject,
-                        UsageDay.currentKey(ZoneId.systemDefault())
-                    )
-                }
+                val subject = token.domain ?: token.packageName
+                Enforcer.webBlockStrikes.recordStrike(
+                    subject,
+                    UsageDay.currentKey(ZoneId.systemDefault())
+                )
             }
         )
         latestTrackerObservation?.let { observeAndEvaluate(it.pkg, it.domain, 0) }
@@ -470,7 +469,7 @@ class BrowserAccessibilityService : AccessibilityService() {
         evaluation: ForegroundEvaluation
     ) {
         if (evaluation.webVerdict == Verdict.BLOCK_WEB) return
-        listOfNotNull(domain, domainCache.get(pkg))
+        listOfNotNull(domain, domainCache.get(pkg), pkg)
             .distinct()
             .forEach(Enforcer.webBlockStrikes::reset)
     }
