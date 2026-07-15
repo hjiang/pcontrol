@@ -9,7 +9,12 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 )
+
+// BuildVersion is set at build time via ldflags (e.g. -X 'pcontrol/server/internal/web.BuildVersion=v1.2.3').
+// The default "dev" is used in local development builds.
+var BuildVersion = "dev"
 
 //go:embed templates/*.gohtml
 var templateFS embed.FS
@@ -43,7 +48,10 @@ type layoutData struct {
 
 func init() {
 	var err error
-	parsedTemplates, err = template.ParseFS(templateFS, "templates/*.gohtml")
+	parsedTemplates, err = template.New("").Funcs(template.FuncMap{
+		"now":     time.Now,
+		"version": func() string { return BuildVersion },
+	}).ParseFS(templateFS, "templates/*.gohtml")
 	if err != nil {
 		log.Fatalf("parse templates: %v", err)
 	}

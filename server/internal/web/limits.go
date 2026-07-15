@@ -26,14 +26,14 @@ func (h *webAuthHandler) limitsPage() http.HandlerFunc {
 		}
 
 		device, err := h.store.DeviceByTokenFromID(deviceID)
-		deviceName := "Device"
-		if err == nil {
-			deviceName = device.Name
+		if err != nil {
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
 		}
 
 		data := limitsData{
 			ID:             deviceID,
-			Name:           deviceName,
+			Name:           device.Name,
 			TotalLimitText: totalText,
 			WarnPct:        policy.WarnThresholdPercent,
 			Subjects:       make([]subjectOption, 0, len(subjects)),

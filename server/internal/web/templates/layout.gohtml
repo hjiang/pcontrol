@@ -121,6 +121,7 @@
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
+    text-decoration: none;
     transition: background 0.15s, box-shadow 0.15s;
     display: inline-flex;
     align-items: center;
@@ -361,7 +362,7 @@
 </main>
 {{if not .MinimalLayout}}
 <footer>
-  pcontrol · v1.0 · 2026
+  pcontrol · {{version}} · {{now.Year}}
 </footer>
 {{end}}
 </body>
