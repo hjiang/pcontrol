@@ -48,7 +48,6 @@ type deviceDetailData struct {
 	ID              int64
 	Name            string
 	Day             string
-	IsToday         bool
 	TotalMinutes    int
 	HasLimit        bool
 	LimitMin        int

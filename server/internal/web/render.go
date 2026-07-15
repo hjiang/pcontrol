@@ -49,7 +49,7 @@ type layoutData struct {
 func init() {
 	var err error
 	parsedTemplates, err = template.New("").Funcs(template.FuncMap{
-		"now":     time.Now,
+		"year":    func() int { return time.Now().Year() },
 		"version": func() string { return BuildVersion },
 	}).ParseFS(templateFS, "templates/*.gohtml")
 	if err != nil {

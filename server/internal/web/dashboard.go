@@ -248,9 +248,7 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			return
 		}
 
-		dayParam := r.URL.Query().Get("day")
-		dayExplicit := dayParam != ""
-		day := dayParam
+		day := r.URL.Query().Get("day")
 		if day == "" {
 			// Default to device-local "today": the most recent day key that has
 			// events for this device (§6: server trusts the day field on events).
@@ -281,7 +279,6 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			ID:           deviceID,
 			Name:         device.Name,
 			Day:          day,
-			IsToday:      !dayExplicit,
 			TotalMinutes: int(totalMinutes),
 		}
 

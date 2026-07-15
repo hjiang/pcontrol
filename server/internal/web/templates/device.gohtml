@@ -18,7 +18,7 @@
   </form>
 </div>
 
-<h2>{{if .IsToday}}Today's usage{{else}}Usage for {{.Day}}{{end}}: {{.TotalMinutes}} min</h2>
+<h2>Usage for {{.Day}}: {{.TotalMinutes}} min</h2>
 {{if .HasLimit}}
   <div class="bar-bg bar-xl" style="width:100%;max-width:400px;margin-top:8px">
     <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
@@ -55,7 +55,7 @@
   <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
 {{else}}
-<tr><td colspan="3" class="text-muted" style="text-align:center">No apps tracked{{if not .IsToday}} for {{.Day}}{{end}}</td></tr>
+<tr><td colspan="3" class="text-muted" style="text-align:center">No apps tracked for {{.Day}}</td></tr>
 {{end}}
 </tbody>
 </table>
@@ -72,7 +72,7 @@
   <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
 {{else}}
-<tr><td colspan="3" class="text-muted" style="text-align:center">No websites tracked{{if not .IsToday}} for {{.Day}}{{end}}</td></tr>
+<tr><td colspan="3" class="text-muted" style="text-align:center">No websites tracked for {{.Day}}</td></tr>
 {{end}}
 </tbody>
 </table>
