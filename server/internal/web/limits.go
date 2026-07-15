@@ -200,9 +200,24 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 			return
 		}
 
+			// Verify device exists before any writes.
+		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+			} else {
+				log.Printf("device lookup: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+
 		totalStr := r.FormValue("total")
 		if totalStr != "" {
 			total := parseInt(totalStr)
+			if total < 1 {
+				http.Error(w, "total limit must be at least 1", http.StatusBadRequest)
+				return
+			}
 			if err := h.store.SetTotalLimit(deviceID, &total); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
