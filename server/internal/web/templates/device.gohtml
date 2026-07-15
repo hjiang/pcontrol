@@ -78,8 +78,10 @@
 </table>
 </div>
 
-<h2>⚙️ Device Settings</h2>
-<form action="/devices/{{.ID}}/rename" method="post" style="display:flex;gap:0.5rem;align-items:end;margin-bottom:1rem">
+<details>
+<summary style="cursor:pointer;color:var(--primary);font-weight:500;font-size:1.15rem">⚙️ Device Settings</summary>
+<div style="margin-top:0.75rem">
+<form action="/devices/{{.ID}}/rename" method="post" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem">
   <div>
     <label for="rename">Rename device</label>
     <input id="rename" name="name" value="{{.Name}}" required>
@@ -93,3 +95,5 @@
   <button class="btn btn-danger">Delete device</button>
 </form>
 </div>
+</div>
+</details>
