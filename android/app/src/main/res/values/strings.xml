@@ -1,5 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">pcontrol</string>
+
+    <!-- Accessibility service -->
     <string name="accessibility_service_description">pcontrol reads the URL bar of supported browsers to track website usage and enforce time limits.</string>
+
+    <!-- Main screen: app bar -->
+    <string name="app_bar_title">@string/app_name</string>
+    <string name="cd_app_logo">pcontrol shield and check mark</string>
+
+    <!-- Status hero -->
+    <string name="hero_setup_needed">Setup needed</string>
+    <string name="hero_ready">Ready to monitor</string>
+    <plurals name="hero_progress">
+        <item quantity="one">%1$d of %2$d required steps complete</item>
+        <item quantity="other">%1$d of %2$d required steps complete</item>
+    </plurals>
+    <string name="hero_next_step">Next step: %1$s</string>
+    <string name="hero_incomplete_summary">%1$s\n%2$s\n%3$s</string>
+    <string name="hero_complete_summary">%1$s\n%2$s</string>
+
+    <!-- Section headings -->
+    <string name="section_required">Required setup</string>
+    <string name="section_server">Server connection</string>
+    <string name="section_updates">Updates (optional)</string>
+
+    <!-- Capability: usage access -->
+    <string name="cap_usage_title">Usage access</string>
+    <string name="cap_usage_rationale">Allows pcontrol to read which apps and sites are in use so it can track time against limits.</string>
+    <string name="cap_usage_action">Open usage access</string>
+
+    <!-- Capability: accessibility -->
+    <string name="cap_accessibility_title">Accessibility service</string>
+    <string name="cap_accessibility_rationale">Lets pcontrol read a supported browser\'s URL bar and enforce web blocks.</string>
+    <string name="cap_accessibility_action">Enable accessibility service</string>
+
+    <!-- Capability: notifications -->
+    <string name="cap_notifications_title">Notifications</string>
+    <string name="cap_notifications_rationale">Used for limit warnings so limits are clearly signaled.</string>
+    <string name="cap_notifications_action">Enable notifications</string>
+
+    <!-- Capability: battery -->
+    <string name="cap_battery_title">Battery optimization</string>
+    <string name="cap_battery_rationale">Exempt pcontrol from battery optimization so monitoring continues reliably in the background.</string>
+    <string name="cap_battery_action">Disable battery optimization</string>
+
+    <string name="cap_server_text_ready">Configured</string>
+
+    <!-- Server connection -->
+    <string name="server_state_needed">Not configured</string>
+    <string name="server_rationale">The phone sends usage here and downloads the policy from this server. Your token stays secret on this device.</string>
+    <string name="server_action_edit">Configure server</string>
+
+    <!-- Updates (optional) -->
+    <string name="updater_title">Install unknown apps</string>
+    <string name="updater_rationale">Optional. Allows installing pcontrol updates downloaded from GitHub. Android still asks you to confirm each install.</string>
+    <string name="updater_action">Allow install unknown apps</string>
+    <string name="updates_auto_update">Auto-update</string>
+    <string name="updates_auto_update_subtext">Automatically check for updates once a day</string>
+    <string name="updates_check_action">Check for updates</string>
+    <string name="updates_checking">Checking for updates…</string>
+    <string name="updates_install_pending">Android install confirmation is still required</string>
+
+    <!-- Update result messages -->
+    <string name="update_result_install_triggered">System install dialog opened</string>
+    <string name="update_result_up_to_date">You\'re up to date</string>
+    <string name="update_result_version_error">Version comparison error</string>
+    <string name="update_result_network_error">Could not fetch update info</string>
+    <string name="update_result_download_failed">Download failed</string>
+    <string name="update_result_signature_mismatch">Update available (manual) — signature mismatch</string>
+    <string name="update_result_install_failed">Could not open install dialog</string>
+    <string name="update_result_in_progress">Update check already in progress</string>
+    <string name="update_result_disabled">Auto-update is disabled</string>
+    <string name="update_result_skipped">Check again later</string>
+
+    <!-- Bottom action -->
+    <string name="start_monitoring">Start monitoring</string>
+
+    <!-- Server config dialog -->
+    <string name="dialog_server_title">Server Configuration</string>
+    <string name="dialog_server_url_label">Server URL</string>
+    <string name="dialog_server_url_hint">https://pcontrol.example.com</string>
+    <string name="dialog_server_token_label">Device Token</string>
+    <string name="dialog_server_token_hint">Device token from server</string>
+    <string name="dialog_server_save">Save</string>
+    <string name="dialog_server_cancel">Cancel</string>
+    <string name="dialog_server_url_error_scheme">URL must use http or https</string>
+    <string name="dialog_server_url_error_host">URL must have a host name</string>
+    <string name="dialog_server_url_error_query">URL must not include a query or fragment</string>
+    <string name="dialog_server_url_error_blank">Server URL is required</string>
+    <string name="dialog_server_token_error_blank">Device token is required</string>
+    <string name="dialog_server_token_reveal">Show token</string>
+    <string name="error_secret_store">Could not access secure storage</string>
+
+    <!-- Generic state -->
+    <string name="state_ready">Ready</string>
+    <string name="state_action_needed">Action needed</string>
+    <string name="capability_state_format">%1$s — %2$s</string>
+
+    <!-- Blocked screen -->
+    <string name="blocked_default_message">Time limit reached</string>
+    <string name="blocked_subject_label">Blocked</string>
+    <string name="blocked_allowed_sites_label">Sites still available</string>
+    <string name="blocked_allowed_sites_format">%1$s:\n%2$s</string>
+    <string name="blocked_allowed_site_item">•\t%1$s</string>
+    <string name="blocked_reset">Resets at midnight</string>
+    <string name="blocked_go_home">Go home</string>
+    <string name="cd_blocked_shield">Time limit reached</string>
+
+    <!-- Toast & misc -->
+    <string name="toast_tracker_started">Tracker service started</string>
 </resources>

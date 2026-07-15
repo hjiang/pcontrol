@@ -175,6 +175,26 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   `lastUpdateCheckMs` gate so the user can always check immediately. The
   practical rate-limit protection against rapid manual taps is the HTTP
   403 from GitHub itself (60/hr).
+- **Robolectric UI tests need merged resources and an explicit local SDK.**
+  `app/build.gradle.kts` sets `testOptions.unitTests.isIncludeAndroidResources = true`
+  so AppCompat/Material resources are available during activity inflation.
+  Because targetSdk is 37 but the JDK 17/Robolectric 4.16.1 environment may
+  attempt to fetch an unavailable android-all artifact, tests pin `sdk=26` in
+  `app/src/test/resources/robolectric.properties` (individual tests can
+  override with `@Config`). API 23 is too old for AppCompat 1.7.1 + Material
+  1.13.0 activity inflation.
+- **Permission checks must remain API-safe at minSdk 26.** `unsafeCheckOpNoThrow`
+  is API 29; `MainActivity.hasUsageStatsPermission()` uses it only on API 29+
+  and reflectively calls the legacy int-op overload on API 26–28. Catch
+  `Throwable` around system/keystore probes so a missing platform shadow or
+  unavailable Android Keystore renders setup as incomplete rather than
+  crashing the setup screen.
+- **UI verification coverage.** `gradle test` covers pure presentation,
+  activity inflation, server-dialog fields, update progress, and blocked-screen
+  behavior; `gradle :app:lintDebug` is clean after documenting the legitimate
+  Settings-granted `PACKAGE_USAGE_STATS` app-op permission. Physical/emulator
+  screenshots, TalkBack, Accessibility Scanner, API 37, and large-font manual
+  checks remain required before release.
 
 - **`versionName`/`versionCode` must match the release tag — CI injects them.**
   `build.gradle.kts` hardcodes defaults (`versionName`, `versionCode`) for
@@ -208,6 +228,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   context: create the overlay context from `createDisplayContext(defaultDisplay)`
   before `createWindowContext`, or it throws before `addView`. Keep foreground
   generations and overlay mutations serialized there.
+- **An accessibility overlay has no manifest activity theme.**
+  `AccessibilityBlockingSurface` must wrap its display-associated window
+  context in `Pcontrol.Blocked` before inflating `activity_blocked.xml`; using
+  the application `Pcontrol` theme silently drops the dedicated blocked-screen
+  palette. Continue obtaining `WindowManager` from the unwrapped visual context
+  so theme wrapping does not change window ownership.
 - **HyperOS Greeze can freeze an active foreground-service/accessibility UID.**
   On the diagnosed HyperOS 3 device, battery `Unrestricted`, Autostart, a bound
   accessibility service, and a foreground service were all insufficient;

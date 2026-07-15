@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- pcontrol palette: restrained blue/teal with semantic green, amber, red. -->
+
+    <!-- Primary (blue) -->
+    <color name="pcontrol_primary">#1A5FB4</color>
+    <color name="pcontrol_on_primary">#FFFFFF</color>
+    <color name="pcontrol_primary_container">#D6E3FF</color>
+    <color name="pcontrol_on_primary_container">#001A41</color>
+
+    <!-- Secondary (teal) -->
+    <color name="pcontrol_secondary">#00696D</color>
+    <color name="pcontrol_on_secondary">#FFFFFF</color>
+    <color name="pcontrol_secondary_container">#6FF6FE</color>
+    <color name="pcontrol_on_secondary_container">#002021</color>
+
+    <!-- Tertiary (amber accent for warnings) -->
+    <color name="pcontrol_tertiary">#725E2C</color>
+    <color name="pcontrol_on_tertiary">#FFFFFF</color>
+    <color name="pcontrol_tertiary_container">#FEE086</color>
+    <color name="pcontrol_on_tertiary_container">#261A00</color>
+
+    <!-- Error -->
+    <color name="pcontrol_error">#BA1A1A</color>
+    <color name="pcontrol_on_error">#FFFFFF</color>
+    <color name="pcontrol_error_container">#FFDAD6</color>
+    <color name="pcontrol_on_error_container">#410002</color>
+
+    <!-- Background / surface roles -->
+    <color name="pcontrol_background">#FDFBFF</color>
+    <color name="pcontrol_on_background">#1A1B1F</color>
+    <color name="pcontrol_surface">#FDFBFF</color>
+    <color name="pcontrol_on_surface">#1A1B1F</color>
+    <color name="pcontrol_surface_variant">#E0E2EC</color>
+    <color name="pcontrol_on_surface_variant">#43474E</color>
+    <color name="pcontrol_surface_container">#F0F1F7</color>
+    <color name="pcontrol_surface_container_high">#EAEEF6</color>
+
+    <!-- Outline -->
+    <color name="pcontrol_outline">#74777F</color>
+    <color name="pcontrol_outline_variant">#C4C6CF</color>
+
+    <!-- Blocked screen: warm surface with urgency, never saturated full-red -->
+    <color name="blocked_background">#FFF1F0</color>
+    <color name="blocked_on_background">#410002</color>
+    <color name="blocked_surface">#FFFFFF</color>
+    <color name="blocked_on_surface">#410002</color>
+    <color name="blocked_error">#93000A</color>
+    <color name="blocked_on_error">#FFFFFF</color>
+    <color name="blocked_muted">#680014</color>
+</resources>

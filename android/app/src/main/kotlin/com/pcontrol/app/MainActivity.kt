@@ -12,25 +12,54 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
+import android.view.View
+import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnLayout
+import androidx.core.view.updatePadding
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import com.pcontrol.app.update.UpdateCoordinator
 import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
+import com.pcontrol.app.ui.CapabilityRenderer
+import com.pcontrol.app.ui.CapabilityViews
+import com.pcontrol.app.ui.CapabilityFacts
+import com.pcontrol.app.ui.SetupUiState
+import com.pcontrol.app.ui.UpdateUiMapper
+import com.pcontrol.app.ui.UpdateUiState
+import com.pcontrol.app.ui.UpdateUiStatus
+import com.pcontrol.app.ui.validateServerConfiguration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        /** Stable int op id for GET_USAGE_STATS (historically 43 on API 21+).
+         * Prefer the platform constant when present, but keep a safe fallback for newer SDK stubs. */
+        private val LEGACY_OP_GET_USAGE_STATS: Int by lazy {
+            runCatching { AppOpsManager::class.java.getDeclaredField("OP_GET_USAGE_STATS").getInt(null) }.getOrDefault(43)
+        }
+    }
+
     private val checkUpdateScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /** Test seam; production initializes this with the real coordinator in [onCreate]. */
+    internal var updateRunner: (suspend () -> UpdateResult)? = null
+
+    private lateinit var statusHero: TextView
     private lateinit var statusUsage: TextView
     private lateinit var statusAccessibility: TextView
     private lateinit var statusNotifications: TextView
@@ -45,14 +74,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnServer: Button
     private lateinit var btnUpdater: Button
     private lateinit var btnCheckUpdate: Button
+    private lateinit var updateProgress: ProgressBar
+    private lateinit var updateStatus: TextView
     private lateinit var btnStart: Button
+    private lateinit var sectionRequired: TextView
+    private lateinit var sectionServer: TextView
+    private lateinit var sectionUpdates: TextView
 
     private lateinit var switchAutoUpdate: SwitchCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
+        statusHero = findViewById(R.id.status_hero)
         statusUsage = findViewById(R.id.status_usage)
         statusAccessibility = findViewById(R.id.status_accessibility)
         statusNotifications = findViewById(R.id.status_notifications)
@@ -70,6 +106,27 @@ class MainActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btn_start)
 
         switchAutoUpdate = findViewById(R.id.switch_auto_update)
+        updateProgress = findViewById(R.id.update_progress)
+        updateStatus = findViewById(R.id.update_status)
+
+        sectionRequired = findViewById(R.id.section_required)
+        sectionServer = findViewById(R.id.section_server)
+        sectionUpdates = findViewById(R.id.section_updates)
+
+        // android:accessibilityHeading is only honored on API 28+;
+        // set it at runtime for API 26–27.
+        ViewCompat.setAccessibilityHeading(statusHero, true)
+        ViewCompat.setAccessibilityHeading(sectionRequired, true)
+        ViewCompat.setAccessibilityHeading(sectionServer, true)
+        ViewCompat.setAccessibilityHeading(sectionUpdates, true)
+
+        updateRunner = {
+            UpdateCoordinator(
+                context = applicationContext,
+                versionName = BuildConfig.VERSION_NAME,
+            ).runOnce(force = true)
+        }
+        configureWindowInsets()
 
         btnUsage.setOnClickListener {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -118,7 +175,7 @@ class MainActivity : AppCompatActivity() {
             if (allPermissionsGranted()) {
                 startTrackerService()
             } else {
-                Toast.makeText(this, "Grant all permissions first", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.hero_setup_needed, Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -128,6 +185,10 @@ class MainActivity : AppCompatActivity() {
         switchAutoUpdate.setOnCheckedChangeListener { _, isChecked ->
             updateState.autoUpdateEnabled = isChecked
         }
+
+        // Render an initial setup state so the screen is populated on the
+        // very first frame; onResume() re-checks after returning from Settings.
+        refreshStatus()
     }
 
     override fun onDestroy() {
@@ -147,23 +208,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatus() {
-        val usageOk = hasUsageStatsPermission()
-        val accessibilityOk = isAccessibilityServiceEnabled()
-        val notificationsOk = hasNotificationPermission()
-        val batteryOk = isBatteryOptimizationIgnored()
-        val serverOk = isServerConfigured()
-        val updaterOk = hasInstallPermission()
+        // Collect system facts once, build one state, and render through a
+        // replaceable seam. Accessibility overlays are owned by the bound
+        // accessibility service and require no ordinary overlay permission.
+        val facts = CapabilityFacts(
+            usage = hasUsageStatsPermission(),
+            accessibility = isAccessibilityServiceEnabled(),
+            notifications = hasNotificationPermission(),
+            battery = isBatteryOptimizationIgnored(),
+            server = isServerConfigured(),
+            updater = hasInstallPermission(),
+        )
+        renderSetupState(SetupUiState.build(facts))
+    }
 
-        statusUsage.text = if (usageOk) "\u2705 Usage access" else "\u274C Usage access"
-        statusAccessibility.text = if (accessibilityOk) "\u2705 Accessibility service" else "\u274C Accessibility service"
-        statusNotifications.text = if (notificationsOk) "\u2705 Notifications" else "\u274C Notifications"
-        statusBattery.text = if (batteryOk) "\u2705 Battery optimization off" else "\u274C Battery optimization"
-        statusServer.text = if (serverOk) "\u2705 Server configured" else "\u274C Server URL + token"
-        statusUpdater.text = if (updaterOk) "\u2705 Install unknown apps" else "\u274C Install unknown apps"
-
-        val allOk = allPermissionsGranted()
-        btnStart.isEnabled = allOk
-        btnStart.text = if (allOk) "Start monitoring" else "Grant all permissions above"
+    /** Test seam: render the pure [SetupUiState] into status views. */
+    internal fun renderSetupState(state: SetupUiState) {
+        CapabilityRenderer(this).render(
+            state,
+            CapabilityViews(
+                hero = statusHero,
+                usage = statusUsage,
+                accessibility = statusAccessibility,
+                notifications = statusNotifications,
+                battery = statusBattery,
+                server = statusServer,
+                updater = statusUpdater,
+                startBtn = btnStart,
+            )
+        )
     }
 
     private fun allPermissionsGranted(): Boolean {
@@ -175,16 +248,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hasUsageStatsPermission(): Boolean {
-        try {
+        // `unsafeCheckOpNoThrow` was added in API 29; OPSTR_GET_USAGE_STATS is
+        // the String op id since API 23. On API 26–28 neither String-overload
+        // nor OP_GET_USAGE_STATS (int) are in the public API at compileSdk 37,
+        // so fall back to reflective call on the legacy int-id overload
+        // (`checkOpNoThrow(int, int, String)`, op id 43 since API 21).
+        // Catch Throwable so an absent method on older SDKs (e.g. Robolectric
+        // SDK 26) cannot bring down the launcher.
+        return try {
             val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-            val mode = appOps.unsafeCheckOp(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                android.os.Process.myUid(),
-                packageName
-            )
-            return mode == AppOpsManager.MODE_ALLOWED
-        } catch (e: Exception) {
-            return false
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            } else {
+                val m = AppOpsManager::class.java.getMethod(
+                    "checkOpNoThrow",
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType,
+                    String::class.java
+                )
+                m.invoke(
+                    appOps,
+                    LEGACY_OP_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                ) as Int
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Throwable) {
+            false
         }
     }
 
@@ -210,7 +305,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isServerConfigured(): Boolean {
-        return SecretPrefs.getInstance(this).isConfigured()
+        // SecretPrefs lazily builds the Android Keystore master key; on Robolectric
+        // or environments where the keystore is unavailable it throws. Treat any
+        // initialization failure as “not configured” so the screen still renders.
+        return try {
+            SecretPrefs.getInstance(this).isConfigured()
+        } catch (e: Throwable) {
+            false
+        }
     }
 
     private fun hasInstallPermission(): Boolean {
@@ -220,83 +322,142 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun checkForUpdates() {
+    internal fun checkForUpdates() {
         // In-flight guard: disable the button so only one check runs at a time.
+        // The durable inline status (rather than only a Toast) preserves the
+        // last result beside the controls until replaced (Stage 5).
+        if (!btnCheckUpdate.isEnabled) return
         btnCheckUpdate.isEnabled = false
+        renderUpdateState(UpdateUiMapper.checking)
 
         checkUpdateScope.launch {
-            try {
-                val coordinator = UpdateCoordinator(
-                    context = applicationContext,
-                    versionName = BuildConfig.VERSION_NAME
-                )
-                val result = coordinator.runOnce(force = true)
+            val uiState = try {
+                UpdateUiMapper.fromResult(checkNotNull(updateRunner) { "update runner not initialized" }.invoke())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                UpdateUiMapper.fromResult(UpdateResult.NETWORK_ERROR)
+            }
 
-                val message = when (result) {
-                    is UpdateResult.INSTALL_TRIGGERED -> "System install dialog opened"
-                    is UpdateResult.UP_TO_DATE -> "You're up to date"
-                    is UpdateResult.VERSION_ERROR -> "Version comparison error"
-                    is UpdateResult.NETWORK_ERROR -> "Could not fetch update info"
-                    is UpdateResult.DOWNLOAD_FAILED -> "Download failed"
-                    is UpdateResult.SIGNATURE_MISMATCH -> "Update available (manual) — signature mismatch"
-                    is UpdateResult.INSTALL_FAILED -> "Could not open install dialog"
-                    is UpdateResult.IN_PROGRESS -> "Update check already in progress"
-                    is UpdateResult.DISABLED -> "Auto-update is disabled"
-                    is UpdateResult.SKIPPED -> "Check again later"
-                }
-
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
-                        refreshStatus()
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) {
+                    renderUpdateState(uiState)
+                    if (uiState.status == UpdateUiStatus.SUCCESS) {
+                        uiState.messageResId?.let { msgRes ->
+                            Snackbar.make(findViewById(R.id.main_root), msgRes, Snackbar.LENGTH_LONG).show()
+                        }
                     }
-                }
-            } finally {
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        btnCheckUpdate.isEnabled = true
-                    }
+                    refreshStatus()
+                    btnCheckUpdate.isEnabled = true
                 }
             }
         }
     }
 
-    private fun showServerConfigDialog() {
-        val prefs = SecretPrefs.getInstance(this)
-        val currentUrl = prefs.getServerUrl()
-        val currentToken = prefs.getDeviceToken()
-
-        val inputUrl = android.widget.EditText(this).apply {
-            setText(currentUrl)
-            hint = "https://pcontrol.example.com"
-        }
-        val inputToken = android.widget.EditText(this).apply {
-            setText(currentToken)
-            hint = "Device token from server"
-        }
-
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            addView(android.widget.TextView(this@MainActivity).apply { text = "Server URL" })
-            addView(inputUrl)
-            addView(android.widget.TextView(this@MainActivity).apply {
-                text = "Device Token"
-                setPadding(0, 32, 0, 0)
-            })
-            addView(inputToken)
-            setPadding(32, 16, 32, 16)
-        }
-
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Server Configuration")
-            .setView(layout)
-            .setPositiveButton("Save") { _, _ ->
-                prefs.setServerUrl(inputUrl.text.toString().trimEnd('/'))
-                prefs.setDeviceToken(inputToken.text.toString().trim())
-                refreshStatus()
+    /** Stage 5 durable inline UI: progress + status text. */
+    private fun renderUpdateState(state: UpdateUiState) {
+        when (state.status) {
+            UpdateUiStatus.IDLE -> {
+                updateProgress.visibility = View.GONE
+                updateStatus.visibility = View.GONE
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            UpdateUiStatus.CHECKING -> {
+                updateProgress.visibility = View.VISIBLE
+                updateStatus.text = getString(R.string.updates_checking)
+                updateStatus.visibility = View.VISIBLE
+            }
+            UpdateUiStatus.SUCCESS,
+            UpdateUiStatus.ACTION_REQUIRED,
+            UpdateUiStatus.ERROR -> {
+                updateProgress.visibility = View.GONE
+                updateStatus.text = state.messageResId?.let { getString(it) } ?: ""
+                updateStatus.visibility = if (updateStatus.text.isBlank()) View.GONE else View.VISIBLE
+
+            }
+        }
+    }
+
+    private fun showServerConfigDialog() {
+        val prefs = try {
+            SecretPrefs.getInstance(this)
+        } catch (e: Throwable) {
+            Toast.makeText(this, R.string.error_secret_store, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val content = layoutInflater.inflate(R.layout.dialog_server_config, null)
+        val urlLayout = content.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.input_server_url_layout)
+        val tokenLayout = content.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.input_server_token_layout)
+        val inputUrl = content.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.input_server_url)
+        val inputToken = content.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.input_server_token)
+        inputUrl.setText(prefs.getServerUrl())
+        inputToken.setText(prefs.getDeviceToken())
+
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.dialog_server_title)
+            .setView(content)
+            .setPositiveButton(R.string.dialog_server_save, null)
+            .setNegativeButton(R.string.dialog_server_cancel, null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val result = validateServerConfiguration(
+                    inputUrl.text?.toString().orEmpty(), inputToken.text?.toString().orEmpty()
+                )
+                urlLayout.error = null
+                tokenLayout.error = null
+                if (result.isOk) {
+                    prefs.setServerUrl(result.cleanedUrl)
+                    prefs.setDeviceToken(result.cleanedToken)
+                    dialog.dismiss()
+                    refreshStatus()
+                } else {
+                    when (result.error) {
+                        com.pcontrol.app.ui.ServerConfigError.URL_BLANK,
+                        com.pcontrol.app.ui.ServerConfigError.URL_BAD_SCHEME,
+                        com.pcontrol.app.ui.ServerConfigError.URL_NO_HOST,
+                        com.pcontrol.app.ui.ServerConfigError.URL_QUERY_OR_FRAGMENT -> {
+                            urlLayout.error = getString(when (result.error) {
+                                com.pcontrol.app.ui.ServerConfigError.URL_BLANK -> R.string.dialog_server_url_error_blank
+                                com.pcontrol.app.ui.ServerConfigError.URL_BAD_SCHEME -> R.string.dialog_server_url_error_scheme
+                                com.pcontrol.app.ui.ServerConfigError.URL_NO_HOST -> R.string.dialog_server_url_error_host
+                                else -> R.string.dialog_server_url_error_query
+                            })
+                            inputUrl.requestFocus()
+                        }
+                        com.pcontrol.app.ui.ServerConfigError.TOKEN_BLANK -> {
+                            tokenLayout.error = getString(R.string.dialog_server_token_error_blank)
+                            inputToken.requestFocus()
+                        }
+                        null -> Unit
+                    }
+                }
+            }
+        }
+        dialog.show()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+    }
+
+    /** Assigns exactly one owner to the top and bottom system-bar insets. */
+    private fun configureWindowInsets() {
+        val root = findViewById<View>(R.id.main_root)
+        val appBar = findViewById<View>(R.id.app_bar)
+        val content = findViewById<View>(R.id.content_scroll)
+        val bottomBar = findViewById<View>(R.id.bottom_bar)
+
+        ViewCompat.setOnApplyWindowInsetsListener(appBar) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(top = bars.top)
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(bottomBar) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(bottom = bars.bottom, left = bars.left, right = bars.right)
+            view.post { content.updatePadding(bottom = bottomBar.height, left = bars.left, right = bars.right) }
+            insets
+        }
+        bottomBar.doOnLayout { content.updatePadding(bottom = it.height) }
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun startTrackerService() {
@@ -306,6 +467,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
-        Toast.makeText(this, "Tracker service started", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, R.string.toast_tracker_started, Toast.LENGTH_SHORT).show()
     }
 }

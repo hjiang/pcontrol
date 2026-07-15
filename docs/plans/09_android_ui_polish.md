@@ -2,7 +2,12 @@
 
 ## Status
 
-**Overall:** Not Started — product/design decisions required before Stage 1.
+**Overall:** In Progress — implementation complete; manual device/emulator
+verification deferred.
+
+**Stage 0:** Partial — recommended defaults from Section 2 accepted (see below);
+before-screenshots and an approved sketch remain manual on-device deliverables
+(`docs/ui/android/before/`).
 
 ## 1. Purpose
 
@@ -16,11 +21,12 @@ blocking surface:
 - `MainActivity`: a flat setup checklist, server-configuration dialog, and
   update controls.
 - `AccessibilityBlockingSurface`: a full-screen limit-reached overlay that
-  reuses `activity_blocked.xml` without starting an activity.
+  reuses `activity_blocked.xml` without starting an activity or requiring the
+  ordinary overlay permission.
 
 The redesign will keep the existing XML/View stack, introduce Material 3 as a
 small design system, clarify required versus optional setup, improve forms and
-feedback, and make both screens accessible and adaptive.
+feedback, and make both surfaces accessible and adaptive.
 
 ## 2. Decisions required before implementation
 
@@ -41,7 +47,8 @@ no custom brand direction is supplied.
    forms, and accessibility justify the dependency.
 6. **Setup semantics:** usage access, accessibility, notifications, battery
    exemption, and server configuration remain required by the existing
-   `allPermissionsGranted()` contract. Install-unknown-apps remains optional
+   `allPermissionsGranted()` contract. The accessibility-owned blocking overlay
+   does not require the ordinary draw-over-other-apps permission. Install-unknown-apps remains optional
    and belongs in the Updates section.
 7. **Blocked screen:** preserve the Back-to-home behavior and provide no
    override control. Returning to blocked content remains governed by the
@@ -49,13 +56,22 @@ no custom brand direction is supplied.
    non-clickable. Preserve the existing reset-at-midnight statement unless
    policy semantics change in a separate project.
 8. **Localization:** make all visible text owned by `MainActivity`, its server
-   dialog, and the accessibility blocking surface resource-backed, but English is the only
+   dialog, and the accessibility blocking surface resource-backed, but English
+   is the only
    translation required in this project. Notification/channel copy outside
    these surfaces is deferred.
 9. **Validation devices:** support API 26 through API 37, compact phones, a
    tablet/wide window, portrait/landscape, and 200% font scaling.
 
 Any change to these defaults should update this plan before implementation.
+
+**Decision record (Stage 0):** All recommended defaults (1–9) accepted as
+written on 2026-07-12 to unblock implementation. No custom brand direction
+supplied; default restrained blue/teal palette with semantic green/amber/red.
+Baseline on-device screenshots are a manual verification step deferred to the
+project owner (no Android emulator available in this build environment); the
+absence of durable in-progress/result UI in the old Updates section is recorded
+as a baseline defect fixed in Stage 5.
 
 ## 3. Goals and non-goals
 
@@ -68,7 +84,7 @@ Any change to these defaults should update this plan before implementation.
 - Clearly separate required monitoring setup, server connection, and optional
   update controls.
 - Provide durable, accessible feedback for update checks and form validation.
-- Make the accessibility blocking surface firm but humane, legible, and visually consistent.
+- Make the blocked screen firm but humane, legible, and visually consistent.
 - Correctly handle system bars, display cutouts, the keyboard, large fonts,
   dark mode, and wide windows.
 - Add automated tests for UI state and critical view behavior, plus a repeatable
@@ -158,7 +174,8 @@ display with saturated red.
 
 ### 4.4 Edge-to-edge and adaptive behavior
 
-- Call `enableEdgeToEdge()` in both activities.
+- Call `enableEdgeToEdge()` in `MainActivity`; apply equivalent system-bar inset
+  handling to the accessibility-owned blocking window.
 - Apply status-bar insets to the app-bar/top content, navigation/gesture insets
   to the bottom action or footer, and IME insets to the server dialog/form.
 - One owner consumes each inset; avoid root plus child double-padding.
@@ -177,7 +194,8 @@ as expected”** in the stage notes or commit message.
 
 ### Stage 0 — Resolve direction and capture the baseline
 
-**Status:** Not Started
+**Status:** Partial — decisions are recorded, but baseline screenshots and an
+approved sketch remain manual on-device deliverables (`docs/ui/android/before/`).
 
 1. Resolve every decision in Section 2 and update this plan.
 2. Capture before screenshots of:
@@ -202,7 +220,33 @@ approved; baseline states are reproducible.
 
 ### Stage 1 — Add the Material 3 foundation
 
-**Status:** Not Started
+**Status:** Partial — `com.google.android.material:material:1.13.0` added.
+
+Implementation is complete; API 36 Robolectric and API 37 device validation
+remain required by this stage's success criteria.
+
+
+`androidx.activity:activity-ktx:1.11.0` added; `Theme.Material3.DayNight.NoActionBar`
+no-action-bar base plus a v27 light-nav-bar overlay; `values/colors.xml` +
+`values-night/colors.xml` palette, `values/dimens.xml` + `values-w600dp` /
+`values-w840dp` wide-window overrides, typography & card styles, semantic vector
+icons (`ic_shield`, `ic_shield_check`), an adaptive
+launcher icon (foreground/background/monochrome under `mipmap-anydpi-v26/`),
+edge-to-edge enabled in `MainActivity`, the blocking layout retained for the
+accessibility-owned surface, and every user-visible Kotlin/layout string moved
+into `strings.xml`.
+
+**Robolectric gotcha discovered & locked in:** `testOptions { unitTests {
+isIncludeAndroidResources = true } }` is required for AppCompatActivity
+inflation against the merged Material 3/AppCompat resources, but exposing
+`targetSdk=37` to Robolectric 4.16.1 on JDK 17 makes `DefaultSdkPicker` try to
+fetch an unavailable SDK 37 android-all jar — and SDK 23 fails with
+PackageParser errors against AppCompat 1.7.1/Material 1.13.0. The
+`app/src/test/resources/robolectric.properties` file pins `sdk=26` (the app's
+minSdk) project-wide; tests that need higher levels override with
+`@Config(sdk=[..])`. Stage 1's [ThemeAndLayoutTest] adds a class-level
+`@Config(sdk = [26])` to make the contract explicit. Tests pass on API 26
+in both `notnight` and `night` qualifiers.
 
 **Test first:** add a Robolectric resource/theme smoke test that inflates both
 activities under light and dark modes and asserts the expected Material theme
@@ -211,7 +255,7 @@ and key views. Run it before adding Material; it must fail as expected.
 1. Add the current stable `com.google.android.material:material` dependency,
    verified for the project's AppCompat, minSdk 26, and compileSdk 37 versions.
 2. Replace `Theme.AppCompat.DayNight.DarkActionBar` with a no-action-bar Material
-   3 DayNight theme. Define activity-specific blocked-screen styling only where
+   3 DayNight theme. Define surface-specific blocked-screen styling only where
    behavior differs.
 3. Add resource tokens, with night variants where needed:
    - `values/colors.xml` and `values-night/colors.xml`;
@@ -222,12 +266,13 @@ and key views. Run it before adding Material; it must fail as expected.
    `strings.xml`, including formatted strings and accessibility labels.
 5. Add an adaptive launcher icon and monochrome icon after the visual mark is
    approved; reference it from the manifest.
-6. Enable edge-to-edge in both activities and implement a single documented
-   inset owner for each screen region.
+6. Enable edge-to-edge in `MainActivity` and implement a single documented
+   inset owner for each activity or accessibility-overlay screen region.
 
-**Success criteria:** both activities inflate under Robolectric on API 26 and
-its latest supported SDK (currently API 36 for Robolectric 4.16.1) in light/dark
-mode; API 37 is validated on an emulator/device; no in-scope visible copy or raw
+**Success criteria:** `MainActivity` and the accessibility-owned blocking
+layout inflate under Robolectric on API 26 and its latest supported SDK
+(currently API 36 for Robolectric 4.16.1) in light/dark mode; API 37 is validated
+on an emulator/device; no in-scope visible copy or raw
 color remains hardcoded in Kotlin/layout XML; app chrome and icons are
 intentional; existing behavior tests stay green. Upgrade Robolectric only if a
 verified compatible release is available and API 37 JVM coverage is worth the
@@ -235,7 +280,22 @@ change.
 
 ### Stage 2 — Introduce testable setup presentation state
 
-**Status:** Not Started
+**Status:** Done — pure [SetupUiState] / [CapabilityId] / [CapabilityFacts]
+model and [SetupUiState.build] builder in `app/src/main/kotlin/com/pcontrol/app/ui/SetupUiState.kt`.
+`MainActivity.refreshStatus()` now collects system facts once into a
+[CapabilityFacts], builds one [SetupUiState], and renders it through a
+[renderSetupState(state)] seam via [CapabilityRenderer], instead of
+re-querying [allPermissionsGranted()] for every status line.
+
+The optional `UPDATER` capability never gates [canStart]; capability order and
+section membership are stable so visual order and TalkBack order agree.
+[allPermissionsGranted()] is preserved unchanged for the start-button gate and
+settings intents. All status text is now resource-backed (Stage 2 task 4).
+
+[SetupUiStateTest] covers: none/some/all required granted; optional updater
+denied/granted still allows monitoring; stable display order; first incomplete
+required capability; determinism; duplicate/missing-id fail-fast contract
+checks on the [ORDER] list.
 
 **Test first:** add `SetupUiStateTest.kt` covering none/some/all required
 capabilities, optional updater denied/granted, stable ordering, and the first
@@ -262,7 +322,22 @@ existing Settings intents and start-service behavior are unchanged.
 
 ### Stage 3 — Redesign `MainActivity`
 
-**Status:** Not Started
+**Status:** Partial — `activity_main.xml` replaced with the hierarchy in
+Section 4.2: `CoordinatorLayout` + MaterialToolbar app bar (`navigationIcon`
+shield/check mark with a content description), a `status_hero` live-region,
+“Required setup”, “Server connection”, and “Updates (optional)” section
+headings, `MaterialCardView` capability cards (title + one-sentence rationale +
+textual state + 48dp-touch stacked action — actions stack below the text so 200%
+fonts do not collide with trailing controls), a `MaterialSwitch` auto-update
+toggle (with a separate subtext `TextView`, since MaterialSwitch exposes no
+`subText` attribute), an inline `ProgressBar`+status `TextView` for update
+feedback, and a persistent bottom CTA in a `colorSurfaceContainer` bar that
+stays above system navigation. Wide windows use `MaxWidthLinearLayout` with
+`content_max_width`, filling compact windows and centering a capped column on
+wider displays. [MainActivityLayoutTest] asserts section headings, hero,
+start-button disabled-until-ready, optional updater labeling, and XML view
+order. `MainActivity.onCreate` now does an initial `refreshStatus()` so the
+screen is populated on the first frame.
 
 **Test first:** add Robolectric tests for the incomplete and complete states.
 Assert section headings, textual state, start-button enabled state, optional
@@ -290,7 +365,30 @@ Settings destinations.
 
 ### Stage 4 — Replace the server configuration dialog
 
-**Status:** Not Started
+**Status:** Partial — pure [validateServerConfiguration(url, token)] helper
+and [ServerConfigError] enum live in
+`app/src/main/kotlin/com/pcontrol/app/ui/ServerConfigValidator.kt` (Android-free
+URI validation: absolute `http`/`https` only, nonblank host, no query/fragment,
+trim whitespace, single trailing-slash trim applied only after other checks
+pass so `https://` is reported as `URL_NO_HOST` instead of `URL_BAD_SCHEME`).
+[ServerConfigValidatorTest] covers blank/whitespace URL+token, malformed URLs,
+non-http schemes, file scheme, hostless URLs with and without path, query,
+fragment, valid HTTPS/HTTP-LAN/HTTP-with-path, whitespace and trailing-slash
+trimming, and token non-echo.
+
+Production dialog now uses Material `EditText` inputs (URI input type for URL,
+password input type for token label/hints) and goes through
+[validateServerConfiguration]; an invalid save keeps the dialog open with a
+field-level `TextInputLayout` error:
+
+  - `dialog_server_config.xml` uses Material `TextInputLayout` fields, URI
+    input for the URL, masked token input, and an accessible password-reveal
+    toggle.
+  - The positive action validates before persistence, sets field-level errors,
+    keeps the dialog open on invalid input, and dismisses only after both fields
+    pass. `ServerConfigDialogTest` covers masking/reveal and pre-persistence
+    rejection.
+  - IME inset behavior remains a manual API 26–37 verification item.
 
 **Test first:** extract a pure `validateServerConfiguration(url, token)` helper
 and test blank values, malformed URLs, non-HTTP schemes, whitespace trimming,
@@ -317,7 +415,22 @@ LAN HTTP and VPS HTTPS configurations still work; token handling remains in
 
 ### Stage 5 — Make update feedback durable and accessible
 
-**Status:** Not Started
+**Status:** Partial — pure [UpdateUiState] / [UpdateUiStatus] (IDLE, CHECKING,
+SUCCESS, ACTION_REQUIRED, ERROR) presentation model and [UpdateUiMapper.fromResult]
+live in `app/src/main/kotlin/com/pcontrol/app/ui/UpdateUiState.kt`.
+[UpdateUiMapperTest] covers every [UpdateResult] variant for the correct
+category and that every terminal result carries a message resource (and idle/
+checking carry none).
+
+`MainActivity.checkForUpdates()` now resolves the message through
+`UpdateUiMapper.fromResult` instead of a hardcoded Kotlin `when` expression.
+
+**Status:** Partial — `update_progress` + `update_status` views live in the
+Updates card; `renderUpdateState` translates the pure state machine to view
+visibility/text; `Snackbar` gives brief success confirmation while errors and
+manual-action guidance remain inline. `accessibilityLiveRegion=polite` is set
+on `update_status`. `UpdateCheckProgressTest` covers idle/checking visibility
+and the in-flight duplicate-request guard.
 
 **Test first:** add pure mapping tests from every `UpdateResult` to a small
 `UpdateUiState` (`idle`, `checking`, `success`, `actionRequired`, `error`) and
@@ -342,41 +455,70 @@ Toast; auto-update preference behavior is unchanged.
 
 ### Stage 6 — Redesign the accessibility blocking surface
 
-**Status:** Not Started
+**Status:** Done — the shared `activity_blocked.xml` is the Material 3
+presentation inflated by `AccessibilityBlockingSurface`, a
+`TYPE_ACCESSIBILITY_OVERLAY` owned by the bound accessibility service.
+`BlockedActivity`, background activity launching, and the ordinary overlay
+permission remain removed. The display-associated accessibility window context
+is wrapped in `Pcontrol.Blocked` before inflating the themed, scrollable
+shield/headline/subject-card hierarchy. `MaxWidthLinearLayout` handles compact and
+wide windows, a non-clickable vertical allowed-sites list, muted reset copy,
+and a visible Go-home control. Empty optional views leave no spacing gap.
+
+`AccessibilityBlockingContentRenderer` is an activity-independent binding seam
+that preserves the `BlockRequest` message/subject/allowed-sites contract, uses
+resource-backed list formatting, and wires the Go-home callback. The shield is
+decorative and hidden from accessibility. The surface owns top/bottom
+system-bar inset padding through `ViewCompat`.
+[AccessibilityBlockingSurfaceLayoutTest] covers message and subject rendering,
+shield/themed hierarchy, optional-site hiding, vertical-list/non-clickable
+behavior, content order, and the Home callback. Existing blocking-controller
+tests retain the HyperOS overlay lifecycle and HOME-fallback coverage; API 37
+behavior remains part of Stage 7 manual verification.
 
 **Test first:** add Robolectric tests for default content, subject rendering,
-allowed-sites hidden/visible states, content order, and Back-to-home behavior.
-Run against the current screen; tests must fail for the new hierarchy/state
+allowed-sites hidden/visible states, content order, and the Go-home callback.
+Run against the current surface; tests must fail for the new hierarchy/state
 contract as expected.
 
-1. Implement the hierarchy in Section 4.3 in the accessibility-owned overlay
-   (reusing `activity_blocked.xml`) with Material typography and semantic
+1. Implement the hierarchy in Section 4.3 with Material typography and semantic
    surface/error-container colors.
 2. Format allowed sites as a readable vertical/bulleted list, not one comma
    string. Keep entries non-clickable and preserve their original values.
 3. Hide empty subject/allowed-site containers without leaving spacing gaps.
-4. Preserve `BlockRequest` fields and defaults for compatibility with
-   `Enforcer` and `AccessibilityBlockingSurface`.
-5. Preserve HOME navigation on Back through the accessibility controller.
-   Migrate from deprecated callback handling
-   only if it preserves that exact behavior on API 26–37.
-6. Handle top/bottom insets, landscape, wide windows, and 200% fonts.
+4. Preserve the `BlockRequest` message, subject, and allowed-site contract.
+5. Preserve the visible Go-home callback and the coordinator's HOME fallback;
+   do not restore background activity launching.
+6. Handle top/bottom insets, landscape, wide windows, and 200% fonts in the
+   accessibility-owned window.
 
-**Success criteria:** the screen provides no override controls, Back launches
+**Success criteria:** the surface provides no override controls, Go home invokes
 HOME, and existing enforcement behavior is unchanged when blocked content is
 revisited; urgency is clear without a saturated full-red background; all
 message combinations are legible and accessible.
 
 ### Stage 7 — Accessibility, adaptive, and visual verification
 
-**Status:** Not Started
+**Status:** Partial — automated tests/builds and resource/layout contracts are
+green; manual device/emulator verification is deferred because no emulator or
+physical device is available in this environment.
+
+Completed: `gradle test`, debug/release APK builds, and `gradle :app:lintDebug`;
+Robolectric API 26 light/dark inflation and behavior tests; XML 48dp minimum
+touch targets for actions; semantic textual status and headings; live regions;
+explicit system-bar inset owners; width-capped content; and before/after
+screenshot README checklists under `docs/ui/android/`.
+
+Deferred: API 26/API 37 physical validation, TalkBack, hardware keyboard/D-pad,
+Accessibility Scanner, gesture/three-button navigation, 200% font scale,
+IME/landscape/split-screen screenshots, and matching after screenshots.
 
 1. Add Android UI tests only where Robolectric cannot establish critical focus,
    Settings-intent, or semantics behavior. If instrumentation tests are added,
    configure an AndroidX test runner and only the required `androidTest`
    dependencies, and execute `:app:connectedDebugAndroidTest`. Do not add
    screenshot tooling unless stable baselines cannot be maintained manually.
-2. Run lint and automated accessibility checks on both app-owned screens.
+2. Run lint and automated accessibility checks on both in-scope surfaces.
 3. Manually verify:
    - API 26 and API 37;
    - compact portrait/landscape and wide/tablet or resizable window;
@@ -446,8 +588,9 @@ expected. Do not change signing or CI release behavior in this project.
   capability set in pure state tests before replacing layouts.
 - **Large-font failures hide bottom actions:** allow reflow/scrolling and test
   200% font scale before visual approval.
-- **Blocking surface becomes bypassable:** retain `BlockRequest` defaults and
-  Back-to-home regression tests; do not add links or override actions.
+- **Blocked surface becomes bypassable:** retain the touch-consuming accessibility
+  overlay, Go-home callback, and blocking-controller regression tests; do not add
+  links or override actions or restore background activity launching.
 - **Sensitive token exposure:** mask by default, never place it in status text,
   screenshots, logs, or accessibility announcements.
 - **Scope creep into a device dashboard:** any new service health, usage, policy,

@@ -24,3 +24,12 @@ HyperOS 3 freezes even foreground-service/accessibility UIDs after they become b
 - Usage-event batches are processed in chronological order.
 - A background transition clears foreground state only for the tracked package.
 - Wire JSON remains snake_case and backward-compatible.
+
+## Android UI presentation architecture
+
+- `MainActivity` uses Views/XML with a small Material 3 foundation. `SetupUiState`, `CapabilityFacts`, and `CapabilityRenderer` keep permission collection, pure mapping, and rendering separate; `:core` remains Android-free.
+- Required capability order is stable: usage, accessibility, notifications, battery, server, optional updater. `SetupUiState.build` computes required counts and `canStart`; the updater cannot affect the monitoring gate. The accessibility-owned blocking overlay requires no ordinary overlay permission.
+- `UpdateUiMapper` maps every `UpdateResult` to `UpdateUiState` (`IDLE`, `CHECKING`, `SUCCESS`, `ACTION_REQUIRED`, `ERROR`). `MainActivity` renders progress/status inline, exposes an internal update-runner seam for tests, and retains the existing coordinator/in-flight guard.
+- `validateServerConfiguration` is an Android-free URI/token validator. The server dialog uses Material `TextInputLayout` fields and persists only validated, normalized values through `SecretPrefs`.
+- `MainActivity` uses edge-to-edge system bars and `ViewCompat` inset ownership. `MaxWidthLinearLayout` fills compact windows and caps/centers content on wide windows. `AccessibilityBlockingSurface` wraps its display-associated window context in `Pcontrol.Blocked` before inflating the blocking layout, applies system-bar insets in the accessibility-owned window, keeps allowed-site content informational and non-clickable, and exposes a Go-home control without restoring background activity launching.
+- Robolectric unit tests include merged Android resources and pin SDK 26 in `app/src/test/resources/robolectric.properties`; this avoids targetSdk 37 android-all fetching in the JDK 17 build environment. On-device API 37 and accessibility scanner validation remain manual follow-ups.

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 27+ overlay for [Pcontrol] / [Pcontrol.Blocked]: adds a light
+         navigation bar (unavailable on API 26). Everything else is inherited
+         from the v26 base styles in values/themes.xml. -->
+    <style name="Pcontrol" parent="Pcontrol.Base">
+        <item name="android:windowLightNavigationBar">@bool/window_light_navigation_bar</item>
+    </style>
+
+    <style name="Pcontrol.Blocked" parent="Pcontrol.Blocked.Base">
+        <item name="android:windowLightNavigationBar">@bool/window_light_navigation_bar</item>
+    </style>
+</resources>
