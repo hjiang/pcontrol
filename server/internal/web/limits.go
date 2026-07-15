@@ -200,7 +200,7 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 			return
 		}
 
-			// Verify device exists before any writes.
+		// Verify device exists before any writes.
 		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.Error(w, "device not found", http.StatusNotFound)

@@ -81,15 +81,15 @@ type exclusionRow struct {
 }
 
 type limitsData struct {
-	ID              int64
-	Name            string
-	TotalLimitText  string
-	WarnPct         int
-	HasTotalLimit   bool
-	TotalLimitMin   int
-	Limits          []limitRow
-	Exclusions      []exclusionRow
-	Subjects        []subjectOption
+	ID             int64
+	Name           string
+	TotalLimitText string
+	WarnPct        int
+	HasTotalLimit  bool
+	TotalLimitMin  int
+	Limits         []limitRow
+	Exclusions     []exclusionRow
+	Subjects       []subjectOption
 }
 
 type subjectOption struct {
@@ -123,14 +123,14 @@ type MinimalLayouter interface {
 	MinimalLayout() bool
 }
 
-func (dashboardData) PageTitle() string     { return "pcontrol — Devices" }
+func (dashboardData) PageTitle() string      { return "pcontrol — Devices" }
 func (d deviceDetailData) PageTitle() string { return "pcontrol — " + d.Name }
-func (d limitsData) PageTitle() string      { return "pcontrol — Limits · " + d.Name }
-func (loginData) PageTitle() string         { return "pcontrol — Sign in" }
+func (d limitsData) PageTitle() string       { return "pcontrol — Limits · " + d.Name }
+func (loginData) PageTitle() string          { return "pcontrol — Sign in" }
 func (d registerData) PageTitle() string {
 	if d.Success {
 		return "pcontrol — Device Registered"
 	}
 	return "pcontrol — Register Device"
 }
-func (loginData) MinimalLayout() bool       { return true }
+func (loginData) MinimalLayout() bool { return true }
