@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-
-	"pcontrol/server/internal/domain"
 )
 
 func (h *webAuthHandler) limitsPage() http.HandlerFunc {
@@ -224,12 +222,22 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 		if isHTMX(r) {
 			// Re-fetch policy for updated values.
 			policy, err := h.store.GetPolicy(deviceID)
-			if err != nil {
-				policy = domain.Policy{}
-			}
 			totalText := "none"
-			if policy.TotalDailyLimitMin != nil {
-				totalText = fmt.Sprintf("%d minutes", *policy.TotalDailyLimitMin)
+			warnPct := 90 // default
+			if err != nil {
+				log.Printf("re-fetch policy after settings update: %v", err)
+				// Fall back to the values that were just submitted.
+				if totalStr != "" {
+					totalText = totalStr + " minutes"
+				}
+				if warnStr != "" {
+					warnPct = parseInt(warnStr)
+				}
+			} else {
+				if policy.TotalDailyLimitMin != nil {
+					totalText = fmt.Sprintf("%d minutes", *policy.TotalDailyLimitMin)
+				}
+				warnPct = policy.WarnThresholdPercent
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			fmt.Fprintf(w, `<div class="card" id="daily-limit-card">
@@ -244,7 +252,7 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
     </form>
   </details>
 </div>`,
-				htmlEsc(totalText), policy.WarnThresholdPercent, deviceID, policy.WarnThresholdPercent)
+				htmlEsc(totalText), warnPct, deviceID, warnPct)
 			return
 		}
 
