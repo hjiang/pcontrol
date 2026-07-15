@@ -136,6 +136,7 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 				}
 			}
 			if len(top) > 5 {
+				entry.HasMoreEntries = true
 				top = top[:5]
 			}
 			entry.TopEntries = top

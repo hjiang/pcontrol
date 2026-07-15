@@ -18,6 +18,7 @@ type dashboardDeviceEntry struct {
 	BatteryCharging bool
 	BatteryLow      bool
 	TopEntries      []topEntry
+	HasMoreEntries  bool
 }
 
 type topEntry struct {
