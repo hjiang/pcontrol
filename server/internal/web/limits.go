@@ -213,9 +213,9 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 
 		totalStr := r.FormValue("total")
 		if totalStr != "" {
-			total := parseInt(totalStr)
-			if total < 1 {
-				http.Error(w, "total limit must be at least 1", http.StatusBadRequest)
+			total, ok := parseIntStrict(totalStr)
+			if !ok || total < 1 {
+				http.Error(w, "total limit must be a positive integer", http.StatusBadRequest)
 				return
 			}
 			if err := h.store.SetTotalLimit(deviceID, &total); err != nil {
@@ -231,9 +231,9 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 
 		warnStr := r.FormValue("warn")
 		if warnStr != "" {
-			warn := parseInt(warnStr)
-			if warn < 1 || warn > 100 {
-				http.Error(w, "warn percent must be between 1 and 100", http.StatusBadRequest)
+			warn, ok := parseIntStrict(warnStr)
+			if !ok || warn < 1 || warn > 100 {
+				http.Error(w, "warn percent must be a number between 1 and 100", http.StatusBadRequest)
 				return
 			}
 			if err := h.store.SetWarnPercent(deviceID, warn); err != nil {
