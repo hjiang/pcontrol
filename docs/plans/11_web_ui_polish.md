@@ -642,7 +642,7 @@ CI: Push a branch and verify GitHub Actions passes (server-tests.yml).
 
 | File | Reason |
 |---|---|
-| `auth.go`, `limits.go`, `router.go` | Logic unchanged; only templates change |
+| `router.go` | Logic unchanged; only templates change |
 | `static/` | No new static assets added (favicon is inline data URI) |
 | `store/`, `api/`, `domain/` | Backend unchanged |
 
