@@ -59,7 +59,7 @@ consistent with this document and with the existing code.
 (variables), consistent spacing, and a polished shell (nav, footer, card
 styling).
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 1.1 CSS custom properties + reset
 
@@ -143,7 +143,7 @@ Verify consistent look across all pages: cards, buttons, inputs, nav, footer.
 **Goal**: The main dashboard (`/`) becomes a polished, informative overview
 that makes device status immediately scannable.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 2.1 Page header
 
@@ -222,7 +222,7 @@ not CSS classes, so they should be robust).
 **Goal**: `/devices/{id}` provides a clear, information-dense view of a single
 device's activity with intuitive navigation.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 3.1 Page header
 
@@ -296,7 +296,7 @@ Existing tests in dashboard_test.go must still pass.
 **Goal**: `/devices/{id}/limits` feels like a proper settings panel with clear
 feedback and organization.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 4.1 Layout reorganization
 
@@ -384,7 +384,7 @@ Existing tests in limits_test.go must still pass.
 **Goal**: Login and device registration are the first things a user sees;
 they should feel intentional and polished.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 5.1 Login page redesign
 
@@ -467,7 +467,7 @@ Existing tests must pass.
 **Goal**: The dashboard is usable on a phone browser (parent checking on the
 go) and on tablet/desktop.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 6.1 Responsive breakpoints
 
@@ -522,7 +522,7 @@ Manual: Resize browser to 375px, 768px, 1024px widths. Verify:
 
 **Goal**: Address basic a11y concerns and add final polish details.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### 7.1 Skip link
 

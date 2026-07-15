@@ -177,6 +177,7 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 			return
 		}
 
+		w.Header().Set("Cache-Control", "no-store")
 		if err := renderPage(w, "register.gohtml", registerData{Success: true, DeviceName: dev.Name, Token: rawToken, DeviceID: dev.ID}); err != nil {
 			log.Printf("render register success: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
