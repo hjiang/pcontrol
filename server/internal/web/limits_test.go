@@ -224,6 +224,64 @@ func TestLimitsPage_SetTotalLimitAndWarn(t *testing.T) {
 	}
 }
 
+func TestLimitsPage_SetTotalLimitAndWarn_HTMX(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Set total limit and warn percent via HTMX
+	settingsBody := "total=120&warn=80"
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/settings", dev.ID), strings.NewReader(settingsBody))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for HTMX settings update, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Should return the daily-limit-card fragment
+	if !strings.Contains(body, `id="daily-limit-card"`) {
+		t.Error("expected daily-limit-card fragment in HTMX response")
+	}
+
+	// Should reflect updated values
+	if !strings.Contains(body, "120 minutes") {
+		t.Error("expected '120 minutes' in HTMX response")
+	}
+	if !strings.Contains(body, "warn at 80%") {
+		t.Error("expected 'warn at 80%' in HTMX response")
+	}
+
+	// Should include updated warn value in the input
+	if !strings.Contains(body, `value="80"`) {
+		t.Error("expected warn input with value=80 in HTMX response")
+	}
+
+	// Verify through store that values were persisted
+	policy, err := s.GetPolicy(dev.ID)
+	if err != nil {
+		t.Fatalf("GetPolicy: %v", err)
+	}
+	if policy.TotalDailyLimitMin == nil || *policy.TotalDailyLimitMin != 120 {
+		t.Errorf("expected total limit 120, got %v", policy.TotalDailyLimitMin)
+	}
+	if policy.WarnThresholdPercent != 80 {
+		t.Errorf("expected warn percent 80, got %d", policy.WarnThresholdPercent)
+	}
+}
+
 func TestLimitsPage_ClearTotalLimit(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")

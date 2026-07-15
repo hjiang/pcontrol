@@ -234,7 +234,7 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			fmt.Fprintf(w, `<div class="card" id="daily-limit-card">
   <h2>Daily Limit</h2>
-  <p><strong>Total limit:</strong> %s (warn at %d)</p>
+  <p><strong>Total limit:</strong> %s (warn at %d%%)</p>
   <details>
     <summary style="cursor:pointer;color:var(--primary);font-weight:500">✏️ Edit</summary>
     <form hx-post="/devices/%d/settings" hx-target="#daily-limit-card" hx-swap="outerHTML" style="margin-top:0.5rem">
