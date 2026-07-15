@@ -81,13 +81,15 @@ type exclusionRow struct {
 }
 
 type limitsData struct {
-	ID             int64
-	Name           string
-	TotalLimitText string
-	WarnPct        int
-	Limits         []limitRow
-	Exclusions     []exclusionRow
-	Subjects       []subjectOption
+	ID              int64
+	Name            string
+	TotalLimitText  string
+	WarnPct         int
+	HasTotalLimit   bool
+	TotalLimitMin   int
+	Limits          []limitRow
+	Exclusions      []exclusionRow
+	Subjects        []subjectOption
 }
 
 type subjectOption struct {

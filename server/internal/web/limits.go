@@ -45,6 +45,10 @@ func (h *webAuthHandler) limitsPage() http.HandlerFunc {
 			WarnPct:        policy.WarnThresholdPercent,
 			Subjects:       make([]subjectOption, 0, len(subjects)),
 		}
+		if policy.TotalDailyLimitMin != nil {
+			data.HasTotalLimit = true
+			data.TotalLimitMin = *policy.TotalDailyLimitMin
+		}
 
 		for _, l := range policy.Limits {
 			data.Limits = append(data.Limits, limitRow{
@@ -239,8 +243,16 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 				}
 				warnPct = policy.WarnThresholdPercent
 			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			cardData := limitsData{ID: deviceID, TotalLimitText: totalText, WarnPct: warnPct}
+			// Populate pre-fill fields for the total input.
+			if err == nil && policy.TotalDailyLimitMin != nil {
+				cardData.HasTotalLimit = true
+				cardData.TotalLimitMin = *policy.TotalDailyLimitMin
+			} else if err != nil && totalStr != "" {
+				cardData.HasTotalLimit = true
+				cardData.TotalLimitMin = parseInt(totalStr)
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := parsedTemplates.ExecuteTemplate(w, "daily_limit_card.gohtml", cardData); err != nil {
 				log.Printf("render daily-limit-card: %v", err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
