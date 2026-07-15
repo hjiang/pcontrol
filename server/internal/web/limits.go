@@ -240,19 +240,11 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 				warnPct = policy.WarnThresholdPercent
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprintf(w, `<div class="card" id="daily-limit-card">
-  <h2>Daily Limit</h2>
-  <p><strong>Total limit:</strong> %s (warn at %d%%)</p>
-  <details>
-    <summary style="cursor:pointer;color:var(--primary);font-weight:500">✏️ Edit</summary>
-    <form hx-post="/devices/%d/settings" hx-target="#daily-limit-card" hx-swap="outerHTML" style="margin-top:0.5rem">
-      <label>Total daily limit (minutes, leave empty for none): <input name="total" type="number" min="1"></label>
-      <label>Warn at percent: <input name="warn" type="number" min="1" max="100" value="%d"></label>
-      <button class="btn-primary">Save</button>
-    </form>
-  </details>
-</div>`,
-				htmlEsc(totalText), warnPct, deviceID, warnPct)
+			cardData := limitsData{ID: deviceID, TotalLimitText: totalText, WarnPct: warnPct}
+			if err := parsedTemplates.ExecuteTemplate(w, "daily_limit_card.gohtml", cardData); err != nil {
+				log.Printf("render daily-limit-card: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
 			return
 		}
 
