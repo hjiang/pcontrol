@@ -36,7 +36,9 @@ var parsedTemplates *template.Template
 // page-specific rendered HTML, which is injected verbatim (not escaped)
 // into the <main> element.
 type layoutData struct {
-	ContentHTML template.HTML
+	ContentHTML   template.HTML
+	MinimalLayout bool
+	Title         string
 }
 
 func init() {
@@ -56,8 +58,18 @@ func renderPage(w io.Writer, pageName string, data interface{}) error {
 		return fmt.Errorf("execute %s: %w", pageName, err)
 	}
 
+	// Extract title and minimal layout flag from data if supported.
+	title := "pcontrol"
+	minimal := false
+	if pt, ok := data.(PageTitler); ok {
+		title = pt.PageTitle()
+	}
+	if lm, ok := data.(MinimalLayouter); ok {
+		minimal = lm.MinimalLayout()
+	}
+
 	// Wrap in layout.
-	ld := layoutData{ContentHTML: template.HTML(buf.String())}
+	ld := layoutData{ContentHTML: template.HTML(buf.String()), Title: title, MinimalLayout: minimal}
 	if err := parsedTemplates.ExecuteTemplate(w, "layout.gohtml", ld); err != nil {
 		return fmt.Errorf("render layout: %w", err)
 	}

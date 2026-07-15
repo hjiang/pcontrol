@@ -99,3 +99,30 @@ type subjectOption struct {
 type loginData struct {
 	ErrorMsg string
 }
+
+// --- Register device view data ---
+
+type registerData struct {
+	Success    bool
+	DeviceName string
+	Token      string
+	DeviceID   int64
+}
+
+// PageTitler is implemented by view-model structs to customize the browser tab title.
+type PageTitler interface {
+	PageTitle() string
+}
+
+// MinimalLayouter is implemented by view-model structs that should suppress
+// the nav bar and footer in the layout.
+type MinimalLayouter interface {
+	MinimalLayout() bool
+}
+
+func (dashboardData) PageTitle() string     { return "pcontrol — Devices" }
+func (deviceDetailData) PageTitle() string   { return "pcontrol — Device" }
+func (limitsData) PageTitle() string        { return "pcontrol — Limits" }
+func (loginData) PageTitle() string         { return "pcontrol — Sign in" }
+func (registerData) PageTitle() string      { return "pcontrol — Register Device" }
+func (loginData) MinimalLayout() bool       { return true }

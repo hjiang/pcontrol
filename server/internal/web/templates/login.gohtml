@@ -1,6 +1,28 @@
-<h1>Login</h1>
-{{if .ErrorMsg}}<p style="color:red">{{.ErrorMsg}}</p>{{end}}
-<form action="/login" method="post">
-  <label>Password: <input type="password" name="password" required></label>
-  <button>Login</button>
-</form>
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center">
+  <div style="max-width:360px;width:100%">
+    <div style="margin-bottom:1.5rem">
+      <div style="font-size:2.5rem;margin-bottom:0.25rem">🛡️</div>
+      <h1 style="margin:0;font-size:1.5rem">pcontrol</h1>
+      <p class="text-muted text-sm">Parental Control Panel</p>
+    </div>
+
+    {{if .ErrorMsg}}
+    <div style="background:#fee2e2;color:#991b1b;padding:0.75rem;border-radius:var(--radius);margin-bottom:1rem;font-size:0.9rem;font-weight:500;border:1px solid #fca5a5">
+      {{.ErrorMsg}}
+    </div>
+    {{end}}
+
+    <div class="card-static" style="text-align:left;padding:1.5rem">
+      <form action="/login" method="post">
+        <div style="margin-bottom:1rem">
+          <label for="password">Password</label>
+          <div style="display:flex;gap:0.25rem">
+            <input id="password" type="password" name="password" required autocomplete="current-password" style="flex:1;width:100%">
+            <button type="button" onclick="var p=document.getElementById('password');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'👁️':'🙈'" style="flex-shrink:0;padding:0.5rem;font-size:1rem" title="Toggle password visibility">👁️</button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Sign in</button>
+      </form>
+    </div>
+  </div>
+</div>

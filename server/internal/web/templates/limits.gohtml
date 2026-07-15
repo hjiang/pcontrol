@@ -1,56 +1,72 @@
-<h1>Limits for device {{.ID}}</h1>
-<p><a href="/devices/{{.ID}}">Back to device</a></p>
+<div class="breadcrumb"><a href="/devices/{{.ID}}">← Back to device</a></div>
+<h1>Limits &amp; Exclusions</h1>
 
 <datalist id="subjects">
 {{range .Subjects}}<option value="{{.Value}}">{{.Label}}</option>
 {{end}}
 </datalist>
 
-<h2>Total daily limit: {{.TotalLimitText}} (warn at {{.WarnPct}}%)</h2>
+<div class="card">
+  <h2>Daily Limit</h2>
+  <p><strong>Total limit:</strong> {{.TotalLimitText}} (warn at {{.WarnPct}}%)</p>
+  <details>
+    <summary style="cursor:pointer;color:var(--primary);font-weight:500">✏️ Edit</summary>
+    <form action="/devices/{{.ID}}/settings" method="post" style="margin-top:0.5rem">
+      <label>Total daily limit (minutes, leave empty for none): <input name="total" type="number" min="1"></label>
+      <label>Warn at percent: <input name="warn" type="number" min="1" max="100" value="{{.WarnPct}}"></label>
+      <button class="btn-primary">Save</button>
+    </form>
+  </details>
+</div>
 
-<h3>Per-subject limits</h3>
-<table border="1" id="limits-table"><tr><th>Kind</th><th>Subject</th><th>Min/day</th><th></th></tr>
-<tbody id="limits-tbody">
-{{range .Limits}}
-<tr id="limit-{{.ID}}">
-  <td>{{.Kind}}</td><td>{{.Subject}}</td><td>{{.DailyLimitMinutes}}</td>
-  <td><button hx-post="/devices/{{$.ID}}/limits/{{.ID}}/delete" hx-target="#limit-{{.ID}}" hx-swap="outerHTML" class="btn-link">Delete</button></td>
-</tr>
-{{end}}
-</tbody>
-</table>
+<div class="card">
+  <h2>App &amp; Website Limits</h2>
+  <div class="table-wrapper">
+  <table class="table-styled" id="limits-table"><thead><tr><th>Kind</th><th>Subject</th><th>Min/day</th><th></th></tr></thead>
+  <tbody id="limits-tbody">
+  {{range .Limits}}
+  <tr id="limit-{{.ID}}">
+    <td>{{.Kind}}</td><td>{{.Subject}}</td><td>{{.DailyLimitMinutes}}</td>
+    <td><button hx-post="/devices/{{$.ID}}/limits/{{.ID}}/delete" hx-target="#limit-{{.ID}}" hx-swap="outerHTML" class="btn-link">Delete</button></td>
+  </tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
 
-<h3>Add limit</h3>
-<form id="add-limit-form" hx-post="/devices/{{.ID}}/limits" hx-target="#limits-tbody" hx-swap="beforeend" hx-on::after-request="if(event.detail.success) this.reset()">
-  <select name="kind"><option value="app">App</option><option value="web">Website</option></select>
-  <input name="subject" placeholder="com.example.app or domain.com" required list="subjects">
-  <input name="minutes" type="number" min="1" placeholder="Minutes" required>
-  <button>Add</button>
-</form>
+  <h3 style="margin-top:1rem">Add limit</h3>
+  <form id="add-limit-form" hx-post="/devices/{{.ID}}/limits" hx-target="#limits-tbody" hx-swap="beforeend" hx-on::after-request="if(event.detail.success) this.reset()" hx-indicator="#limit-spinner">
+    <select name="kind"><option value="app">App</option><option value="web">Website</option></select>
+    <input name="subject" placeholder="com.example.app or domain.com" required list="subjects">
+    <input name="minutes" type="number" min="1" placeholder="Minutes" required>
+    <button>Add</button>
+    <span id="limit-spinner" class="htmx-indicator spinner"></span>
+  </form>
+  <p class="text-muted text-sm">Start typing to see known apps and sites.</p>
+</div>
 
-<h3>Exclusions</h3>
-<p class="muted">Web exclusions: always allowed — usable even after the daily limit.</p>
-<table border="1" id="exclusions-table"><tr><th>Kind</th><th>Subject</th><th></th></tr>
-<tbody id="exclusions-tbody">
-{{range .Exclusions}}
-<tr id="exclusion-{{.ID}}">
-  <td>{{.Kind}}</td><td>{{.Subject}}</td>
-  <td><button hx-post="/devices/{{$.ID}}/exclusions/{{.ID}}/delete" hx-target="#exclusion-{{.ID}}" hx-swap="outerHTML" class="btn-link">Delete</button></td>
-</tr>
-{{end}}
-</tbody>
-</table>
+<div class="card">
+  <h2>Exclusions</h2>
+  <p class="text-muted text-sm">Web exclusions: always allowed — usable even after the daily limit.</p>
+  <div class="table-wrapper">
+  <table class="table-styled" id="exclusions-table"><thead><tr><th>Kind</th><th>Subject</th><th></th></tr></thead>
+  <tbody id="exclusions-tbody">
+  {{range .Exclusions}}
+  <tr id="exclusion-{{.ID}}">
+    <td>{{.Kind}}</td><td>{{.Subject}}</td>
+    <td><button hx-post="/devices/{{$.ID}}/exclusions/{{.ID}}/delete" hx-target="#exclusion-{{.ID}}" hx-swap="outerHTML" class="btn-link">Delete</button></td>
+  </tr>
+  {{end}}
+  </tbody>
+  </table>
+  </div>
 
-<h3>Add exclusion</h3>
-<form id="add-exclusion-form" hx-post="/devices/{{.ID}}/exclusions" hx-target="#exclusions-tbody" hx-swap="beforeend" hx-on::after-request="if(event.detail.success) this.reset()">
-  <select name="kind"><option value="app">App</option><option value="web">Website</option></select>
-  <input name="subject" placeholder="com.example.app or domain.com" required list="subjects">
-  <button>Add</button>
-</form>
-
-<h2>Settings</h2>
-<form action="/devices/{{.ID}}/settings" method="post">
-  <label>Total daily limit (minutes, leave empty for none): <input name="total" type="number" min="1"></label><br>
-  <label>Warn at percent: <input name="warn" type="number" min="1" max="100" value="{{.WarnPct}}"></label><br>
-  <button>Save</button>
-</form>
+  <h3 style="margin-top:1rem">Add exclusion</h3>
+  <form id="add-exclusion-form" hx-post="/devices/{{.ID}}/exclusions" hx-target="#exclusions-tbody" hx-swap="beforeend" hx-on::after-request="if(event.detail.success) this.reset()" hx-indicator="#exclusion-spinner">
+    <select name="kind"><option value="app">App</option><option value="web">Website</option></select>
+    <input name="subject" placeholder="com.example.app or domain.com" required list="subjects">
+    <button>Add</button>
+    <span id="exclusion-spinner" class="htmx-indicator spinner"></span>
+  </form>
+  <p class="text-muted text-sm">Start typing to see known apps and sites.</p>
+</div>
