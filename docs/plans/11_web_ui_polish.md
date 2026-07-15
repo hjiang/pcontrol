@@ -584,7 +584,7 @@ Verify no violations at WCAG 2.1 AA.
 
 **Goal**: All existing tests pass; new tests cover changed behaviors.
 
-**Status**: In Progress
+**Status**: Complete
 
 ### 8.1 Update existing tests
 
