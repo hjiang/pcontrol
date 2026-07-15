@@ -1,4 +1,6 @@
-<h1>Register Device</h1>
+{{if .Success}}<h1>Device Registered</h1>
+{{else}}<h1>Register Device</h1>
+{{end}}
 {{if .Success}}
   <div class="card">
     <p>Device: <strong>{{.DeviceName}}</strong></p>

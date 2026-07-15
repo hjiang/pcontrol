@@ -1,6 +1,8 @@
 package web
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -27,7 +29,12 @@ func (h *webAuthHandler) limitsPage() http.HandlerFunc {
 
 		device, err := h.store.DeviceByTokenFromID(deviceID)
 		if err != nil {
-			http.Error(w, "device not found", http.StatusNotFound)
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+			} else {
+				log.Printf("device lookup: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
 			return
 		}
 

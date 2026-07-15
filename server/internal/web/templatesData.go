@@ -125,5 +125,10 @@ func (dashboardData) PageTitle() string     { return "pcontrol — Devices" }
 func (d deviceDetailData) PageTitle() string { return "pcontrol — " + d.Name }
 func (d limitsData) PageTitle() string      { return "pcontrol — Limits · " + d.Name }
 func (loginData) PageTitle() string         { return "pcontrol — Sign in" }
-func (registerData) PageTitle() string      { return "pcontrol — Register Device" }
+func (d registerData) PageTitle() string {
+	if d.Success {
+		return "pcontrol — Device Registered"
+	}
+	return "pcontrol — Register Device"
+}
 func (loginData) MinimalLayout() bool       { return true }

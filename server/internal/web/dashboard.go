@@ -135,8 +135,8 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 					top[j], top[j-1] = top[j-1], top[j]
 				}
 			}
-			if len(top) > 3 {
-				top = top[:3]
+			if len(top) > 5 {
+				top = top[:5]
 			}
 			entry.TopEntries = top
 

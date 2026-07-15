@@ -37,6 +37,60 @@ func TestDashboard_NoDevices(t *testing.T) {
 	}
 }
 
+func TestRegisterDevice_SuccessScreen(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	body := "name=gaming-pc"
+	req := httptest.NewRequest(http.MethodPost, "/devices/new", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after device registration, got %d", rec.Code)
+	}
+
+	resp := rec.Body.String()
+
+	// Success heading
+	if !strings.Contains(resp, "Device Registered") {
+		t.Error("expected 'Device Registered' heading on success")
+	}
+
+	// Device name shown
+	if !strings.Contains(resp, "gaming-pc") {
+		t.Error("expected device name on success screen")
+	}
+
+	// Bearer token should be rendered as a <code> block
+	if !strings.Contains(resp, "<code>") {
+		t.Error("expected bearer token in <code> block on success")
+	}
+
+	// Copy warning
+	if !strings.Contains(resp, "copy now") && !strings.Contains(resp, "will not be shown again") {
+		t.Error("expected copy warning text on success screen")
+	}
+
+	// Action links
+	if !strings.Contains(resp, "View device") {
+		t.Error("expected 'View device' link on success screen")
+	}
+	if !strings.Contains(resp, "Back to dashboard") {
+		t.Error("expected 'Back to dashboard' link on success screen")
+	}
+
+	// Page title
+	if !strings.Contains(resp, "<title>pcontrol — Device Registered</title>") {
+		t.Error("expected page title 'pcontrol — Device Registered'")
+	}
+}
+
 func TestDashboard_WithDevice(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
