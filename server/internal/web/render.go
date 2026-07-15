@@ -60,6 +60,11 @@ func init() {
 // renderPage renders the named page template with data, wraps it in the
 // layout, and writes the result to w.
 func renderPage(w io.Writer, pageName string, data interface{}) error {
+	// Set Content-Type when writing to an http.ResponseWriter.
+	if rw, ok := w.(http.ResponseWriter); ok {
+		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+	}
+
 	// Render page content into a buffer.
 	var buf bytes.Buffer
 	if err := parsedTemplates.ExecuteTemplate(&buf, pageName, data); err != nil {

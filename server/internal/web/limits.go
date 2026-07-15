@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"pcontrol/server/internal/domain"
 )
 
 func (h *webAuthHandler) limitsPage() http.HandlerFunc {
@@ -217,6 +219,33 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		}
+
+		if isHTMX(r) {
+			// Re-fetch policy for updated values.
+			policy, err := h.store.GetPolicy(deviceID)
+			if err != nil {
+				policy = domain.Policy{}
+			}
+			totalText := "none"
+			if policy.TotalDailyLimitMin != nil {
+				totalText = fmt.Sprintf("%d minutes", *policy.TotalDailyLimitMin)
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<div class="card" id="daily-limit-card">
+  <h2>Daily Limit</h2>
+  <p><strong>Total limit:</strong> %s (warn at %d)</p>
+  <details>
+    <summary style="cursor:pointer;color:var(--primary);font-weight:500">✏️ Edit</summary>
+    <form hx-post="/devices/%d/settings" hx-target="#daily-limit-card" hx-swap="outerHTML" style="margin-top:0.5rem">
+      <label>Total daily limit (minutes, leave empty for none): <input name="total" type="number" min="1"></label>
+      <label>Warn at percent: <input name="warn" type="number" min="1" max="100" value="%d"></label>
+      <button class="btn-primary">Save</button>
+    </form>
+  </details>
+</div>`,
+				htmlEsc(totalText), policy.WarnThresholdPercent, deviceID, policy.WarnThresholdPercent)
+			return
 		}
 
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d/limits", deviceID), http.StatusSeeOther)
