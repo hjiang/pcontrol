@@ -1,13 +1,13 @@
-<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center">
-  <div style="max-width:360px;width:100%">
+<div class="login-page">
+  <div class="login-box">
     <div style="margin-bottom:1.5rem">
-      <div style="font-size:2.5rem;margin-bottom:0.25rem">🛡️</div>
-      <h1 style="margin:0;font-size:1.5rem">pcontrol</h1>
+      <div class="login-icon">🛡️</div>
+      <h1 class="login-title">pcontrol</h1>
       <p class="text-muted text-sm">Parental Control Panel</p>
     </div>
 
     {{if .ErrorMsg}}
-    <div style="background:#fee2e2;color:#991b1b;padding:0.75rem;border-radius:var(--radius);margin-bottom:1rem;font-size:0.9rem;font-weight:500;border:1px solid #fca5a5">
+    <div class="alert-error">
       {{.ErrorMsg}}
     </div>
     {{end}}
@@ -16,12 +16,12 @@
       <form action="/login" method="post">
         <div style="margin-bottom:1rem">
           <label for="password">Password</label>
-          <div style="display:flex;gap:0.25rem">
-            <input id="password" type="password" name="password" required autocomplete="current-password" style="flex:1;width:100%">
+          <div class="input-row">
+            <input id="password" type="password" name="password" required autocomplete="current-password" class="input-grow">
             <button type="button" onclick="var p=document.getElementById('password');var isVisible=p.type==='text';p.type=isVisible?'password':'text';this.textContent=isVisible?'👁️':'🙈';this.setAttribute('aria-pressed',isVisible?'false':'true')" style="flex-shrink:0;padding:0.5rem;font-size:1rem" title="Toggle password visibility" aria-label="Toggle password visibility" aria-pressed="false">👁️</button>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Sign in</button>
+        <button type="submit" class="btn btn-primary btn-full">Sign in</button>
       </form>
     </div>
   </div>

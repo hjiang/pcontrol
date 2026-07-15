@@ -217,6 +217,10 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 		warnStr := r.FormValue("warn")
 		if warnStr != "" {
 			warn := parseInt(warnStr)
+			if warn < 1 || warn > 100 {
+				http.Error(w, "warn percent must be between 1 and 100", http.StatusBadRequest)
+				return
+			}
 			if err := h.store.SetWarnPercent(deviceID, warn); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -232,10 +236,16 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 				log.Printf("re-fetch policy after settings update: %v", err)
 				// Fall back to the values that were just submitted.
 				if totalStr != "" {
-					totalText = totalStr + " minutes"
+					totalVal := parseInt(totalStr)
+					if totalVal > 0 {
+						totalText = fmt.Sprintf("%d minutes", totalVal)
+					}
 				}
 				if warnStr != "" {
-					warnPct = parseInt(warnStr)
+					warnVal := parseInt(warnStr)
+					if warnVal >= 1 && warnVal <= 100 {
+						warnPct = warnVal
+					}
 				}
 			} else {
 				if policy.TotalDailyLimitMin != nil {
@@ -249,8 +259,11 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 				cardData.HasTotalLimit = true
 				cardData.TotalLimitMin = *policy.TotalDailyLimitMin
 			} else if err != nil && totalStr != "" {
-				cardData.HasTotalLimit = true
-				cardData.TotalLimitMin = parseInt(totalStr)
+				totalVal := parseInt(totalStr)
+				if totalVal >= 1 {
+					cardData.HasTotalLimit = true
+					cardData.TotalLimitMin = totalVal
+				}
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := parsedTemplates.ExecuteTemplate(w, "daily_limit_card.gohtml", cardData); err != nil {

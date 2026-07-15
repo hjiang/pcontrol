@@ -298,6 +298,36 @@
     margin: 0.75rem 0;
   }
 
+  /* ── Login page ── */
+  .login-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 80vh;
+    text-align: center;
+  }
+  .login-box { max-width: 360px; width: 100%; }
+  .login-icon { font-size: 2.5rem; margin-bottom: 0.25rem; }
+  .login-title { margin: 0; font-size: 1.5rem; }
+
+  /* ── Alert ── */
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem;
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    border: 1px solid #fca5a5;
+  }
+
+  /* ── Form utilities ── */
+  .input-row { display: flex; gap: 0.25rem; }
+  .input-grow { flex: 1; width: 100%; }
+  .btn-full { width: 100%; justify-content: center; }
+
   /* ── Breadcrumb ── */
   .breadcrumb { font-size: 0.9rem; margin-bottom: 0.5rem; }
   .breadcrumb a { color: var(--text-muted); text-decoration: none; }
