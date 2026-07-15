@@ -18,7 +18,7 @@
           <label for="password">Password</label>
           <div style="display:flex;gap:0.25rem">
             <input id="password" type="password" name="password" required autocomplete="current-password" style="flex:1;width:100%">
-            <button type="button" onclick="var p=document.getElementById('password');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'👁️':'🙈'" style="flex-shrink:0;padding:0.5rem;font-size:1rem" title="Toggle password visibility">👁️</button>
+            <button type="button" onclick="var p=document.getElementById('password');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'👁️':'🙈'" style="flex-shrink:0;padding:0.5rem;font-size:1rem" title="Toggle password visibility" aria-label="Toggle password visibility">👁️</button>
           </div>
         </div>
         <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Sign in</button>

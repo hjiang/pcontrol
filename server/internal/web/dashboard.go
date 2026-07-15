@@ -279,6 +279,7 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			ID:           deviceID,
 			Name:         device.Name,
 			Day:          day,
+			IsToday:      day == time.Now().UTC().Format("2006-01-02"),
 			TotalMinutes: int(totalMinutes),
 		}
 

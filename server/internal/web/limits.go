@@ -25,8 +25,15 @@ func (h *webAuthHandler) limitsPage() http.HandlerFunc {
 			totalText = fmt.Sprintf("%d minutes", *policy.TotalDailyLimitMin)
 		}
 
+		device, err := h.store.DeviceByTokenFromID(deviceID)
+		deviceName := "Device"
+		if err == nil {
+			deviceName = device.Name
+		}
+
 		data := limitsData{
 			ID:             deviceID,
+			Name:           deviceName,
 			TotalLimitText: totalText,
 			WarnPct:        policy.WarnThresholdPercent,
 			Subjects:       make([]subjectOption, 0, len(subjects)),

@@ -459,7 +459,4 @@ func TestDeviceDetail_ShowsDevicePage(t *testing.T) {
 	if !strings.Contains(body, "Manage limits") {
 		t.Error("expected 'Manage limits' link on device detail page")
 	}
-	if !strings.Contains(body, "Manage limits") && !strings.Contains(body, "Limits") {
-		t.Error("expected limits link on device detail page")
-	}
 }

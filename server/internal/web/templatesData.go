@@ -48,6 +48,7 @@ type deviceDetailData struct {
 	ID              int64
 	Name            string
 	Day             string
+	IsToday         bool
 	TotalMinutes    int
 	HasLimit        bool
 	LimitMin        int
@@ -82,6 +83,7 @@ type exclusionRow struct {
 
 type limitsData struct {
 	ID             int64
+	Name           string
 	TotalLimitText string
 	WarnPct        int
 	Limits         []limitRow
@@ -121,8 +123,8 @@ type MinimalLayouter interface {
 }
 
 func (dashboardData) PageTitle() string     { return "pcontrol — Devices" }
-func (deviceDetailData) PageTitle() string   { return "pcontrol — Device" }
-func (limitsData) PageTitle() string        { return "pcontrol — Limits" }
+func (d deviceDetailData) PageTitle() string { return "pcontrol — " + d.Name }
+func (d limitsData) PageTitle() string      { return "pcontrol — Limits · " + d.Name }
 func (loginData) PageTitle() string         { return "pcontrol — Sign in" }
 func (registerData) PageTitle() string      { return "pcontrol — Register Device" }
 func (loginData) MinimalLayout() bool       { return true }
