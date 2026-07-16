@@ -9,7 +9,12 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 )
+
+// BuildVersion is set at build time via ldflags (e.g. -X 'pcontrol/server/internal/web.BuildVersion=v1.2.3').
+// The default "dev" is used in local development builds.
+var BuildVersion = "dev"
 
 //go:embed templates/*.gohtml
 var templateFS embed.FS
@@ -36,12 +41,17 @@ var parsedTemplates *template.Template
 // page-specific rendered HTML, which is injected verbatim (not escaped)
 // into the <main> element.
 type layoutData struct {
-	ContentHTML template.HTML
+	ContentHTML   template.HTML
+	MinimalLayout bool
+	Title         string
 }
 
 func init() {
 	var err error
-	parsedTemplates, err = template.ParseFS(templateFS, "templates/*.gohtml")
+	parsedTemplates, err = template.New("").Funcs(template.FuncMap{
+		"year":    func() int { return time.Now().Year() },
+		"version": func() string { return BuildVersion },
+	}).ParseFS(templateFS, "templates/*.gohtml")
 	if err != nil {
 		log.Fatalf("parse templates: %v", err)
 	}
@@ -50,14 +60,29 @@ func init() {
 // renderPage renders the named page template with data, wraps it in the
 // layout, and writes the result to w.
 func renderPage(w io.Writer, pageName string, data interface{}) error {
+	// Set Content-Type when writing to an http.ResponseWriter.
+	if rw, ok := w.(http.ResponseWriter); ok {
+		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+	}
+
 	// Render page content into a buffer.
 	var buf bytes.Buffer
 	if err := parsedTemplates.ExecuteTemplate(&buf, pageName, data); err != nil {
 		return fmt.Errorf("execute %s: %w", pageName, err)
 	}
 
+	// Extract title and minimal layout flag from data if supported.
+	title := "pcontrol"
+	minimal := false
+	if pt, ok := data.(PageTitler); ok {
+		title = pt.PageTitle()
+	}
+	if lm, ok := data.(MinimalLayouter); ok {
+		minimal = lm.MinimalLayout()
+	}
+
 	// Wrap in layout.
-	ld := layoutData{ContentHTML: template.HTML(buf.String())}
+	ld := layoutData{ContentHTML: template.HTML(buf.String()), Title: title, MinimalLayout: minimal}
 	if err := parsedTemplates.ExecuteTemplate(w, "layout.gohtml", ld); err != nil {
 		return fmt.Errorf("render layout: %w", err)
 	}

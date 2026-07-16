@@ -1,0 +1,23 @@
+{{if .Success}}<h1>Device Registered</h1>
+{{else}}<h1>Register Device</h1>
+{{end}}
+{{if .Success}}
+  <div class="card">
+    <p>Device: <strong>{{.DeviceName}}</strong></p>
+    <div style="background:var(--bg);padding:1rem;border-radius:var(--radius);margin:0.75rem 0">
+      <p style="font-weight:500;margin-bottom:0.25rem">Bearer token (copy now — it will not be shown again):</p>
+      <pre style="overflow-x:auto;font-family:var(--font-mono);font-size:0.9rem"><code>{{.Token}}</code></pre>
+    </div>
+    <a href="/devices/{{.DeviceID}}" class="btn btn-primary">View device</a>
+    <a href="/" class="btn">Back to dashboard</a>
+  </div>
+{{else}}
+  <div class="card">
+    <form action="/devices/new" method="post">
+      <label for="devname">Device name</label>
+      <input id="devname" name="name" required placeholder="e.g. Kid's Phone" style="width:100%">
+      <p class="text-muted text-sm">This name appears on the dashboard.</p>
+      <button type="submit" class="btn btn-primary" style="margin-top:0.75rem">Register</button>
+    </form>
+  </div>
+{{end}}

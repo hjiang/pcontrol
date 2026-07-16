@@ -1,73 +1,99 @@
-<h1>Device {{.Name}}</h1>
-<p><a href="/devices/{{.ID}}/limits">Limits</a> | <a href="/">Back</a></p>
+<div class="breadcrumb"><a href="/">← Dashboard</a></div>
+<h1>{{.Name}}</h1>
 {{if .HasBattery}}
-  <p>
+  <p class="text-muted text-sm">
     <span class="battery{{if .BatteryLow}} battery-low{{end}}">
       🔋 {{.BatteryPercent}}%{{if .BatteryCharging}} ⚡{{end}}
     </span>
   </p>
 {{end}}
 
-<form method="get">
-  <label>Day: <input name="day" value="{{.Day}}"></label>
-  <button>View</button>
-</form>
+<div class="card-static">
+  <form method="get" style="display:flex;gap:0.5rem;align-items:end">
+    <div>
+      <label for="day">Day</label>
+      <input id="day" name="day" type="date" value="{{.Day}}">
+    </div>
+    <button>View</button>
+  </form>
+</div>
+
+<h2>Usage for {{.Day}}: {{.TotalMinutes}} min</h2>
+{{if .HasLimit}}
+  <div class="bar-bg bar-xl" style="width:100%;max-width:400px;margin-top:8px">
+    <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
+  </div>
+  <div class="text-muted text-sm" style="margin-top:2px">{{.TotalMinutes}}m / {{.LimitMin}}m — {{.BarPercent}}%</div>
+  {{if .BlockedBadge}}<span class="pill-badge pill-danger">BLOCKED</span>{{end}}
+  {{if .WarnBadge}}<span class="pill-badge pill-warning">WARN</span>{{end}}
+  <p class="muted">Limit: {{.LimitMin}}m (warn at {{.WarnPct}}%)</p>
+{{else}}<p class="muted">No total limit set</p>{{end}}
 
 {{if .History}}
-<h3>7-day history</h3>
+<h2>7-day history</h2>
 <div style="margin-bottom:1rem">
 {{range .History}}
-  <div style="display:flex;gap:0.5em;align-items:center;margin:2px 0">
-    <span style="width:6em;text-align:right;font-size:0.85em">{{.Day}}</span>
+  <div style="display:flex;gap:0.5em;align-items:center;margin:3px 0">
+    <span style="width:6.5em;text-align:right;font-size:0.85em;color:var(--text-muted)">{{.Day}}</span>
     <div class="bar-bg" style="width:200px">
-      <div class="bar-fill" style="background:#69c;width:{{.BarPercent}}%;min-width:{{if .Minutes}}4px{{else}}0{{end}}"></div>
+      <div class="bar-fill" style="background:var(--primary);width:{{.BarPercent}}%;min-width:{{if .Minutes}}4px{{else}}0{{end}};border-radius:4px"></div>
     </div>
-    <span style="font-size:0.85em;min-width:3em">{{.Minutes}} min</span>
+    <span style="font-size:0.85em;min-width:3em;color:var(--text)">{{.Minutes}} min</span>
   </div>
 {{end}}
 </div>
 {{end}}
 
-<h2>Total usage: {{.TotalMinutes}} min</h2>
-{{if .HasLimit}}
-  <div class="bar-bg" style="width:300px">
-    <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
-  </div>
-  {{if .BlockedBadge}}<span class="badge-blocked">[BLOCKED]</span>{{end}}
-  {{if .WarnBadge}}<span class="badge-warn">[WARN]</span>{{end}}
-  <p class="muted">Limit: {{.LimitMin}}m (warn at {{.WarnPct}}%)</p>
-{{else}}<p class="muted">No total limit set</p>{{end}}
-
 <h2>Apps</h2>
-<table border="1"><tr><th>App</th><th>Minutes</th><th>Status</th></tr>
+<div class="table-wrapper">
+<table class="table-styled"><thead><tr><th>App</th><th>Minutes</th><th>Status</th></tr></thead>
+<tbody>
 {{range .Apps}}
 <tr>
   <td>{{.Label}}</td>
   <td>{{.Minutes}}</td>
-  <td>{{if .Blocked}}<span class="badge-blocked">BLOCKED</span>{{else if .Warn}}<span class="badge-warn">WARN</span>{{end}}</td>
+  <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
+{{else}}
+<tr><td colspan="3" class="text-muted" style="text-align:center">No apps tracked for {{.Day}}</td></tr>
 {{end}}
+</tbody>
 </table>
+</div>
 
 <h2>Websites</h2>
-<table border="1"><tr><th>Domain</th><th>Minutes</th><th>Status</th></tr>
+<div class="table-wrapper">
+<table class="table-styled"><thead><tr><th>Domain</th><th>Minutes</th><th>Status</th></tr></thead>
+<tbody>
 {{range .Websites}}
 <tr>
   <td>{{.Label}}</td>
   <td>{{.Minutes}}</td>
-  <td>{{if .Blocked}}<span class="badge-blocked">BLOCKED</span>{{else if .Warn}}<span class="badge-warn">WARN</span>{{end}}</td>
+  <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
+{{else}}
+<tr><td colspan="3" class="text-muted" style="text-align:center">No websites tracked for {{.Day}}</td></tr>
 {{end}}
+</tbody>
 </table>
+</div>
 
-<h3>Device management</h3>
-<form action="/devices/{{.ID}}/rename" method="post" style="display:inline">
-  <label>Rename: <input name="name" value="{{.Name}}" required></label>
-  <button>Rename</button>
+<details>
+<summary style="cursor:pointer;color:var(--primary);font-weight:500;font-size:1.15rem">⚙️ Device Settings</summary>
+<div style="margin-top:0.75rem">
+<form action="/devices/{{.ID}}/rename" method="post" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem">
+  <div>
+    <label for="rename">Rename device</label>
+    <input id="rename" name="name" value="{{.Name}}" required>
+  </div>
+  <button class="btn">Rename</button>
 </form>
+<p><a href="/devices/{{.ID}}/limits" class="btn btn-primary">Manage limits</a></p>
+<div style="margin-top:1rem">
 <form action="/devices/{{.ID}}/delete" method="post" style="display:inline"
-      onsubmit="return confirm('Delete device and all its data?')">
-  <button style="color:#c00;margin-left:1em">Delete device</button>
+      onsubmit="return confirm('This will permanently delete this device and all its data. Continue?')">
+  <button class="btn btn-danger">Delete device</button>
 </form>
-
-<p><a href="/devices/{{.ID}}/limits">Manage limits</a></p>
+</div>
+</div>
+</details>

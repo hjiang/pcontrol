@@ -1,6 +1,28 @@
-<h1>Login</h1>
-{{if .ErrorMsg}}<p style="color:red">{{.ErrorMsg}}</p>{{end}}
-<form action="/login" method="post">
-  <label>Password: <input type="password" name="password" required></label>
-  <button>Login</button>
-</form>
+<div class="login-page">
+  <div class="login-box">
+    <div style="margin-bottom:1.5rem">
+      <div class="login-icon">🛡️</div>
+      <h1 class="login-title">pcontrol</h1>
+      <p class="text-muted text-sm">Parental Control Panel</p>
+    </div>
+
+    {{if .ErrorMsg}}
+    <div class="alert-error">
+      {{.ErrorMsg}}
+    </div>
+    {{end}}
+
+    <div class="card-static" style="text-align:left;padding:1.5rem">
+      <form action="/login" method="post">
+        <div style="margin-bottom:1rem">
+          <label for="password">Password</label>
+          <div class="input-row">
+            <input id="password" type="password" name="password" required autocomplete="current-password" class="input-grow">
+            <button type="button" onclick="var p=document.getElementById('password');var isVisible=p.type==='text';p.type=isVisible?'password':'text';this.textContent=isVisible?'👁️':'🙈';this.setAttribute('aria-pressed',isVisible?'false':'true')" style="flex-shrink:0;padding:0.5rem;font-size:1rem" title="Toggle password visibility" aria-label="Toggle password visibility" aria-pressed="false">👁️</button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full">Sign in</button>
+      </form>
+    </div>
+  </div>
+</div>

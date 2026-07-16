@@ -2,47 +2,403 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>pcontrol</title>
+<title>{{if .Title}}{{.Title}}{{else}}pcontrol{{end}}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAxMDAgMTAwJz48dGV4dCB5PScuOWVtJyBmb250LXNpemU9JzkwJz7wn5uh77iPPC90ZXh0Pjwvc3ZnPg==">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #222; background: #f8f9fa; }
-  nav { background: #333; color: #fff; padding: 0.5rem 1rem; display: flex; gap: 1rem; align-items: center; }
+  /* ── Design tokens ── */
+  :root {
+    --bg: #f8f9fa;
+    --surface: #ffffff;
+    --text: #1a1a2e;
+    --text-muted: #6b7280;
+    --border: #e5e7eb;
+    --primary: #4361ee;
+    --primary-hover: #3a56d4;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --radius: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+    --shadow-md: 0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+    --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  /* ── Reset ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ── Base ── */
+  body {
+    font-family: var(--font);
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  main {
+    max-width: 800px;
+    margin: 1rem auto;
+    padding: 0 1rem;
+    flex: 1;
+    width: 100%;
+  }
+  body.minimal main {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* ── Typography ── */
+  h1 { font-size: 1.75rem; margin: 0.5rem 0; font-weight: 700; }
+  h2 { font-size: 1.35rem; margin-top: 1.5rem; font-weight: 600; }
+  h3 { font-size: 1.15rem; margin-top: 1.25rem; font-weight: 600; }
+  a { color: var(--primary); }
+  a:hover { color: var(--primary-hover); }
+  .text-muted { color: var(--text-muted); }
+  .text-sm { font-size: 0.875rem; }
+
+  /* ── Skip link ── */
+  .skip-link {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    background: var(--primary);
+    color: #fff;
+    padding: 0.5rem 1rem;
+    z-index: 1000;
+    font-weight: 600;
+  }
+  .skip-link:focus { top: 0; }
+
+  /* ── Nav ── */
+  nav {
+    background: linear-gradient(135deg, #16213e, #0f3460);
+    color: #fff;
+    padding: 0.6rem 1rem;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    box-shadow: var(--shadow);
+  }
   nav a { color: #fff; text-decoration: none; }
   nav a:hover { text-decoration: underline; }
-  nav form { margin-left: auto; }
-  main { max-width: 800px; margin: 1rem auto; padding: 0 1rem; }
-  h1 { margin: 0.5rem 0; }
-  h2 { margin-top: 1.5rem; }
+  .nav-brand { font-weight: 700; font-size: 1.1rem; }
+  .nav-link { font-size: 0.9rem; opacity: 0.9; }
+  .nav-link:hover { opacity: 1; }
+  .nav-spacer { margin-left: auto; }
+  .nav-admin { font-size: 0.8rem; opacity: 0.7; }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center;
+    padding: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    margin-top: 2rem;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1rem;
+    margin: 0.75rem 0;
+    transition: box-shadow 0.2s, transform 0.2s;
+  }
+  .card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+
+  /* ── Buttons ── */
+  button, .btn {
+    cursor: pointer;
+    font: inherit;
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+    transition: background 0.15s, box-shadow 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.9rem;
+  }
+  button:focus-visible, .btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+  }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-ghost {
+    background: transparent;
+    color: #fff;
+    border-color: transparent;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); }
+  .btn-link {
+    background: none;
+    border: none;
+    color: var(--primary);
+    text-decoration: underline;
+    font: inherit;
+    cursor: pointer;
+    padding: 0;
+    display: inline;
+  }
+  .btn-link:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  /* ── Form elements ── */
+  input, select, textarea {
+    font: inherit;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    color: var(--text);
+    width: auto;
+  }
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-weight: 500;
+  }
+
+  /* ── Tables ── */
   table { border-collapse: collapse; width: 100%; }
   th, td { padding: 0.4rem 0.6rem; text-align: left; }
-  .card { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; margin: 0.75rem 0; background: #fff; }
-  .bar-bg { background: #eee; height: 16px; border-radius: 4px; overflow: hidden; margin-top: 4px; }
-  .bar-fill { height: 16px; border-radius: 4px; transition: width 0.3s; }
+
+  /* ── Progress bars ── */
+  .bar-bg {
+    background: #eee;
+    height: 16px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .bar-fill {
+    height: 16px;
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+
+  /* ── Badges ── */
   .badge { font-weight: bold; }
-  .badge-ok { color: #2a2; }
-  .badge-warn { color: #e80; }
-  .badge-blocked { color: #d22; }
-  .muted { color: #666; font-size: 0.9em; }
-  .badge-online { color: #090; }
-  .badge-offline { color: #999; }
+  .badge-ok { color: var(--success); }
+  .badge-warn { color: var(--warning); }
+  .badge-blocked { color: var(--danger); }
+  .badge-online { color: var(--success); }
+  .badge-offline { color: var(--text-muted); }
+
+  /* ── Misc ── */
+  .muted { color: var(--text-muted); font-size: 0.9em; }
   .battery { margin-left: 0.5em; font-size: 0.9em; }
-  .battery-low { color: #c00; font-weight: bold; }
+  .battery-low { color: var(--danger); font-weight: bold; }
   .top-apps { margin-top: 6px; font-size: 0.9em; color: #555; }
-  button, .btn { cursor: pointer; }
-  .btn-link { background: none; border: none; color: #06c; text-decoration: underline; font: inherit; cursor: pointer; padding: 0; }
-  hr { margin: 1rem 0; border: none; border-top: 1px solid #ddd; }
+  hr { margin: 1rem 0; border: none; border-top: 1px solid var(--border); }
+
+  /* ── Status pills ── */
+  .status-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+  }
+  .status-online { background: #d1fae5; color: #065f46; }
+  .status-offline { background: #f3f4f6; color: #6b7280; }
+
+  /* ── App pills ── */
+  .app-pill {
+    display: inline-block;
+    background: var(--bg);
+    border-radius: var(--radius);
+    padding: 2px 8px;
+    font-size: 0.85em;
+    margin: 2px;
+  }
+
+  /* ── Table styling ── */
+  .table-styled { border-collapse: collapse; width: 100%; }
+  .table-styled th {
+    background: var(--bg);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border);
+  }
+  .table-styled td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .table-styled tr:hover td { background: rgba(67, 97, 238, 0.04); }
+
+  /* ── Pill badges for status ── */
+  .pill-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .pill-danger { background: #fee2e2; color: #991b1b; }
+  .pill-warning { background: #fef3c7; color: #92400e; }
+
+  /* ── HTMX indicator ── */
+  .htmx-indicator { display: none; }
+  .htmx-request .htmx-indicator { display: inline; }
+  .htmx-request.htmx-indicator { display: inline; }
+  .spinner::after {
+    content: '';
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-left: 4px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Empty state ── */
+  .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); }
+  .empty-state .empty-icon { font-size: 3rem; margin-bottom: 0.5rem; }
+
+  /* ── Card static (no hover lift) ── */
+  .card-static {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1rem;
+    margin: 0.75rem 0;
+  }
+
+  /* ── Login page ── */
+  .login-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    text-align: center;
+  }
+  .login-box { max-width: 360px; width: 100%; }
+  .login-icon { font-size: 2.5rem; margin-bottom: 0.25rem; }
+  .login-title { margin: 0; font-size: 1.5rem; }
+
+  /* ── Alert ── */
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem;
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    border: 1px solid #fca5a5;
+  }
+
+  /* ── Form utilities ── */
+  .input-row { display: flex; gap: 0.25rem; }
+  .input-grow { flex: 1; width: 100%; }
+  .btn-full { width: 100%; justify-content: center; }
+
+  /* ── Breadcrumb ── */
+  .breadcrumb { font-size: 0.9rem; margin-bottom: 0.5rem; }
+  .breadcrumb a { color: var(--text-muted); text-decoration: none; }
+  .breadcrumb a:hover { color: var(--primary); }
+
+  /* ── Progress bar tall variants ── */
+  .bar-tall { height: 20px; }
+  .bar-tall .bar-fill { height: 20px; }
+  .bar-xl { height: 24px; }
+  .bar-xl .bar-fill { height: 24px; }
+
+  /* ── Table wrapper (overflow scroll on narrow screens) ── */
+  .table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0.5rem 0;
+  }
+
+  /* ── Card grid (dashboard device list) ── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .card-grid .card { margin: 0; }
+
+  /* ── Responsive ── */
+  @media (max-width: 767px) {
+    nav { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem; }
+    .nav-brand { font-size: 1rem; }
+    .nav-link { font-size: 0.8rem; }
+    main { padding: 0 0.75rem; margin: 0.75rem auto; }
+    h1 { font-size: 1.35rem; }
+    .card { padding: 0.75rem; }
+    .table-styled th, .table-styled td { padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+  }
+
+  @media (min-width: 768px) {
+    main { padding: 0 2rem; }
+    .card-grid { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+  }
+
+  @media (min-width: 1024px) {
+    main { max-width: 960px; }
+  }
 </style>
 <script src="/static/htmx.min.js"></script>
 </head>
-<body>
-<nav>
-  <a href="/"><strong>pcontrol</strong></a>
-  <a href="/devices/new">Register device</a>
-  <form action="/logout" method="post" style="display:inline"><button style="background:none;border:none;color:#fff;font:inherit;cursor:pointer">Logout</button></form>
+<body{{if .MinimalLayout}} class="minimal"{{end}}>
+<a href="#main-content" class="skip-link">Skip to main content</a>
+{{if not .MinimalLayout}}
+<nav aria-label="Main navigation">
+  <a href="/" class="nav-brand">🛡️ pcontrol</a>
+  <a href="/devices/new" class="nav-link">Register device</a>
+  <span class="nav-spacer"></span>
+  <span class="nav-admin">admin</span>
+  <form action="/logout" method="post"><button class="btn-ghost">Logout</button></form>
 </nav>
-<main>
+{{end}}
+<main id="main-content">
 {{.ContentHTML}}
 </main>
+{{if not .MinimalLayout}}
+<footer>
+  pcontrol · {{version}} · {{year}}
+</footer>
+{{end}}
 </body>
 </html>

@@ -1,37 +1,48 @@
 <h1>Devices</h1>
-<p><a href="/devices/new">Register device</a></p>
+<p class="text-muted text-sm">{{if .Devices}}{{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}{{else}}No devices yet{{end}}</p>
+<p style="margin-bottom:1rem"><a href="/devices/new" class="btn btn-primary">+ Register device</a></p>
 {{if not .Devices}}
-<p>No devices registered yet. <a href="/devices/new">Register one</a>.</p>
+<div class="empty-state">
+  <div class="empty-icon">📱</div>
+  <p><strong>No devices registered yet</strong></p>
+  <p class="text-muted">Register your child's device to start monitoring usage.</p>
+  <p style="margin-top:0.75rem"><a href="/devices/new" class="btn btn-primary">Register Device</a></p>
+</div>
 {{else}}
+  <div class="card-grid">
   {{range .Devices}}
   <div class="card">
-    <div>
-      <strong><a href="/devices/{{.ID}}">{{.Name}}</a></strong>
+    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
       {{if .Online}}
-        <span class="badge badge-online" title="{{.LastSeenAt}}">● online</span>
+        <span class="status-pill status-online" title="{{.LastSeenAt}}">● online</span>
       {{else}}
-        <span class="badge badge-offline" title="{{.LastSeenAt}}">● offline{{if .LastSeenAge}} · {{.LastSeenAge}}{{end}}</span>
+        <span class="status-pill status-offline" title="{{.LastSeenAt}}">● offline{{if .LastSeenAge}} · {{.LastSeenAge}}{{end}}</span>
       {{end}}
       {{if .HasBattery}}
         <span class="battery{{if .BatteryLow}} battery-low{{end}}">
           🔋 {{.BatteryPercent}}%{{if .BatteryCharging}} ⚡{{end}}
         </span>
       {{end}}
-      <div class="muted">Last usage report: {{.LastSeenAt}}</div>
     </div>
-    <div style="margin-top:8px">
+    <h2 style="margin:0 0 0.25rem 0;font-size:1.2rem"><a href="/devices/{{.ID}}">{{.Name}}</a></h2>
+    <div class="text-muted text-sm" style="margin-bottom:0.75rem">Last usage report: {{.LastSeenAt}}</div>
+    <div>
       Today: <strong>{{.TotalMinutes}} min</strong>
       {{if .HasLimit}} / {{.LimitMin}} min limit
-        <div class="bar-bg">
+        <div class="bar-bg bar-tall">
           <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
         </div>
+        <div class="text-muted text-sm" style="margin-top:2px">{{.TotalMinutes}}m / {{.LimitMin}}m — {{.BarPercent}}%</div>
       {{else}}<span class="muted"> (no limit set)</span>{{end}}
     </div>
     {{if .TopEntries}}
-    <div class="top-apps">
-      {{range $i, $e := .TopEntries}}{{if $i}} · {{end}}{{$e.Label}} ({{$e.Minutes}} min){{end}}
+    <div class="top-apps" style="margin-top:8px">
+      {{range $i, $e := .TopEntries}}<span class="app-pill">{{$e.Label}} ({{$e.Minutes}} min)</span>{{end}}{{if .HasMoreEntries}}<span class="app-pill">…</span>{{end}}
     </div>
+    {{else}}
+    <div class="text-muted text-sm" style="margin-top:8px">No activity today</div>
     {{end}}
   </div>
   {{end}}
+  </div>
 {{end}}

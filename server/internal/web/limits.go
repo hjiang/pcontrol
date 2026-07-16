@@ -1,6 +1,8 @@
 package web
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,11 +27,27 @@ func (h *webAuthHandler) limitsPage() http.HandlerFunc {
 			totalText = fmt.Sprintf("%d minutes", *policy.TotalDailyLimitMin)
 		}
 
+		device, err := h.store.DeviceByTokenFromID(deviceID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+			} else {
+				log.Printf("device lookup: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+
 		data := limitsData{
 			ID:             deviceID,
+			Name:           device.Name,
 			TotalLimitText: totalText,
 			WarnPct:        policy.WarnThresholdPercent,
 			Subjects:       make([]subjectOption, 0, len(subjects)),
+		}
+		if policy.TotalDailyLimitMin != nil {
+			data.HasTotalLimit = true
+			data.TotalLimitMin = *policy.TotalDailyLimitMin
 		}
 
 		for _, l := range policy.Limits {
@@ -182,9 +200,24 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 			return
 		}
 
+		// Verify device exists before any writes.
+		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+			} else {
+				log.Printf("device lookup: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+
 		totalStr := r.FormValue("total")
 		if totalStr != "" {
-			total := parseInt(totalStr)
+			total, ok := parseIntStrict(totalStr)
+			if !ok || total < 1 {
+				http.Error(w, "total limit must be a positive integer", http.StatusBadRequest)
+				return
+			}
 			if err := h.store.SetTotalLimit(deviceID, &total); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -198,11 +231,61 @@ func (h *webAuthHandler) updateSettings() http.HandlerFunc {
 
 		warnStr := r.FormValue("warn")
 		if warnStr != "" {
-			warn := parseInt(warnStr)
+			warn, ok := parseIntStrict(warnStr)
+			if !ok || warn < 1 || warn > 100 {
+				http.Error(w, "warn percent must be a number between 1 and 100", http.StatusBadRequest)
+				return
+			}
 			if err := h.store.SetWarnPercent(deviceID, warn); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		}
+
+		if isHTMX(r) {
+			// Re-fetch policy for updated values.
+			policy, err := h.store.GetPolicy(deviceID)
+			totalText := "none"
+			warnPct := 90 // default
+			if err != nil {
+				log.Printf("re-fetch policy after settings update: %v", err)
+				// Fall back to the values that were just submitted.
+				if totalStr != "" {
+					totalVal := parseInt(totalStr)
+					if totalVal > 0 {
+						totalText = fmt.Sprintf("%d minutes", totalVal)
+					}
+				}
+				if warnStr != "" {
+					warnVal := parseInt(warnStr)
+					if warnVal >= 1 && warnVal <= 100 {
+						warnPct = warnVal
+					}
+				}
+			} else {
+				if policy.TotalDailyLimitMin != nil {
+					totalText = fmt.Sprintf("%d minutes", *policy.TotalDailyLimitMin)
+				}
+				warnPct = policy.WarnThresholdPercent
+			}
+			cardData := limitsData{ID: deviceID, TotalLimitText: totalText, WarnPct: warnPct}
+			// Populate pre-fill fields for the total input.
+			if err == nil && policy.TotalDailyLimitMin != nil {
+				cardData.HasTotalLimit = true
+				cardData.TotalLimitMin = *policy.TotalDailyLimitMin
+			} else if err != nil && totalStr != "" {
+				totalVal := parseInt(totalStr)
+				if totalVal >= 1 {
+					cardData.HasTotalLimit = true
+					cardData.TotalLimitMin = totalVal
+				}
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := parsedTemplates.ExecuteTemplate(w, "daily_limit_card.gohtml", cardData); err != nil {
+				log.Printf("render daily-limit-card: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
 		}
 
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d/limits", deviceID), http.StatusSeeOther)

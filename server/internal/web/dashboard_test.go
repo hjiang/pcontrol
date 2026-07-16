@@ -37,6 +37,60 @@ func TestDashboard_NoDevices(t *testing.T) {
 	}
 }
 
+func TestRegisterDevice_SuccessScreen(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	body := "name=gaming-pc"
+	req := httptest.NewRequest(http.MethodPost, "/devices/new", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after device registration, got %d", rec.Code)
+	}
+
+	resp := rec.Body.String()
+
+	// Success heading
+	if !strings.Contains(resp, "Device Registered") {
+		t.Error("expected 'Device Registered' heading on success")
+	}
+
+	// Device name shown
+	if !strings.Contains(resp, "gaming-pc") {
+		t.Error("expected device name on success screen")
+	}
+
+	// Bearer token should be rendered as a <code> block
+	if !strings.Contains(resp, "<code>") {
+		t.Error("expected bearer token in <code> block on success")
+	}
+
+	// Copy warning
+	if !strings.Contains(resp, "copy now") && !strings.Contains(resp, "will not be shown again") {
+		t.Error("expected copy warning text on success screen")
+	}
+
+	// Action links
+	if !strings.Contains(resp, "View device") {
+		t.Error("expected 'View device' link on success screen")
+	}
+	if !strings.Contains(resp, "Back to dashboard") {
+		t.Error("expected 'Back to dashboard' link on success screen")
+	}
+
+	// Page title
+	if !strings.Contains(resp, "<title>pcontrol — Device Registered</title>") {
+		t.Error("expected page title 'pcontrol — Device Registered'")
+	}
+}
+
 func TestDashboard_WithDevice(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
@@ -430,6 +484,129 @@ func TestDeviceDetail_ShowsHistory(t *testing.T) {
 	}
 }
 
+func TestLoginPage_HasMinimalLayout(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Should render the minimal layout — no nav elements
+	if strings.Contains(body, "Register device") {
+		t.Error("login page should not contain nav link 'Register device'")
+	}
+	if strings.Contains(body, "Logout") {
+		t.Error("login page should not contain 'Logout' button")
+	}
+	if strings.Contains(body, "class=\"nav-admin\"") {
+		t.Error("login page should not include nav admin indicator")
+	}
+
+	// Should not include the footer
+	if strings.Contains(body, "pcontrol ·") {
+		t.Error("login page should not include footer")
+	}
+
+	// Title should be specific
+	if !strings.Contains(body, "<title>pcontrol — Sign in</title>") {
+		t.Error("login page should have page title 'pcontrol — Sign in'")
+	}
+}
+
+func TestDashboardPage_HasNavAndFooter(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Dashboard should have nav and footer
+	if !strings.Contains(body, "Register device") {
+		t.Error("dashboard page should contain nav link 'Register device'")
+	}
+	if !strings.Contains(body, "Logout") {
+		t.Error("dashboard page should contain 'Logout' button")
+	}
+
+	// Check title
+	if !strings.Contains(body, "<title>pcontrol — Devices</title>") {
+		t.Error("dashboard page should have page title 'pcontrol — Devices'")
+	}
+}
+
+func TestDeviceDetailPage_HasDeviceNameInTitle(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("my-tablet")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Title should include the device name
+	if !strings.Contains(body, "<title>pcontrol — my-tablet</title>") {
+		t.Error("device detail page should have page title 'pcontrol — my-tablet'")
+	}
+}
+
+func TestLimitsPage_HasDeviceNameInTitle(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("limiter-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d/limits", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Title should include the device name
+	if !strings.Contains(body, "<title>pcontrol — Limits · limiter-phone</title>") {
+		t.Error("limits page should have page title 'pcontrol — Limits · limiter-phone'")
+	}
+}
+
 func TestDeviceDetail_ShowsDevicePage(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
@@ -458,8 +635,5 @@ func TestDeviceDetail_ShowsDevicePage(t *testing.T) {
 	}
 	if !strings.Contains(body, "Manage limits") {
 		t.Error("expected 'Manage limits' link on device detail page")
-	}
-	if !strings.Contains(body, "Limits") {
-		t.Error("expected 'Limits' link on device detail page")
 	}
 }

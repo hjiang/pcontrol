@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -157,6 +158,17 @@ func parseInt(s string) int {
 	var v int
 	fmt.Sscanf(s, "%d", &v)
 	return v
+}
+
+// parseIntStrict returns the integer value of s and a boolean indicating
+// whether the entire string was a valid integer. Use this instead of
+// parseInt when the caller needs to distinguish "0" from invalid input.
+func parseIntStrict(s string) (int, bool) {
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 func kindToDomain(k string) domain.Kind {

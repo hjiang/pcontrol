@@ -135,8 +135,9 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 					top[j], top[j-1] = top[j-1], top[j]
 				}
 			}
-			if len(top) > 3 {
-				top = top[:3]
+			if len(top) > 5 {
+				entry.HasMoreEntries = true
+				top = top[:5]
 			}
 			entry.TopEntries = top
 
@@ -152,12 +153,10 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 
 func (h *webAuthHandler) deviceNewForm() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		renderInline(w, `<h1>Register device</h1>
-			<form action="/devices/new" method="post">
-				<label>Device name: <input name="name" required></label>
-				<button>Register</button>
-			</form>
-			<p><a href="/">Back</a></p>`)
+		if err := renderPage(w, "register.gohtml", registerData{}); err != nil {
+			log.Printf("render register form: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
 	}
 }
 
@@ -179,13 +178,12 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 			return
 		}
 
-		renderInline(w, fmt.Sprintf(`<h1>Device registered</h1>
-			<p>Device: %s</p>
-			<p><strong>Token (show this to the child once):</strong></p>
-			<pre style="background:#eee;padding:1em;font-size:1.2em">%s</pre>
-			<p>This token will not be shown again.</p>
-			<p><a href="/devices/%d">View device</a> | <a href="/">Back</a></p>`,
-			htmlEsc(dev.Name), htmlEsc(rawToken), dev.ID))
+		w.Header().Set("Cache-Control", "no-store")
+		if err := renderPage(w, "register.gohtml", registerData{Success: true, DeviceName: dev.Name, Token: rawToken, DeviceID: dev.ID}); err != nil {
+			log.Printf("render register success: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
@@ -398,22 +396,6 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 	}
-}
-
-// renderInline renders a simple HTML page frame around already-escaped HTML
-// content. The content must already be safe (HTML-escaped) before being
-// passed here.
-func renderInline(w http.ResponseWriter, innerHTML string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	ioWriteString(w, `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>pcontrol</title><meta name="viewport" content="width=device-width, initial-scale=1">
-<style>body{font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#222;background:#f8f9fa;max-width:800px;margin:1rem auto;padding:0 1rem}a{color:#06c}h1{margin:0.5rem 0}pre{overflow-x:auto}</style>
-</head><body>`)
-	ioWriteString(w, innerHTML)
-	ioWriteString(w, `</body></html>`)
-}
-
-func ioWriteString(w http.ResponseWriter, s string) {
-	w.Write([]byte(s))
 }
 
 func htmlEsc(s string) string {
