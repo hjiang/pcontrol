@@ -118,6 +118,8 @@ func (s *Store) DeleteDevice(deviceID int64) error {
 		{"limits", `DELETE FROM limits WHERE device_id = ?`},
 		{"exclusions", `DELETE FROM exclusions WHERE device_id = ?`},
 		{"device_settings", `DELETE FROM device_settings WHERE device_id = ?`},
+		{"device_email_recipients", `DELETE FROM device_email_recipients WHERE device_id = ?`},
+		{"daily_report_log", `DELETE FROM daily_report_log WHERE device_id = ?`},
 		{"devices", `DELETE FROM devices WHERE id = ?`},
 	} {
 		res, err := tx.Exec(step.SQL, deviceID)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -392,6 +393,63 @@ func TestDeviceRename(t *testing.T) {
 	}
 }
 
+func TestValidEmail(t *testing.T) {
+	cases := []struct {
+		name  string
+		email string
+		want  bool
+	}{
+		{"valid", "parent@example.com", true},
+		{"missing at", "parent.example.com", false},
+		{"missing dot", "parent@examplecom", false},
+		{"empty local", "@example.com", false},
+		{"empty domain", "parent@", false},
+		{"empty", "", false},
+		{"whitespace only", "   ", false},
+		{"crlf injection", "parent@example.com\r\nBcc: evil@example.com", false},
+		{"newline injection", "parent@example.com\nevil@example.com", false},
+	}
+	for _, tc := range cases {
+		if got := validEmail(tc.email); got != tc.want {
+			t.Errorf("validEmail(%q) = %v, want %v", tc.email, got, tc.want)
+		}
+	}
+}
+
+func TestDeviceRename_RejectsCRLF(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("original-name")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// A device name flows into the email Subject header; CRLF must be
+	// rejected so it cannot inject headers into the daily report.
+	body := "name=kid%0d%0aBcc%3A%20evil%40example.com"
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/rename", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for CRLF in name, got %d", rec.Code)
+	}
+
+	updated, err := s.DeviceByTokenFromID(dev.ID)
+	if err != nil {
+		t.Fatalf("DeviceByTokenFromID: %v", err)
+	}
+	if updated.Name != "original-name" {
+		t.Errorf("expected name unchanged, got %q", updated.Name)
+	}
+}
+
 func TestDeviceDelete(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
@@ -635,5 +693,194 @@ func TestDeviceDetail_ShowsDevicePage(t *testing.T) {
 	}
 	if !strings.Contains(body, "Manage limits") {
 		t.Error("expected 'Manage limits' link on device detail page")
+	}
+}
+
+func TestDeviceDetail_ShowsReportSettings(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("report-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	if err := s.SetEmailRecipients(dev.ID, []string{"parent@example.com", "dad@example.org"}); err != nil {
+		t.Fatalf("SetEmailRecipients: %v", err)
+	}
+	if err := s.SetTimeZone(dev.ID, "America/New_York"); err != nil {
+		t.Fatalf("SetTimeZone: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="timezone"`) {
+		t.Error("expected timezone input on device settings")
+	}
+	if !strings.Contains(body, `value="America/New_York"`) {
+		t.Error("expected configured timezone value in timezone input")
+	}
+	if !strings.Contains(body, `name="emails"`) {
+		t.Error("expected report recipients textarea on device settings")
+	}
+	if !strings.Contains(body, "parent@example.com") || !strings.Contains(body, "dad@example.org") {
+		t.Error("expected configured recipients shown in recipients textarea")
+	}
+}
+
+func TestDeviceRecipients_Persist(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("recipient-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	body := "emails=" + url.QueryEscape("parent@example.com\ndad@example.org")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/recipients", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusFound {
+		t.Errorf("expected redirect after saving recipients, got %d", rec.Code)
+	}
+
+	got, err := s.EmailRecipients(dev.ID)
+	if err != nil {
+		t.Fatalf("EmailRecipients: %v", err)
+	}
+	if len(got) != 2 || got[0] != "parent@example.com" || got[1] != "dad@example.org" {
+		t.Errorf("unexpected recipients after save: %v", got)
+	}
+}
+
+func TestDeviceRecipients_InvalidEmailRejected(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("recipient-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	body := "emails=not-an-email"
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/recipients", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid email, got %d", rec.Code)
+	}
+}
+
+func TestDeviceTimeZone_Persist(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("tz-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	body := "timezone=" + url.QueryEscape("Europe/Berlin")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/timezone", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusFound {
+		t.Errorf("expected redirect after saving timezone, got %d", rec.Code)
+	}
+
+	tz, err := s.TimeZone(dev.ID)
+	if err != nil {
+		t.Fatalf("TimeZone: %v", err)
+	}
+	if tz != "Europe/Berlin" {
+		t.Errorf("expected timezone 'Europe/Berlin', got %q", tz)
+	}
+}
+
+func TestDeviceTimeZone_InvalidRejected(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("tz-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	body := "timezone=" + url.QueryEscape("Not/AZone")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/timezone", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid timezone, got %d", rec.Code)
+	}
+}
+
+func TestDeviceReportSettings_MissingDevice404(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	// Recipients POST for a device that does not exist → 404, no orphan rows.
+	body := "emails=" + url.QueryEscape("parent@example.com")
+	req := httptest.NewRequest(http.MethodPost, "/devices/99999/recipients", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for recipients on missing device, got %d", rec.Code)
+	}
+	if emails, _ := s.EmailRecipients(99999); len(emails) != 0 {
+		t.Errorf("expected no orphan recipients, got %v", emails)
+	}
+
+	// Timezone POST for a device that does not exist → 404.
+	body = "timezone=" + url.QueryEscape("America/New_York")
+	req = httptest.NewRequest(http.MethodPost, "/devices/99999/timezone", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for timezone on missing device, got %d", rec.Code)
+	}
+	if tz, _ := s.TimeZone(99999); tz != "" {
+		t.Errorf("expected no orphan timezone, got %q", tz)
 	}
 }

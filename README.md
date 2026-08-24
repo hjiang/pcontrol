@@ -54,6 +54,20 @@ go run ./cmd/pcontrold \
 | `--listen` | — | `127.0.0.1:8080` | HTTP listen address |
 | `--db` | — | `pcontrol.db` | SQLite database path |
 | `--admin-password-hash` | `PCONTROL_ADMIN_HASH` | — | bcrypt hash of admin password |
+| `--smtp-host` | `PCONTROL_SMTP_HOST` | — | SMTP host for daily email reports (empty disables the job) |
+| `--smtp-port` | `PCONTROL_SMTP_PORT` | `587` | SMTP port |
+| `--smtp-username` | `PCONTROL_SMTP_USERNAME` | — | SMTP username (optional) |
+| `--smtp-password` | `PCONTROL_SMTP_PASSWORD` | — | SMTP password (optional) |
+| `--smtp-from` | `PCONTROL_SMTP_FROM` | — | From address for daily reports (optional) |
+
+**Daily email usage reports:** in the ⚙️ Device Settings section of a device's
+page you can set an email recipient list and the device's timezone. When at
+least one recipient is configured **and** the server has an SMTP host set, the
+server emails a plain-text usage report for the previous day after midnight in
+the device's configured timezone (UTC when unset). Reports are sent once per
+device per day — a server restart never re-sends a report that was already
+mailed. SMTP must support STARTTLS on the configured port (implicit-TLS port
+465 is not supported); auth is attempted only when `--smtp-username` is set.
 
 **Subcommand:** `go run ./cmd/pcontrold hash-password` reads a password from
 stdin (one line) and prints its bcrypt hash to stdout. Pipe the output into

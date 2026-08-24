@@ -4,6 +4,44 @@ import (
 	"testing"
 )
 
+func TestMigrateV3_Idempotent(t *testing.T) {
+	path := t.TempDir() + "/test.db"
+
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	s1.Close()
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer s2.Close()
+
+	// Version 3 recorded
+	var version int
+	err = s2.DB.QueryRow(`SELECT version FROM schema_migrations WHERE version = 3`).Scan(&version)
+	if err != nil || version != 3 {
+		t.Errorf("expected schema_migrations version 3, got %d (err %v)", version, err)
+	}
+
+	// timezone column exists on device_settings
+	var n int
+	s2.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('device_settings') WHERE name = 'timezone'`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expected timezone column on device_settings, got %d", n)
+	}
+
+	// New tables exist
+	for _, tbl := range []string{"device_email_recipients", "daily_report_log"} {
+		s2.DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?`, tbl).Scan(&n)
+		if n != 1 {
+			t.Errorf("expected table %q to exist, got %d", tbl, n)
+		}
+	}
+}
+
 func TestMigrateV2_Idempotent(t *testing.T) {
 	// Open a store, close it, open the same file again — no error
 	path := t.TempDir() + "/test.db"

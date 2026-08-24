@@ -88,6 +88,30 @@
   </div>
   <button class="btn">Rename</button>
 </form>
+
+<div style="margin-bottom:1rem">
+<form action="/devices/{{.ID}}/recipients" method="post">
+  <div>
+    <label for="recipients">Report email recipients</label>
+    <textarea id="recipients" name="emails" rows="3" placeholder="one email per line">{{range .Emails}}{{.}}
+{{end}}</textarea>
+    <p class="text-muted text-sm">Daily usage reports are emailed to these addresses after local midnight.</p>
+  </div>
+  <button class="btn">Save recipients</button>
+</form>
+</div>
+
+<div style="margin-bottom:1rem">
+<form action="/devices/{{.ID}}/timezone" method="post" style="display:flex;gap:0.5rem;align-items:flex-end">
+  <div>
+    <label for="timezone">Device timezone</label>
+    <input id="timezone" name="timezone" value="{{.TimeZone}}" placeholder="e.g. America/New_York">
+    <p class="text-muted text-sm">Used to schedule the daily report after local midnight. Leave blank for UTC.</p>
+  </div>
+  <button class="btn">Save timezone</button>
+</form>
+</div>
+
 <p><a href="/devices/{{.ID}}/limits" class="btn btn-primary">Manage limits</a></p>
 <div style="margin-top:1rem">
 <form action="/devices/{{.ID}}/delete" method="post" style="display:inline"

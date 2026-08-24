@@ -16,6 +16,12 @@ pcontrol is a self-hosted parental-control system. A Go server provides a JSON A
 
 - Every device card must visibly show the server time when it last reported usage. A device that has never reported must be shown as `never`.
 
+## Daily email reports
+
+- Each device has a configurable list of email recipients and a timezone (set on the parent-side dashboard).
+- When at least one recipient is configured and the server has SMTP configured, the server emails a plain-text usage report for the previous day shortly after midnight in the device's configured timezone (UTC when unset).
+- A report is sent at most once per device per day; a server restart must never re-send an already-sent report.
+
 ## Enforcement and privacy
 
 - Enforcement must operate from the cached policy when the server is unavailable.

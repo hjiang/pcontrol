@@ -64,6 +64,8 @@ type deviceDetailData struct {
 	History         []historyRow
 	Apps            []subjectRow
 	Websites        []subjectRow
+	TimeZone        string
+	Emails          []string
 }
 
 // --- Limits page view data ---

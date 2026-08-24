@@ -48,6 +48,8 @@ func NewRouter(s *store.Store, adminHash string) http.Handler {
 	mux.Handle("POST /devices/{id}/exclusions", wa.requireSession(wa.addExclusion()))
 	mux.Handle("POST /devices/{id}/exclusions/{exclusionId}/delete", wa.requireSession(wa.deleteExclusion()))
 	mux.Handle("POST /devices/{id}/settings", wa.requireSession(wa.updateSettings()))
+	mux.Handle("POST /devices/{id}/recipients", wa.requireSession(wa.deviceRecipients()))
+	mux.Handle("POST /devices/{id}/timezone", wa.requireSession(wa.deviceTimeZone()))
 
 	return mux
 }
