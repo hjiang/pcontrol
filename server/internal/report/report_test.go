@@ -2,6 +2,9 @@ package report
 
 import (
 	"fmt"
+	"io"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -375,4 +378,96 @@ func TestSender_InvalidTimeZoneFallsBackToUTC(t *testing.T) {
 	if !strings.Contains(lastSubject, "2026-07-12") {
 		t.Errorf("expected UTC day 2026-07-12 in subject, got %q", lastSubject)
 	}
+}
+
+func TestSender_MarkReportSentRetried(t *testing.T) {
+	s := testStore(t)
+	dev, _, err := s.CreateDevice("kid-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	mustAddRecipient(t, s, dev.ID, "parent@example.com")
+	if err := s.SetTimeZone(dev.ID, "UTC"); err != nil {
+		t.Fatalf("SetTimeZone: %v", err)
+	}
+	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
+
+	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	sends := 0
+	markCalls := 0
+	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
+	sender.Now = func() time.Time { return now }
+	sender.SendFunc = func(cfg Config, from string, to []string, subject, body string) error {
+		sends++
+		return nil
+	}
+	// Simulate a transient DB failure on the first two mark attempts: the
+	// send must happen exactly once, the mark must be retried, and the
+	// report must end up recorded as sent.
+	sender.MarkFunc = func(deviceID int64, day string, t time.Time) error {
+		markCalls++
+		if markCalls <= 2 {
+			return fmt.Errorf("transient db error")
+		}
+		return s.MarkReportSent(deviceID, day, t)
+	}
+
+	sender.RunOnce()
+	if sends != 1 {
+		t.Fatalf("expected exactly 1 send, got %d", sends)
+	}
+	if markCalls < 3 {
+		t.Errorf("expected mark retried past the transient failures, got %d calls", markCalls)
+	}
+	if sent, _ := s.ReportSent(dev.ID, "2026-07-12"); !sent {
+		t.Error("expected report marked sent after retried mark")
+	}
+}
+
+func TestSendEmail_TimesOutOnHungServer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	// A server that accepts the connection but never responds.
+	accepted := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		close(accepted)
+		// Hold the connection open without sending a greeting.
+		io.Copy(io.Discard, conn)
+	}()
+
+	oldDial, oldExchange := smtpDialTimeout, smtpExchangeTimeout
+	smtpDialTimeout = 100 * time.Millisecond
+	smtpExchangeTimeout = 500 * time.Millisecond
+	t.Cleanup(func() {
+		smtpDialTimeout, smtpExchangeTimeout = oldDial, oldExchange
+	})
+
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split addr: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
+	cfg := Config{Host: host, Port: port}
+	start := time.Now()
+	err = sendEmail(cfg, "from@example.com", []string{"to@example.com"}, "subject", "body")
+	if err == nil {
+		t.Fatal("expected an error from a hung SMTP server")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("sendEmail took %v, expected it to time out quickly", elapsed)
+	}
+	<-accepted
 }

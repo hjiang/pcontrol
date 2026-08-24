@@ -264,7 +264,11 @@ func (h *webAuthHandler) deviceRecipients() http.HandlerFunc {
 			return
 		}
 		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
-			http.Error(w, "device not found", http.StatusNotFound)
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -303,7 +307,11 @@ func (h *webAuthHandler) deviceTimeZone() http.HandlerFunc {
 			return
 		}
 		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
-			http.Error(w, "device not found", http.StatusNotFound)
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 

@@ -2,8 +2,10 @@ package report
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -44,6 +46,11 @@ type Sender struct {
 	// SendFunc is the email transport; defaults to sendEmail. Override in
 	// tests to avoid real network I/O.
 	SendFunc func(cfg Config, from string, to []string, subject, body string) error
+
+	// MarkFunc records a successful send in the durable send log; defaults
+	// to Store.MarkReportSent. Override in tests to simulate transient DB
+	// failures without touching a real database.
+	MarkFunc func(deviceID int64, day string, t time.Time) error
 
 	tickInterval time.Duration
 	warned       map[int64]bool // devices whose timezone failed to load (log once)
@@ -124,9 +131,35 @@ func (s *Sender) sendIfDue(t domain.ReportTarget, now time.Time) {
 		s.logf("report: device %d (%s): send: %v", t.DeviceID, day, err)
 		return
 	}
-	if err := s.Store.MarkReportSent(t.DeviceID, day, now); err != nil {
+	if err := s.markSent(t.DeviceID, day, now); err != nil {
 		s.logf("report: device %d: mark sent %s: %v", t.DeviceID, day, err)
 	}
+}
+
+// markSent records a successful send in the durable send log, retrying on
+// transient DB errors. The report was already emailed, so we must not leave
+// the log unwritten: a missing row would make the next tick re-send the same
+// report, violating the at-most-once-per-device/day guarantee. Retrying here
+// (instead of resending) closes that gap; a permanent failure is logged and
+// the next tick will retry the whole send, which is acceptable because the
+// send log row is only missing when the DB was down for the mark too.
+func (s *Sender) markSent(deviceID int64, day string, now time.Time) error {
+	mark := s.MarkFunc
+	if mark == nil {
+		mark = s.Store.MarkReportSent
+	}
+	const attempts = 5
+	const delay = 200 * time.Millisecond
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = mark(deviceID, day, now); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(delay)
+		}
+	}
+	return err
 }
 
 func (s *Sender) sendReport(t domain.ReportTarget, day string) error {
@@ -240,14 +273,79 @@ func sanitizeHeader(s string) string {
 	return s
 }
 
-// sendEmail delivers an email over SMTP using net/smtp. STARTTLS is used
-// opportunistically when the server advertises it (standard for port 587);
-// implicit-TLS ports (465) are not supported. AUTH is attempted only when a
-// username is configured.
+// sendEmail delivers an email over SMTP with explicit timeouts so a hung or
+// unresponsive server cannot stall the report scheduler indefinitely: the
+// dial is bounded by smtpDialTimeout and the whole exchange (connect through
+// QUIT) by smtpExchangeTimeout. STARTTLS is used opportunistically when the
+// server advertises it (standard for port 587); implicit-TLS ports (465) are
+// not supported. AUTH is attempted only when a username is configured.
 func sendEmail(cfg Config, from string, to []string, subject, body string) error {
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+	msg := buildMessage(from, to, subject, body, time.Now())
+	addr := cfg.Addr()
+
+	// Header values are sanitized for the message above; sanitize again for
+	// the SMTP envelope so CR/LF cannot inject MAIL/RCPT commands.
+	from = sanitizeHeader(from)
+	cleanTo := make([]string, len(to))
+	for i, addr := range to {
+		cleanTo[i] = sanitizeHeader(addr)
 	}
-	return smtp.SendMail(cfg.Addr(), auth, from, to, buildMessage(from, to, subject, body, time.Now()))
+
+	dialer := &net.Dialer{Timeout: smtpDialTimeout}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("smtp dial %s: %w", addr, err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(smtpExchangeTimeout)); err != nil {
+		return fmt.Errorf("smtp set deadline: %w", err)
+	}
+
+	c, err := smtp.NewClient(conn, cfg.Host)
+	if err != nil {
+		return fmt.Errorf("smtp connect: %w", err)
+	}
+	defer c.Close()
+
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
+			return fmt.Errorf("smtp starttls: %w", err)
+		}
+	}
+
+	if cfg.Username != "" {
+		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+		if err := c.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+
+	if err := c.Mail(from); err != nil {
+		return fmt.Errorf("smtp mail: %w", err)
+	}
+	for _, rcpt := range cleanTo {
+		if err := c.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("smtp rcpt %s: %w", rcpt, err)
+		}
+	}
+
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("smtp write close: %w", err)
+	}
+	return c.Quit()
 }
+
+var (
+	// smtpDialTimeout bounds establishing the SMTP connection.
+	smtpDialTimeout = 30 * time.Second
+	// smtpExchangeTimeout bounds the whole SMTP exchange (dial through
+	// QUIT) so a hung server cannot stall the report scheduler forever.
+	smtpExchangeTimeout = 60 * time.Second
+)
