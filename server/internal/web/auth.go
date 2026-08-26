@@ -148,9 +148,14 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// parseID returns the device ID in s, or 0 if s is not a pure integer.
+// It intentionally rejects numeric prefixes (e.g. "123abc") so a malformed
+// path parameter cannot silently target a different device.
 func parseID(s string) int64 {
-	var id int64
-	fmt.Sscanf(s, "%d", &id)
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
 	return id
 }
 

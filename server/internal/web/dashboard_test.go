@@ -884,3 +884,40 @@ func TestDeviceReportSettings_MissingDevice404(t *testing.T) {
 		t.Errorf("expected no orphan timezone, got %q", tz)
 	}
 }
+
+func TestDeviceSettings_RejectNonNumericID(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("numeric-prefix-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// A numeric prefix followed by junk must be rejected, not silently parsed
+	// as the real device (fmt.Sscanf accepts "123abc" as 123).
+	id := fmt.Sprintf("%dabc", dev.ID)
+
+	body := "emails=" + url.QueryEscape("parent@example.com")
+	req := httptest.NewRequest(http.MethodPost, "/devices/"+id+"/recipients", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("recipients: expected 400 for non-numeric device id %q, got %d", id, rec.Code)
+	}
+
+	body = "timezone=" + url.QueryEscape("America/New_York")
+	req = httptest.NewRequest(http.MethodPost, "/devices/"+id+"/timezone", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("timezone: expected 400 for non-numeric device id %q, got %d", id, rec.Code)
+	}
+}
