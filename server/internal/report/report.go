@@ -108,13 +108,18 @@ func (s *Sender) RunOnce() {
 }
 
 func (s *Sender) sendIfDue(t domain.ReportTarget, now time.Time) {
-	loc, err := time.LoadLocation(t.TimeZone)
-	if err != nil {
-		if !s.warned[t.DeviceID] {
-			s.logf("report: device %d: invalid timezone %q, using UTC: %v", t.DeviceID, t.TimeZone, err)
-			s.warned[t.DeviceID] = true
+	// An unset timezone means UTC (see domain.ReportTarget.TimeZone); load it
+	// explicitly rather than relying on time.LoadLocation("") returning UTC.
+	loc := time.UTC
+	if t.TimeZone != "" {
+		var err error
+		if loc, err = time.LoadLocation(t.TimeZone); err != nil {
+			if !s.warned[t.DeviceID] {
+				s.logf("report: device %d: invalid timezone %q, using UTC: %v", t.DeviceID, t.TimeZone, err)
+				s.warned[t.DeviceID] = true
+			}
+			loc = time.UTC
 		}
-		loc = time.UTC
 	}
 	day := reportDay(now, loc)
 

@@ -1,8 +1,10 @@
 package report
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -377,6 +379,36 @@ func TestSender_InvalidTimeZoneFallsBackToUTC(t *testing.T) {
 	}
 	if !strings.Contains(lastSubject, "2026-07-12") {
 		t.Errorf("expected UTC day 2026-07-12 in subject, got %q", lastSubject)
+	}
+}
+
+func TestSender_UnsetTimeZoneDefaultsToUTCWithoutWarning(t *testing.T) {
+	s := testStore(t)
+	dev, _, err := s.CreateDevice("phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	mustAddRecipient(t, s, dev.ID, "parent@example.com")
+	// No SetTimeZone call: the device uses the default UTC behavior ("").
+
+	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	sends := 0
+	var logBuf bytes.Buffer
+	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
+	sender.Log = log.New(&logBuf, "", 0)
+	sender.Now = func() time.Time { return now }
+	sender.SendFunc = func(cfg Config, from string, to []string, subject, body string) error {
+		sends++
+		return nil
+	}
+
+	sender.RunOnce()
+
+	if sends != 1 {
+		t.Fatalf("expected 1 send for unset timezone (UTC default), got %d", sends)
+	}
+	if strings.Contains(logBuf.String(), "invalid timezone") {
+		t.Errorf("unexpected invalid-timezone warning for empty timezone: %q", logBuf.String())
 	}
 }
 
