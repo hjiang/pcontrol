@@ -408,6 +408,11 @@ func TestValidEmail(t *testing.T) {
 		{"whitespace only", "   ", false},
 		{"crlf injection", "parent@example.com\r\nBcc: evil@example.com", false},
 		{"newline injection", "parent@example.com\nevil@example.com", false},
+		{"space in domain", "parent@ex ample.com", false},
+		{"space in local", "pa rent@example.com", false},
+		{"tab in address", "parent@example.com\tx", false},
+		{"comma-separated list", "a@b.com,c@d.com", false},
+		{"multiple at signs", "a@b@c.com", false},
 	}
 	for _, tc := range cases {
 		if got := validEmail(tc.email); got != tc.want {

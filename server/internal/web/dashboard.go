@@ -342,11 +342,18 @@ func validEmail(s string) bool {
 	if s == "" || strings.ContainsAny(s, "\r\n") {
 		return false
 	}
+	// A single '@'. Whitespace is not valid in a mailbox address and a comma
+	// is a list separator rather than part of an address; both would fail at
+	// SMTP RCPT and cause the report scheduler to retry/log every minute.
+	if strings.ContainsAny(s, " \t,") || strings.Count(s, "@") != 1 {
+		return false
+	}
 	at := strings.Index(s, "@")
 	if at <= 0 || at == len(s)-1 {
 		return false
 	}
-	return strings.Contains(s[at:], ".")
+	// The dot must appear in the domain portion (after the '@').
+	return strings.Contains(s[at+1:], ".")
 }
 
 func (h *webAuthHandler) deviceDetail() http.HandlerFunc {

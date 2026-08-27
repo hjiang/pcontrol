@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+func TestSetEmailRecipients_UnknownDeviceReturnsError(t *testing.T) {
+	s := newTestStore(t)
+	// Foreign keys are not enforced, so a bogus id must not silently create
+	// orphan recipient rows in device_email_recipients.
+	if err := s.SetEmailRecipients(999999, []string{"parent@example.com"}); err == nil {
+		t.Error("expected error when setting recipients for unknown device id")
+	}
+}
+
 func TestEmailRecipients_Roundtrip(t *testing.T) {
 	s := newTestStore(t)
 	dev, _, err := s.CreateDevice("recipient-phone")

@@ -19,6 +19,17 @@ func (s *Store) SetEmailRecipients(deviceID int64, emails []string) error {
 	}
 	defer tx.Rollback()
 
+	// Fail loudly for a device that does not exist rather than letting the
+	// DELETE/INSERT below create orphan recipient rows (foreign keys are not
+	// enforced).
+	var one int
+	if err := tx.QueryRow(`SELECT 1 FROM devices WHERE id = ?`, deviceID).Scan(&one); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("device %d not found", deviceID)
+		}
+		return fmt.Errorf("check device: %w", err)
+	}
+
 	if _, err := tx.Exec(`DELETE FROM device_email_recipients WHERE device_id = ?`, deviceID); err != nil {
 		return fmt.Errorf("delete recipients: %w", err)
 	}
