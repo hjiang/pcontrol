@@ -113,7 +113,9 @@ func (s *Store) DeleteExclusion(exclusionID int64) error {
 // SetTotalLimit sets or clears the total daily limit. Pass nil to clear.
 func (s *Store) SetTotalLimit(deviceID int64, totalMinutes *int) error {
 	return s.mutateAndBump(func(tx *sql.Tx) error {
-		ensureDeviceSettings(tx, deviceID)
+		if err := ensureDeviceSettings(tx, deviceID); err != nil {
+			return err
+		}
 		if totalMinutes != nil {
 			if _, err := tx.Exec(`UPDATE device_settings SET total_daily_limit_minutes = ? WHERE device_id = ?`, *totalMinutes, deviceID); err != nil {
 				return err
@@ -130,7 +132,9 @@ func (s *Store) SetTotalLimit(deviceID int64, totalMinutes *int) error {
 // SetWarnPercent sets the warn threshold percentage.
 func (s *Store) SetWarnPercent(deviceID int64, percent int) error {
 	return s.mutateAndBump(func(tx *sql.Tx) error {
-		ensureDeviceSettings(tx, deviceID)
+		if err := ensureDeviceSettings(tx, deviceID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`UPDATE device_settings SET warn_threshold_percent = ? WHERE device_id = ?`, percent, deviceID); err != nil {
 			return err
 		}
@@ -223,11 +227,14 @@ func (s *Store) mutateAndBump(fn func(*sql.Tx) error) error {
 
 // bumpPolicyVersion increments policy_version for a device inside a transaction.
 func bumpPolicyVersion(tx *sql.Tx, deviceID int64) error {
-	ensureDeviceSettings(tx, deviceID)
+	if err := ensureDeviceSettings(tx, deviceID); err != nil {
+		return err
+	}
 	_, err := tx.Exec(`UPDATE device_settings SET policy_version = policy_version + 1 WHERE device_id = ?`, deviceID)
 	return err
 }
 
-func ensureDeviceSettings(tx *sql.Tx, deviceID int64) {
-	tx.Exec(`INSERT OR IGNORE INTO device_settings (device_id) VALUES (?)`, deviceID)
+func ensureDeviceSettings(tx *sql.Tx, deviceID int64) error {
+	_, err := tx.Exec(`INSERT OR IGNORE INTO device_settings (device_id) VALUES (?)`, deviceID)
+	return err
 }

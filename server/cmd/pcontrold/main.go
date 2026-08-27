@@ -41,6 +41,8 @@ func main() {
 	if v := os.Getenv("PCONTROL_SMTP_PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {
 			*smtpPort = p
+		} else {
+			log.Printf("warning: invalid PCONTROL_SMTP_PORT %q, using %d", v, *smtpPort)
 		}
 	}
 	if *smtpUsername == "" {
@@ -55,6 +57,8 @@ func main() {
 	if v := os.Getenv("PCONTROL_REPORT_SEND_AFTER"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			*reportSendAfter = d
+		} else {
+			log.Printf("warning: invalid PCONTROL_REPORT_SEND_AFTER %q, using %s", v, *reportSendAfter)
 		}
 	}
 

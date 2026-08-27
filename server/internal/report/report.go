@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
@@ -155,8 +156,15 @@ func (s *Sender) sendIfDue(t domain.ReportTarget, now time.Time) {
 		return
 	}
 
-	if err := s.sendReport(t, day); err != nil {
+	delivered, err := s.sendReport(t, day)
+	if err != nil {
 		s.logf("report: device %d (%s): send: %v", t.DeviceID, day, err)
+		return
+	}
+	if !delivered {
+		// No email was sent (recipients cleared after targets were listed); do
+		// not record the day in the send log or a later tick would see it as
+		// already sent and permanently suppress this day's report.
 		return
 	}
 	if err := s.markSent(t.DeviceID, day, now); err != nil {
@@ -190,22 +198,26 @@ func (s *Sender) markSent(deviceID int64, day string, now time.Time) error {
 	return err
 }
 
-func (s *Sender) sendReport(t domain.ReportTarget, day string) error {
+func (s *Sender) sendReport(t domain.ReportTarget, day string) (bool, error) {
 	recipients, err := s.Store.EmailRecipients(t.DeviceID)
 	if err != nil {
-		return fmt.Errorf("list recipients: %w", err)
+		return false, fmt.Errorf("list recipients: %w", err)
 	}
 	if len(recipients) == 0 {
-		return nil // recipients were cleared between listing targets and sending
+		// Recipients were cleared between listing targets and sending. Without
+		// a non-nil error, sendIfDue would treat this as a successful send and
+		// record the day as sent, permanently suppressing a report that was
+		// never emailed. Report (false, nil) so the caller skips the mark.
+		return false, nil
 	}
 
 	appTotals, webTotals, err := s.Store.UsageTotals(t.DeviceID, day)
 	if err != nil {
-		return fmt.Errorf("usage totals: %w", err)
+		return false, fmt.Errorf("usage totals: %w", err)
 	}
 	policy, err := s.Store.GetPolicy(t.DeviceID)
 	if err != nil {
-		return fmt.Errorf("get policy: %w", err)
+		return false, fmt.Errorf("get policy: %w", err)
 	}
 
 	// A day with no tracked usage still gets a report ("Total counted time:
@@ -225,7 +237,10 @@ func (s *Sender) sendReport(t domain.ReportTarget, day string) error {
 	if send == nil {
 		send = sendEmail
 	}
-	return send(s.Cfg, from, recipients, subject, body)
+	if err := send(s.Cfg, from, recipients, subject, body); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Sender) logf(format string, args ...interface{}) {
@@ -296,11 +311,11 @@ func buildReportBody(deviceName, day string, countedMinutes int, appTotals, webT
 func buildMessage(from string, to []string, subject, body string, now time.Time) []byte {
 	cleanTo := make([]string, len(to))
 	for i, addr := range to {
-		cleanTo[i] = sanitizeHeader(addr)
+		cleanTo[i] = encodeHeader(addr)
 	}
-	return []byte("From: " + sanitizeHeader(from) + "\r\n" +
+	return []byte("From: " + encodeHeader(from) + "\r\n" +
 		"To: " + strings.Join(cleanTo, ", ") + "\r\n" +
-		"Subject: " + sanitizeHeader(subject) + "\r\n" +
+		"Subject: " + encodeHeader(subject) + "\r\n" +
 		"Date: " + now.Format(time.RFC1123Z) + "\r\n" +
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/plain; charset=utf-8\r\n" +
@@ -308,11 +323,28 @@ func buildMessage(from string, to []string, subject, body string, now time.Time)
 		body)
 }
 
-// sanitizeHeader removes CR and LF from a header value so a value cannot
-// inject additional headers into the message.
+// sanitizeHeader removes CR, LF and other control characters from a header
+// value so a value cannot inject additional headers or break the wire format.
+// It is used for SMTP envelope values (From/To addresses must stay plain).
 func sanitizeHeader(s string) string {
-	s = strings.ReplaceAll(s, "\r", "")
-	s = strings.ReplaceAll(s, "\n", "")
+	return strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' || r == 0x7f || (r < 0x20 && r != '\t') {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// encodeHeader sanitizes a header value and, if it contains non-ASCII bytes
+// (e.g. a device name with Unicode), RFC 2047-encodes it so the emitted
+// header stays RFC 5322-compliant and is not rejected or mangled by MTAs.
+func encodeHeader(s string) string {
+	s = sanitizeHeader(s)
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return mime.QEncoding.Encode("utf-8", s)
+		}
+	}
 	return s
 }
 

@@ -129,6 +129,15 @@ func TestTimeZone_RoundtripAndClear(t *testing.T) {
 	}
 }
 
+func TestSetTimeZone_UnknownDeviceReturnsError(t *testing.T) {
+	s := newTestStore(t)
+	// Setting a timezone for a device that does not exist must fail loudly
+	// rather than silently succeeding (a stale write would be dropped).
+	if err := s.SetTimeZone(999999, "UTC"); err == nil {
+		t.Error("expected error when setting timezone for unknown device id")
+	}
+}
+
 func TestReportTargets_FiltersByRecipients(t *testing.T) {
 	s := newTestStore(t)
 	withRecipients, _, err := s.CreateDevice("with-recipients")

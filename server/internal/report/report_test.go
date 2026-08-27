@@ -133,6 +133,35 @@ func TestBuildMessage(t *testing.T) {
 	}
 }
 
+func TestBuildMessage_EncodesNonASCIIHeader(t *testing.T) {
+	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	// A device name with Unicode must be RFC 2047-encoded in the Subject so the
+	// emitted header stays RFC 5322-compliant (some MTAs reject raw non-ASCII).
+	msg := string(buildMessage("pcontrol@example.com", []string{"parent@example.com"}, "report for 看板", "body", now))
+	if !strings.Contains(msg, "Subject: =?utf-8?") {
+		t.Errorf("expected RFC 2047-encoded subject for non-ASCII, got:\n%s", msg)
+	}
+}
+
+func TestBuildMessage_StripsControlChars(t *testing.T) {
+	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	// Control characters (other than CR/LF) plus DEL must not survive into the
+	// header block; they are stripped so the header stays RFC 5322-compliant.
+	msg := string(buildMessage("pcontrol@example.com", []string{"parent@example.com"}, "report\x01for\x7f kid", "body", now))
+	headerBlock := strings.SplitN(msg, "\r\n\r\n", 2)[0]
+	for _, line := range strings.Split(headerBlock, "\r\n") {
+		for _, r := range line {
+			if r == 0x7f || (r < 0x20 && r != '\t') {
+				t.Errorf("control char %q in header line %q", r, line)
+			}
+		}
+	}
+	// CR/LF injection is still impossible.
+	if strings.Contains(msg, "Bcc:") {
+		t.Errorf("header injection present:\n%s", msg)
+	}
+}
+
 func TestBuildMessage_SanitizesHeaderInjection(t *testing.T) {
 	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
 	// Untrusted values (device name, recipient addresses, From) must not be
@@ -296,6 +325,42 @@ func TestSender_FailedSendIsRetried(t *testing.T) {
 	}
 	if sent, _ := s.ReportSent(dev.ID, "2026-07-12"); !sent {
 		t.Error("expected report marked sent after successful send")
+	}
+}
+
+func TestSender_EmptyRecipientsDoesNotMarkSent(t *testing.T) {
+	s := testStore(t)
+	dev, _, err := s.CreateDevice("kid-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	if err := s.SetTimeZone(dev.ID, "UTC"); err != nil {
+		t.Fatalf("SetTimeZone: %v", err)
+	}
+	// No recipients configured — simulating the race where ReportTargets listed
+	// the device (it had recipients) but they were cleared before sendReport ran.
+	// The report must NOT be recorded as sent because no email was delivered.
+
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
+	markCalls := 0
+	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
+	sender.Now = func() time.Time { return now }
+	sender.SendFunc = func(cfg Config, from string, to []string, subject, body string) error {
+		t.Error("sendEmail should not be called when recipients are empty")
+		return nil
+	}
+	sender.MarkFunc = func(deviceID int64, day string, t time.Time) error {
+		markCalls++
+		return nil
+	}
+
+	sender.sendIfDue(domain.ReportTarget{DeviceID: dev.ID, Name: "kid-phone", TimeZone: "UTC"}, now)
+
+	if markCalls != 0 {
+		t.Errorf("expected no mark-sent call when recipients are empty, got %d", markCalls)
+	}
+	if sent, _ := s.ReportSent(dev.ID, "2026-07-12"); sent {
+		t.Error("expected report NOT marked sent when no email was delivered")
 	}
 }
 

@@ -74,7 +74,20 @@ func (s *Store) SetTimeZone(deviceID int64, tz string) error {
 	}
 	defer tx.Rollback()
 
-	ensureDeviceSettings(tx, deviceID)
+	// Fail loudly rather than silently dropping the write for a device that
+	// does not exist. Foreign keys are not enforced, so an INSERT OR IGNORE
+	// below would otherwise create an orphan settings row for a bogus id.
+	var one int
+	if err := tx.QueryRow(`SELECT 1 FROM devices WHERE id = ?`, deviceID).Scan(&one); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("device %d not found", deviceID)
+		}
+		return fmt.Errorf("check device: %w", err)
+	}
+
+	if err := ensureDeviceSettings(tx, deviceID); err != nil {
+		return fmt.Errorf("ensure device settings: %w", err)
+	}
 	if _, err := tx.Exec(`UPDATE device_settings SET timezone = ? WHERE device_id = ?`, tz, deviceID); err != nil {
 		return fmt.Errorf("set timezone: %w", err)
 	}
@@ -100,12 +113,14 @@ func (s *Store) TimeZone(deviceID int64) (string, error) {
 // ReportTargets returns every device that has at least one email recipient,
 // together with its name and configured report timezone ("" when unset).
 func (s *Store) ReportTargets() ([]domain.ReportTarget, error) {
+	// Select columns per device (device_settings is one row per device) and
+	// filter via EXISTS so the query stays standard SQL: no GROUP BY with
+	// bare, unaggregated columns that SQLite would only tolerate by luck.
 	rows, err := s.DB.Query(`
 		SELECT d.id, d.name, COALESCE(ds.timezone, '')
 		FROM devices d
-		JOIN device_email_recipients r ON r.device_id = d.id
 		LEFT JOIN device_settings ds ON ds.device_id = d.id
-		GROUP BY d.id
+		WHERE EXISTS (SELECT 1 FROM device_email_recipients r WHERE r.device_id = d.id)
 		ORDER BY d.id`)
 	if err != nil {
 		return nil, fmt.Errorf("query report targets: %w", err)
