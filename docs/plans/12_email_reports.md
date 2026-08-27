@@ -2,6 +2,10 @@
 
 **Status: Complete — implementation and review done, all tests green**
 
+> Note: reports are sent a configurable delay after local midnight (default
+> 3h, `--report-send-after` / `PCONTROL_REPORT_SEND_AFTER`) so late client-side
+> usage ingestion is captured. See the "Send-after delay" design note below.
+
 ## Goal
 
 Per GitHub issue #59, server/parent-side feature:
@@ -38,6 +42,15 @@ Per GitHub issue #59, server/parent-side feature:
    send; on success insert the log row (`INSERT OR IGNORE`). A failed send is
    retried on the next tick. Restarts can't double-send because the log row is
    durable before any later send.
+4a. **Send-after delay** (`--report-send-after`, default `3h`): a report is only
+   due once `SendAfter` has elapsed past local midnight in the device's
+   timezone. This is a gate, not a reschedule — the report still covers the
+   previous day, but waits so client-side usage events that sync late (device
+   offline, retried syncs) land before the report is compiled. The boundary is
+   `(local midnight of today) + SendAfter` in absolute time (`midnight.Add`),
+   so a DST transition cannot shift it. `NewSender` applies the 3h default when
+   `Config.SendAfter` is 0; setting `Sender.SendAfter = 0` after construction
+   bypasses the default and sends as soon as the day rolls over.
 5. **Config behavior**: if SMTP is not configured (`--smtp-host` empty) the job
    is not started (single log line). A device with no recipients is skipped.
 
@@ -106,7 +119,8 @@ type ReportTarget struct {
 New flags in `cmd/pcontrold/main.go` (each with `PCONTROL_SMTP_*` env fallback
 mirroring `PCONTROL_ADMIN_HASH`):
 `--smtp-host`, `--smtp-port` (default 587), `--smtp-username`,
-`--smtp-password`, `--smtp-from`. If `--smtp-host` is empty → log "daily email
+`--smtp-password`, `--smtp-from`, `--report-send-after` (default 3h). If
+`--smtp-host` is empty → log "daily email
 reports disabled (no SMTP host)" and skip. Else start `report.Run` in a
 goroutine before `http.ListenAndServe`.
 
@@ -124,7 +138,8 @@ goroutine before `http.ListenAndServe`.
 
 ## Deploy + docs
 
-- `deploy/pcontrold.service`: add commented `Environment=PCONTROL_SMTP_*` lines.
+- `deploy/pcontrold.service`: add commented `Environment=PCONTROL_SMTP_*`
+  and `PCONTROL_REPORT_SEND_AFTER` lines.
 - `deploy/Dockerfile` (and `deploy/unraid/` template if it carries env):
   document SMTP env.
 - `README.md`: document SMTP flags/env + feature.
@@ -144,7 +159,9 @@ goroutine before `http.ListenAndServe`.
 - `server/internal/report/report_test.go` — `reportDay` (fixed fake `now`,
   DST boundary zone), `buildReportBody` content, scheduler sends once per
   device/day with fake clock and no double-send on restart, skip-when-no-
-  recipients, SMTP-not-configured skip.
+  recipients, SMTP-not-configured skip, the send-after delay (default 3h;
+  before/at the boundary), `SendAfter=0` sends at midnight, and the delay
+  driven by the device timezone.
 - `server/internal/web/dashboard_test.go` — device detail page renders the
   timezone input + recipients textarea with current values (key-string
   assertions); `POST /devices/{id}/timezone` + `/recipients` persist and

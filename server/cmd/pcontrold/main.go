@@ -29,6 +29,7 @@ func main() {
 	smtpUsername := flag.String("smtp-username", "", "SMTP username (env: PCONTROL_SMTP_USERNAME)")
 	smtpPassword := flag.String("smtp-password", "", "SMTP password (env: PCONTROL_SMTP_PASSWORD)")
 	smtpFrom := flag.String("smtp-from", "", "From address for daily email reports (env: PCONTROL_SMTP_FROM)")
+	reportSendAfter := flag.Duration("report-send-after", 3*time.Hour, "delay after local midnight before sending daily reports (env: PCONTROL_REPORT_SEND_AFTER)")
 	flag.Parse()
 
 	if *adminHash == "" {
@@ -50,6 +51,11 @@ func main() {
 	}
 	if *smtpFrom == "" {
 		*smtpFrom = os.Getenv("PCONTROL_SMTP_FROM")
+	}
+	if v := os.Getenv("PCONTROL_REPORT_SEND_AFTER"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			*reportSendAfter = d
+		}
 	}
 
 	// Handle subcommands
@@ -86,11 +92,12 @@ func main() {
 		log.Printf("daily email reports disabled (no SMTP host configured)")
 	} else {
 		cfg := report.Config{
-			Host:     *smtpHost,
-			Port:     *smtpPort,
-			Username: *smtpUsername,
-			Password: *smtpPassword,
-			From:     *smtpFrom,
+			Host:      *smtpHost,
+			Port:      *smtpPort,
+			Username:  *smtpUsername,
+			Password:  *smtpPassword,
+			From:      *smtpFrom,
+			SendAfter: *reportSendAfter,
 		}
 		go report.NewSender(s, cfg).Run(context.Background())
 		log.Printf("daily email reports enabled via %s", cfg.Addr())

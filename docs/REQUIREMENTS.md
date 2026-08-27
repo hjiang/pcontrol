@@ -19,7 +19,7 @@ pcontrol is a self-hosted parental-control system. A Go server provides a JSON A
 ## Daily email reports
 
 - Each device has a configurable list of email recipients and a timezone (set on the parent-side dashboard).
-- When at least one recipient is configured and the server has SMTP configured, the server emails a plain-text usage report for the previous day shortly after midnight in the device's configured timezone (UTC when unset).
+- When at least one recipient is configured and the server has SMTP configured, the server emails a plain-text usage report for the previous day a few hours after midnight in the device's configured timezone (UTC when unset). The default delay is 3 hours after local midnight (`--report-send-after`).
 - A report is sent at most once per device per day; a server restart must never re-send an already-sent report.
 
 ## Enforcement and privacy

@@ -186,7 +186,7 @@ func TestSender_SendsOncePerDevicePerDay(t *testing.T) {
 	}
 	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 3600)
 
-	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
 	sends := 0
 	lastSubject := ""
 	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587, From: "p@example.com"})
@@ -231,7 +231,7 @@ func TestSender_NoResendAfterRestart(t *testing.T) {
 	}
 	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
 
-	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
 	sends := 0
 	newSender := func() *Sender {
 		snd := NewSender(s, Config{Host: "smtp.example.com", Port: 587, From: "p@example.com"})
@@ -268,7 +268,7 @@ func TestSender_FailedSendIsRetried(t *testing.T) {
 	}
 	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
 
-	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
 	attempts := 0
 	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
 	sender.Now = func() time.Time { return now }
@@ -362,7 +362,7 @@ func TestSender_InvalidTimeZoneFallsBackToUTC(t *testing.T) {
 		t.Fatalf("SetTimeZone: %v", err)
 	}
 
-	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
 	sends := 0
 	lastSubject := ""
 	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
@@ -391,7 +391,7 @@ func TestSender_UnsetTimeZoneDefaultsToUTCWithoutWarning(t *testing.T) {
 	mustAddRecipient(t, s, dev.ID, "parent@example.com")
 	// No SetTimeZone call: the device uses the default UTC behavior ("").
 
-	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
 	sends := 0
 	var logBuf bytes.Buffer
 	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
@@ -424,7 +424,7 @@ func TestSender_MarkReportSentRetried(t *testing.T) {
 	}
 	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
 
-	now := time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 13, 3, 30, 0, 0, time.UTC)
 	sends := 0
 	markCalls := 0
 	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
@@ -453,6 +453,111 @@ func TestSender_MarkReportSentRetried(t *testing.T) {
 	}
 	if sent, _ := s.ReportSent(dev.ID, "2026-07-12"); !sent {
 		t.Error("expected report marked sent after retried mark")
+	}
+}
+
+func TestSender_DefersDefaultThreeHoursAfterMidnight(t *testing.T) {
+	s := testStore(t)
+	dev, _, err := s.CreateDevice("kid-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	mustAddRecipient(t, s, dev.ID, "parent@example.com")
+	if err := s.SetTimeZone(dev.ID, "UTC"); err != nil {
+		t.Fatalf("SetTimeZone: %v", err)
+	}
+	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
+
+	sends := 0
+	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
+	sender.SendFunc = func(cfg Config, from string, to []string, subject, body string) error {
+		sends++
+		return nil
+	}
+
+	// 02:59 local — before the default 3h offset: the previous day's report is
+	// not due yet, so late client-side usage ingestion has time to land.
+	sender.Now = func() time.Time { return time.Date(2026, 7, 13, 2, 59, 0, 0, time.UTC) }
+	sender.RunOnce()
+	if sends != 0 {
+		t.Fatalf("expected 0 sends before the 3h offset, got %d", sends)
+	}
+
+	// 03:00 local — at the offset: the report is now due and is sent once.
+	sender.Now = func() time.Time { return time.Date(2026, 7, 13, 3, 0, 0, 0, time.UTC) }
+	sender.RunOnce()
+	if sends != 1 {
+		t.Fatalf("expected 1 send at the 3h offset, got %d", sends)
+	}
+
+	// A later tick on the same day must not re-send.
+	sender.Now = func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) }
+	sender.RunOnce()
+	if sends != 1 {
+		t.Errorf("expected still 1 send after a later tick, got %d", sends)
+	}
+}
+
+func TestSender_ZeroSendAfterSendsAtMidnight(t *testing.T) {
+	s := testStore(t)
+	dev, _, err := s.CreateDevice("kid-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	mustAddRecipient(t, s, dev.ID, "parent@example.com")
+	if err := s.SetTimeZone(dev.ID, "UTC"); err != nil {
+		t.Fatalf("SetTimeZone: %v", err)
+	}
+	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
+
+	sends := 0
+	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
+	sender.SendAfter = 0 // override NewSender's 3h default → send at midnight
+	sender.Now = func() time.Time { return time.Date(2026, 7, 13, 0, 30, 0, 0, time.UTC) }
+	sender.SendFunc = func(cfg Config, from string, to []string, subject, body string) error {
+		sends++
+		return nil
+	}
+
+	sender.RunOnce()
+	if sends != 1 {
+		t.Fatalf("expected 1 send at midnight with SendAfter=0, got %d", sends)
+	}
+}
+
+func TestSender_DefersUsingDeviceTimeZone(t *testing.T) {
+	s := testStore(t)
+	dev, _, err := s.CreateDevice("kid-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	mustAddRecipient(t, s, dev.ID, "parent@example.com")
+	if err := s.SetTimeZone(dev.ID, "America/New_York"); err != nil {
+		t.Fatalf("SetTimeZone: %v", err)
+	}
+	insertUsage(t, s, dev.ID, "r1", "com.youtube", "YouTube", "2026-07-12", 600)
+
+	sends := 0
+	sender := NewSender(s, Config{Host: "smtp.example.com", Port: 587})
+	sender.SendFunc = func(cfg Config, from string, to []string, subject, body string) error {
+		sends++
+		return nil
+	}
+
+	// NY is EDT (UTC-4) in July. 05:00 UTC = 01:00 EDT on 07-13, one hour past
+	// midnight but inside the 3h window — not due yet (the gate uses local
+	// time, so this is NOT skipped merely because UTC is past 00:00).
+	sender.Now = func() time.Time { return time.Date(2026, 7, 13, 5, 0, 0, 0, time.UTC) }
+	sender.RunOnce()
+	if sends != 0 {
+		t.Fatalf("expected 0 sends (01:00 EDT, inside 3h window), got %d", sends)
+	}
+
+	// 08:00 UTC = 04:00 EDT on 07-13, past the 3h window — due.
+	sender.Now = func() time.Time { return time.Date(2026, 7, 13, 8, 0, 0, 0, time.UTC) }
+	sender.RunOnce()
+	if sends != 1 {
+		t.Fatalf("expected 1 send (04:00 EDT, past 3h window), got %d", sends)
 	}
 }
 

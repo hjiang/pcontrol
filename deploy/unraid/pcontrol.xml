@@ -55,4 +55,8 @@ See deploy/unraid/README.md for full setup instructions.
           Mode=""
           Description="From address for the daily reports (optional)"
           Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Report send delay" Target="PCONTROL_REPORT_SEND_AFTER" Default="3h"
+          Mode=""
+          Description="Delay after local midnight before sending the daily report (Go duration, e.g. 3h)"
+          Type="Variable" Display="always" Required="false" Mask="false"></Config>
 </Container>

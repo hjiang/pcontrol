@@ -14,13 +14,19 @@ import (
 	"pcontrol/server/internal/store"
 )
 
-// Config holds SMTP settings for sending daily usage reports.
+// Config holds settings for sending daily usage reports.
 type Config struct {
 	Host     string
 	Port     int
 	Username string
 	Password string
 	From     string
+
+	// SendAfter is how long after local midnight to wait before sending the
+	// previous day's report (default 3h). It lets late client-side usage
+	// ingestion land before the report is compiled. An unset (0) value means
+	// "use the default".
+	SendAfter time.Duration
 }
 
 // Addr returns the SMTP dial address in "host:port" form, defaulting the
@@ -52,6 +58,11 @@ type Sender struct {
 	// failures without touching a real database.
 	MarkFunc func(deviceID int64, day string, t time.Time) error
 
+	// SendAfter is the minimum local time-of-day (measured from midnight) at
+	// or after which the previous day's report may be sent. Derived from
+	// Config.SendAfter, defaulting to 3h when unset.
+	SendAfter time.Duration
+
 	tickInterval time.Duration
 	warned       map[int64]bool // devices whose timezone failed to load (log once)
 
@@ -62,13 +73,18 @@ type Sender struct {
 
 // NewSender returns a Sender with sensible defaults.
 func NewSender(st *store.Store, cfg Config) *Sender {
-	return &Sender{
-		Store:  st,
-		Cfg:    cfg,
-		Log:    log.Default(),
-		Now:    time.Now,
-		warned: make(map[int64]bool),
+	s := &Sender{
+		Store:     st,
+		Cfg:       cfg,
+		Log:       log.Default(),
+		Now:       time.Now,
+		SendAfter: cfg.SendAfter,
+		warned:    make(map[int64]bool),
 	}
+	if s.SendAfter == 0 {
+		s.SendAfter = 3 * time.Hour
+	}
+	return s
 }
 
 // Run loops forever, running a check pass every minute until ctx is done.
@@ -122,6 +138,13 @@ func (s *Sender) sendIfDue(t domain.ReportTarget, now time.Time) {
 		}
 	}
 	day := reportDay(now, loc)
+
+	// Delay sending until SendAfter past local midnight: usage reporting can
+	// lag on the client (device offline, retried syncs), so emailing at
+	// midnight may capture an incomplete previous day. Default 3h.
+	if !s.dueForLocalTime(now, loc) {
+		return
+	}
 
 	sent, err := s.Store.ReportSent(t.DeviceID, day)
 	if err != nil {
@@ -211,6 +234,21 @@ func (s *Sender) logf(format string, args ...interface{}) {
 		return
 	}
 	log.Printf(format, args...)
+}
+
+// dueForLocalTime reports whether now is at/after SendAfter past local
+// midnight in loc. The boundary is (local midnight of today) + SendAfter in
+// absolute time, so a DST transition cannot shift it. A non-positive
+// SendAfter (a value set directly on the Sender, bypassing NewSender's
+// default) means send as soon as the day rolls over.
+func (s *Sender) dueForLocalTime(now time.Time, loc *time.Location) bool {
+	if s.SendAfter <= 0 {
+		return true
+	}
+	local := now.In(loc)
+	y, m, d := local.Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	return !now.Before(midnight.Add(s.SendAfter))
 }
 
 // reportDay returns the "YYYY-MM-DD" day key for the daily report: yesterday

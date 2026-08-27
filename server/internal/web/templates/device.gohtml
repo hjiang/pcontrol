@@ -95,7 +95,7 @@
     <label for="recipients">Report email recipients</label>
     <textarea id="recipients" name="emails" rows="3" placeholder="one email per line">{{range .Emails}}{{.}}
 {{end}}</textarea>
-    <p class="text-muted text-sm">Daily usage reports are emailed to these addresses after local midnight.</p>
+    <p class="text-muted text-sm">Daily usage reports are emailed to these addresses a few hours after local midnight (default 3h).</p>
   </div>
   <button class="btn">Save recipients</button>
 </form>
@@ -106,7 +106,7 @@
   <div>
     <label for="timezone">Device timezone</label>
     <input id="timezone" name="timezone" value="{{.TimeZone}}" placeholder="e.g. America/New_York">
-    <p class="text-muted text-sm">Used to schedule the daily report after local midnight. Leave blank for UTC.</p>
+    <p class="text-muted text-sm">Used to schedule the daily report a few hours after local midnight. Leave blank for UTC.</p>
   </div>
   <button class="btn">Save timezone</button>
 </form>

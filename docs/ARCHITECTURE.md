@@ -24,7 +24,9 @@ The server runs an optional background goroutine (started when an SMTP host is
 configured via `PCONTROL_SMTP_*`) that emails daily usage reports. On a
 1-minute tick it lists every device that has at least one email recipient
 (`device_email_recipients`), computes the previous day in the device's
-configured timezone (`device_settings.timezone`, UTC when unset), and sends a
+configured timezone (`device_settings.timezone`, UTC when unset), but only
+once `--report-send-after` (default 3h) has elapsed since local midnight, so
+late client-side usage ingestion lands before the report is compiled, and sends a
 plain-text report built from the same aggregation the dashboard uses
 (`UsageTotals` + `CountedTotalSeconds` + exclusions). A durable per-device/day
 row in `daily_report_log` makes sending idempotent: a failed send is retried on

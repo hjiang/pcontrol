@@ -246,6 +246,17 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   detached exactly once on service destruction. Validated on Xiaomi
   `2602BRT18C`, HyperOS `OS3.0.304.0.WPLCNXM`.
 
+- **The daily report email is gated by a send-after delay, not sent at
+  midnight.** `report.Sender` waits `SendAfter` (default 3h,
+  `--report-send-after` / `PCONTROL_REPORT_SEND_AFTER`) past local midnight
+  before sending the previous day's report, so late client-side usage
+  ingestion is captured. The gate is `(local midnight of today) + SendAfter`
+  in absolute time, so a DST transition cannot shift it. `NewSender` defaults
+  an unset `SendAfter` to 3h; setting `Sender.SendAfter = 0` after
+  construction restores at-midnight sends. A day entirely missed while the
+  server was down is **not** backfilled — the job only ever emails
+  'yesterday', so it would quietly skip the missed day.
+
 ## Conventions
 
 - Follow the numbered plan files in `docs/plans/`. Larger work gets a new
