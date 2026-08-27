@@ -414,7 +414,12 @@ func sendEmail(cfg Config, from string, to []string, subject, body string) error
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("smtp write close: %w", err)
 	}
-	return c.Quit()
+	// The message was accepted once DATA close returned. A QUIT failure here
+	// usually just means the server dropped the connection; treating it as a
+	// hard error would make the next tick retry and duplicate an already-
+	// delivered email. Ignore it.
+	_ = c.Quit()
+	return nil
 }
 
 var (

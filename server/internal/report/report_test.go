@@ -1,6 +1,7 @@
 package report
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -623,6 +624,75 @@ func TestSender_DefersUsingDeviceTimeZone(t *testing.T) {
 	sender.RunOnce()
 	if sends != 1 {
 		t.Fatalf("expected 1 send (04:00 EDT, past 3h window), got %d", sends)
+	}
+}
+
+func TestSendEmail_IgnoresQuitErrorAfterDelivery(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	// A fake SMTP server that accepts the exchange through DATA (so the
+	// message is delivered) but then drops the connection on QUIT without a
+	// 221. A QUIT failure after acceptance must not be treated as a hard
+	// error, or the scheduler would retry and duplicate a delivered email.
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		w := bufio.NewWriter(conn)
+		w.WriteString("220 fake ready\r\n")
+		w.Flush()
+		inData := false
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if inData {
+				if line == ".\r\n" || line == ".\n" {
+					inData = false
+					w.WriteString("250 OK\r\n")
+					w.Flush()
+				}
+				continue
+			}
+			switch {
+			case strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "EHLO"),
+				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "HELO"):
+				w.WriteString("250-fake\r\n250 OK\r\n")
+			case strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "MAIL"),
+				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "RCPT"):
+				w.WriteString("250 OK\r\n")
+			case strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "DATA"):
+				w.WriteString("354 end with .\r\n")
+				inData = true
+			case strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "QUIT"):
+				return // drop the connection without 221
+			default:
+				w.WriteString("250 OK\r\n")
+			}
+			w.Flush()
+		}
+	}()
+
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split addr: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
+	cfg := Config{Host: host, Port: port, From: "from@example.com"}
+	if err := sendEmail(cfg, "from@example.com", []string{"to@example.com"}, "subject", "body"); err != nil {
+		t.Errorf("expected QUIT error to be ignored after delivery, got: %v", err)
 	}
 }
 

@@ -88,8 +88,16 @@ func (s *Store) SetTimeZone(deviceID int64, tz string) error {
 	if err := ensureDeviceSettings(tx, deviceID); err != nil {
 		return fmt.Errorf("ensure device settings: %w", err)
 	}
-	if _, err := tx.Exec(`UPDATE device_settings SET timezone = ? WHERE device_id = ?`, tz, deviceID); err != nil {
+	res, err := tx.Exec(`UPDATE device_settings SET timezone = ? WHERE device_id = ?`, tz, deviceID)
+	if err != nil {
 		return fmt.Errorf("set timezone: %w", err)
+	}
+	// Assert the write actually touched a row so a failure inside the
+	// INSERT/UPDATE above cannot silently drop the timezone write.
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("timezone rows affected: %w", err)
+	} else if n == 0 {
+		return fmt.Errorf("device %d has no settings row", deviceID)
 	}
 	return tx.Commit()
 }
