@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"golang.org/x/crypto/bcrypt"
 	"pcontrol/server/internal/report"
