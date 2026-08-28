@@ -34,4 +34,29 @@ See deploy/unraid/README.md for full setup instructions.
           Mode=""
           Description="bcrypt hash of the admin password. Generate with: docker run --rm -i ghcr.io/hjiang/pcontrol-server hash-password"
           Type="Variable" Display="always" Required="true" Mask="true"></Config>
+
+  <Config Name="SMTP host" Target="PCONTROL_SMTP_HOST" Default=""
+          Mode=""
+          Description="SMTP host for daily usage reports (leave empty to disable). SMTP must support STARTTLS on the configured port."
+          Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="SMTP port" Target="PCONTROL_SMTP_PORT" Default="587"
+          Mode=""
+          Description="SMTP port (default 587; implicit-TLS 465 is not supported)"
+          Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="SMTP username" Target="PCONTROL_SMTP_USERNAME" Default=""
+          Mode=""
+          Description="SMTP username (optional)"
+          Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="SMTP password" Target="PCONTROL_SMTP_PASSWORD" Default=""
+          Mode=""
+          Description="SMTP password (optional)"
+          Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="SMTP From address" Target="PCONTROL_SMTP_FROM" Default=""
+          Mode=""
+          Description="From address for the daily reports (optional)"
+          Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Report send delay" Target="PCONTROL_REPORT_SEND_AFTER" Default="3h"
+          Mode=""
+          Description="Delay after local midnight before sending the daily report (Go duration, e.g. 3h)"
+          Type="Variable" Display="always" Required="false" Mask="false"></Config>
 </Container>

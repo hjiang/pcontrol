@@ -67,3 +67,11 @@ type UsageTotal struct {
 	Label   string
 	Seconds int
 }
+
+// ReportTarget is a device that has at least one email recipient configured
+// for daily usage reports.
+type ReportTarget struct {
+	DeviceID int64
+	Name     string
+	TimeZone string // IANA name; may be "" (means UTC)
+}

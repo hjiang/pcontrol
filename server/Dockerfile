@@ -24,6 +24,9 @@ COPY --from=build --chown=65532:65532 /data /data
 VOLUME /data
 EXPOSE 7285
 # /healthz is an unauthenticated 200-OK endpoint implemented in web.NewRouter.
+# Daily email usage reports are enabled by setting the PCONTROL_SMTP_* env vars
+# (host, port, username, password, from) at runtime; PCONTROL_REPORT_SEND_AFTER
+# tunes the delay after local midnight (default 3h). See README.md.
 HEALTHCHECK CMD ["/pcontrold", "healthcheck"]
 ENTRYPOINT ["/pcontrold"]
 CMD ["--listen", "0.0.0.0:7285", "--db", "/data/pcontrol.db"]

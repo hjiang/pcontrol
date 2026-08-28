@@ -2,28 +2,64 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
+	"golang.org/x/crypto/bcrypt"
+	"pcontrol/server/internal/report"
 	"pcontrol/server/internal/store"
 	"pcontrol/server/internal/web"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	db := flag.String("db", "pcontrol.db", "SQLite database path")
 	adminHash := flag.String("admin-password-hash", "", "bcrypt hash of admin password (env: PCONTROL_ADMIN_HASH)")
+	smtpHost := flag.String("smtp-host", "", "SMTP host for daily email reports (env: PCONTROL_SMTP_HOST)")
+	smtpPort := flag.Int("smtp-port", 587, "SMTP port (env: PCONTROL_SMTP_PORT)")
+	smtpUsername := flag.String("smtp-username", "", "SMTP username (env: PCONTROL_SMTP_USERNAME)")
+	smtpPassword := flag.String("smtp-password", "", "SMTP password (env: PCONTROL_SMTP_PASSWORD)")
+	smtpFrom := flag.String("smtp-from", "", "From address for daily email reports (env: PCONTROL_SMTP_FROM)")
+	reportSendAfter := flag.Duration("report-send-after", 3*time.Hour, "delay after local midnight before sending daily reports (env: PCONTROL_REPORT_SEND_AFTER)")
 	flag.Parse()
 
 	if *adminHash == "" {
 		*adminHash = os.Getenv("PCONTROL_ADMIN_HASH")
+	}
+	if *smtpHost == "" {
+		*smtpHost = os.Getenv("PCONTROL_SMTP_HOST")
+	}
+	if v := os.Getenv("PCONTROL_SMTP_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			*smtpPort = p
+		} else {
+			log.Printf("warning: invalid PCONTROL_SMTP_PORT %q, using %d", v, *smtpPort)
+		}
+	}
+	if *smtpUsername == "" {
+		*smtpUsername = os.Getenv("PCONTROL_SMTP_USERNAME")
+	}
+	if *smtpPassword == "" {
+		*smtpPassword = os.Getenv("PCONTROL_SMTP_PASSWORD")
+	}
+	if *smtpFrom == "" {
+		*smtpFrom = os.Getenv("PCONTROL_SMTP_FROM")
+	}
+	if v := os.Getenv("PCONTROL_REPORT_SEND_AFTER"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			*reportSendAfter = d
+		} else {
+			log.Printf("warning: invalid PCONTROL_REPORT_SEND_AFTER %q, using %s", v, *reportSendAfter)
+		}
 	}
 
 	// Handle subcommands
@@ -52,6 +88,24 @@ func main() {
 	defer s.Close()
 
 	mux := web.NewRouter(s, *adminHash)
+
+	// Start the daily-email-report job when SMTP is configured. The job runs
+	// on its own goroutine and is deliberately independent of the HTTP
+	// server (the dashboard is pull-only; reports are push-only).
+	if *smtpHost == "" {
+		log.Printf("daily email reports disabled (no SMTP host configured)")
+	} else {
+		cfg := report.Config{
+			Host:      *smtpHost,
+			Port:      *smtpPort,
+			Username:  *smtpUsername,
+			Password:  *smtpPassword,
+			From:      *smtpFrom,
+			SendAfter: *reportSendAfter,
+		}
+		go report.NewSender(s, cfg).Run(context.Background())
+		log.Printf("daily email reports enabled via %s", cfg.Addr())
+	}
 
 	log.Printf("pcontrold listening on %s", *listen)
 	if err := http.ListenAndServe(*listen, mux); err != nil {

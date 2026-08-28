@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"pcontrol/server/internal/domain"
@@ -171,6 +172,12 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 			http.Error(w, "name required", http.StatusBadRequest)
 			return
 		}
+		// The device name flows into the daily-report email Subject header, so
+		// reject CR/LF that could inject headers.
+		if strings.ContainsAny(name, "\r\n") {
+			http.Error(w, "invalid device name", http.StatusBadRequest)
+			return
+		}
 
 		dev, rawToken, err := h.store.CreateDevice(name)
 		if err != nil {
@@ -203,6 +210,12 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 		name := r.FormValue("name")
 		if name == "" {
 			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		// The device name flows into the daily-report email Subject header, so
+		// reject CR/LF that could inject headers.
+		if strings.ContainsAny(name, "\r\n") {
+			http.Error(w, "invalid device name", http.StatusBadRequest)
 			return
 		}
 
@@ -239,6 +252,108 @@ func (h *webAuthHandler) deviceDelete() http.HandlerFunc {
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
+}
+
+// deviceRecipients sets the daily-report email recipient list for a device.
+func (h *webAuthHandler) deviceRecipients() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		deviceID := parseID(id)
+		if deviceID <= 0 {
+			http.Error(w, "invalid device id", http.StatusBadRequest)
+			return
+		}
+		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var emails []string
+		for _, line := range strings.Split(r.FormValue("emails"), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if !validEmail(line) {
+				http.Error(w, fmt.Sprintf("invalid email: %s", line), http.StatusBadRequest)
+				return
+			}
+			emails = append(emails, line)
+		}
+
+		if err := h.store.SetEmailRecipients(deviceID, emails); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
+	}
+}
+
+// deviceTimeZone sets the report timezone for a device (empty clears it).
+func (h *webAuthHandler) deviceTimeZone() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		deviceID := parseID(id)
+		if deviceID <= 0 {
+			http.Error(w, "invalid device id", http.StatusBadRequest)
+			return
+		}
+		if _, err := h.store.DeviceByTokenFromID(deviceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "device not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		tz := strings.TrimSpace(r.FormValue("timezone"))
+		if tz != "" {
+			if _, err := time.LoadLocation(tz); err != nil {
+				http.Error(w, "invalid timezone", http.StatusBadRequest)
+				return
+			}
+		}
+
+		if err := h.store.SetTimeZone(deviceID, tz); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
+	}
+}
+
+// validEmail performs a lightweight sanity check on an email address: it
+// must be non-empty, free of CR/LF (header injection), have a non-empty local
+// part and domain, and a dot in the domain part.
+func validEmail(s string) bool {
+	if s == "" || strings.ContainsAny(s, "\r\n") {
+		return false
+	}
+	// A single '@'. Whitespace is not valid in a mailbox address and a comma
+	// is a list separator rather than part of an address; both would fail at
+	// SMTP RCPT and cause the report scheduler to retry/log every minute.
+	if strings.ContainsAny(s, " \t,") || strings.Count(s, "@") != 1 {
+		return false
+	}
+	at := strings.Index(s, "@")
+	if at <= 0 || at == len(s)-1 {
+		return false
+	}
+	// The dot must appear in the domain portion (after the '@').
+	return strings.Contains(s[at+1:], ".")
 }
 
 func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
@@ -282,6 +397,17 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			Name:         device.Name,
 			Day:          day,
 			TotalMinutes: int(totalMinutes),
+		}
+
+		if tz, err := h.store.TimeZone(deviceID); err != nil {
+			log.Printf("device timezone: %v", err)
+		} else {
+			data.TimeZone = tz
+		}
+		if emails, err := h.store.EmailRecipients(deviceID); err != nil {
+			log.Printf("device recipients: %v", err)
+		} else {
+			data.Emails = emails
 		}
 
 		// Battery

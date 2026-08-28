@@ -36,6 +36,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("store v2 migration: %w", err)
 	}
 
+	if err := migrateV3(db); err != nil {
+		return nil, fmt.Errorf("store v3 migration: %w", err)
+	}
+
 	s := &Store{DB: db}
 	return s, nil
 }
@@ -79,6 +83,45 @@ func migrateV2(db *sql.DB) error {
 
 	_, err := db.Exec(
 		`INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)`)
+	return err
+}
+
+// migrateV3 adds daily-report configuration: a per-device timezone, the
+// email recipient list, and a per-device/day send log. Idempotent: the
+// column add is guarded and the tables use CREATE TABLE IF NOT EXISTS, so a
+// mid-run failure self-heals on the next startup (same pattern as migrateV2).
+func migrateV3(db *sql.DB) error {
+	// Guarded column add on device_settings
+	var n int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('device_settings') WHERE name = ?`, "timezone").Scan(&n)
+	if err != nil {
+		return fmt.Errorf("check column device_settings.timezone: %w", err)
+	}
+	if n == 0 {
+		if _, err := db.Exec(`ALTER TABLE device_settings ADD COLUMN timezone TEXT`); err != nil {
+			return fmt.Errorf("add column device_settings.timezone: %w", err)
+		}
+	}
+
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS device_email_recipients (
+			device_id INTEGER NOT NULL,
+			email     TEXT NOT NULL,
+			position  INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (device_id, email))`,
+		`CREATE TABLE IF NOT EXISTS daily_report_log (
+			device_id INTEGER NOT NULL,
+			day       TEXT NOT NULL,
+			sent_at   TEXT NOT NULL,
+			PRIMARY KEY (device_id, day))`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrateV3 create table: %w", err)
+		}
+	}
+
+	_, err = db.Exec(`INSERT OR IGNORE INTO schema_migrations (version) VALUES (3)`)
 	return err
 }
 

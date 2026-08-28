@@ -16,6 +16,14 @@ Restart=on-failure
 RestartSec=5
 
 Environment=PCONTROL_ADMIN_HASH=%h
+# Optional: enable daily email usage reports (leave unset to disable the job).
+# SMTP must support STARTTLS on the given port (implicit-TLS port 465 is not supported).
+#Environment=PCONTROL_SMTP_HOST=smtp.example.com
+#Environment=PCONTROL_SMTP_PORT=587
+#Environment=PCONTROL_SMTP_USERNAME=reports@example.com
+#Environment=PCONTROL_SMTP_PASSWORD=secret
+#Environment=PCONTROL_SMTP_FROM=pcontrol@example.com
+#Environment=PCONTROL_REPORT_SEND_AFTER=3h
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
