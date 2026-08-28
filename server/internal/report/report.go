@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,12 +32,13 @@ type Config struct {
 }
 
 // Addr returns the SMTP dial address in "host:port" form, defaulting the
-// port to 587 when unset.
+// port to 587 when unset. IPv6 literal hosts are bracketed ([2001:db8::1]:587)
+// so the dial address stays unambiguous.
 func (c Config) Addr() string {
 	if c.Port == 0 {
 		c.Port = 587
 	}
-	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
 
 // Sender emails daily usage reports for devices that have recipients

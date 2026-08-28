@@ -43,6 +43,27 @@ func insertUsage(t *testing.T, s *store.Store, deviceID int64, eventID, subject,
 	}
 }
 
+func TestConfigAddr(t *testing.T) {
+	tests := []struct {
+		host string
+		port int
+		want string
+	}{
+		{host: "smtp.example.com", port: 587, want: "smtp.example.com:587"},
+		{host: "smtp.example.com", port: 0, want: "smtp.example.com:587"}, // unset port defaults to 587
+		{host: "smtp.example.com", port: 465, want: "smtp.example.com:465"},
+		// An IPv6 literal must be bracketed, or the dial address is
+		// ambiguous ("2001:db8::1:587" has two candidate port splits).
+		{host: "2001:db8::1", port: 587, want: "[2001:db8::1]:587"},
+	}
+	for _, tt := range tests {
+		cfg := Config{Host: tt.host, Port: tt.port}
+		if got := cfg.Addr(); got != tt.want {
+			t.Errorf("Addr(host=%q, port=%d) = %q, want %q", tt.host, tt.port, got, tt.want)
+		}
+	}
+}
+
 func TestReportDay(t *testing.T) {
 	utc := time.UTC
 
