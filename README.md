@@ -61,16 +61,59 @@ go run ./cmd/pcontrold \
 | `--smtp-from` | `PCONTROL_SMTP_FROM` | — | From address for daily reports (optional) |
 | `--report-send-after` | `PCONTROL_REPORT_SEND_AFTER` | `3h` | Delay after local midnight before sending daily reports |
 
-**Daily email usage reports:** in the ⚙️ Device Settings section of a device's
-page you can set an email recipient list and the device's timezone. When at
-least one recipient is configured **and** the server has an SMTP host set, the
-server emails a plain-text usage report for the previous day a few hours
-after midnight in the device's configured timezone (UTC when unset) — by
-default 3 hours (`--report-send-after`), so late client-side usage ingestion
-lands before the report is compiled. Reports are sent once per
-device per day — a server restart never re-sends a report that was already
-mailed. SMTP must support STARTTLS on the configured port (implicit-TLS port
-465 is not supported); auth is attempted only when `--smtp-username` is set.
+### Daily email usage reports (SMTP)
+
+The server can email a daily plain-text usage report per device. Setup needs
+an SMTP account that supports **STARTTLS on the submission port (587)** —
+implicit-TLS port 465 is not supported, and authentication is only attempted
+when a username is configured.
+
+**1. Configure SMTP on the server** — via the `--smtp-*` flags above or their
+`PCONTROL_SMTP_*` env vars (env vars are the usual choice in Docker/systemd):
+
+| Env var | Meaning |
+|---------|---------|
+| `PCONTROL_SMTP_HOST` | SMTP server hostname or IPv6 literal. Empty disables the job |
+| `PCONTROL_SMTP_PORT` | SMTP port (default `587`) |
+| `PCONTROL_SMTP_USERNAME` | SMTP login (optional; when set, `PCONTROL_SMTP_PASSWORD` is used) |
+| `PCONTROL_SMTP_PASSWORD` | SMTP password (or app password) |
+| `PCONTROL_SMTP_FROM` | From address for reports (optional; defaults to `pcontrol@localhost`) |
+| `PCONTROL_REPORT_SEND_AFTER` | Delay after local midnight before sending (default `3h`) |
+
+**2. Add recipients and a timezone per device** — open a device's page in the
+dashboard and use ⚙️ Device Settings to enter the recipient addresses (one
+per line) and the device's timezone (an IANA name such as `Europe/Berlin`;
+empty means UTC).
+
+**3. Verify** — at startup the server logs
+`daily email reports enabled via <host>:<port>`; send failures (invalid
+timezone, SMTP errors) are logged per device. A report is sent for the
+previous day a few hours after midnight in the device's timezone (3 hours by
+default, so late client-side usage ingestion lands before the report is
+compiled), at most once per device per day — a server restart never re-sends
+a report that was already mailed, and a device with no recipients is skipped.
+
+Worked example (development):
+
+```sh
+go run ./cmd/pcontrold \
+    --listen 127.0.0.1:8080 \
+    --admin-password-hash "$(go run ./cmd/pcontrold hash-password <<< 'my-password')" \
+    --smtp-host smtp.example.com \
+    --smtp-port 587 \
+    --smtp-username reports@example.com \
+    --smtp-password 'app-password' \
+    --smtp-from 'pcontrol@example.com'
+```
+
+Notes:
+
+- The same flags work for any STARTTLS-capable submission server, including
+  Gmail/Google Workspace (with an app password) and self-hosted Postfix.
+- An invalid `PCONTROL_SMTP_PORT` or `PCONTROL_REPORT_SEND_AFTER` value is
+  logged as a warning and falls back to the default.
+- A host given as an IPv6 literal (e.g. `2001:db8::1`) is supported and is
+  bracketed correctly in the dial address.
 
 **Subcommand:** `go run ./cmd/pcontrold hash-password` reads a password from
 stdin (one line) and prints its bcrypt hash to stdout. Pipe the output into
@@ -107,7 +150,15 @@ docker run -d \
   -p 7285:7285 \
   -v /path/to/appdata:/data \
   -e PCONTROL_ADMIN_HASH='<your-bcrypt-hash>' \
+  -e PCONTROL_SMTP_HOST='smtp.example.com' \
+  -e PCONTROL_SMTP_PORT='587' \
+  -e PCONTROL_SMTP_USERNAME='reports@example.com' \
+  -e PCONTROL_SMTP_PASSWORD='<smtp-password>' \
+  -e PCONTROL_SMTP_FROM='pcontrol@example.com' \
   ghcr.io/hjiang/pcontrol-server:latest
+
+(The `PCONTROL_SMTP_*` lines enable daily email reports — omit them to
+leave the job disabled.)
 ```
 
 ## Deployment (VPS)
@@ -124,6 +175,12 @@ sudo systemctl edit pcontrold
 # Add:
 # [Service]
 # Environment=PCONTROL_ADMIN_HASH=<your-bcrypt-hash>
+# Optional: enable daily email reports (see "Daily email usage reports (SMTP)")
+# Environment=PCONTROL_SMTP_HOST=smtp.example.com
+# Environment=PCONTROL_SMTP_PORT=587
+# Environment=PCONTROL_SMTP_USERNAME=reports@example.com
+# Environment=PCONTROL_SMTP_PASSWORD=<smtp-password>
+# Environment=PCONTROL_SMTP_FROM=pcontrol@example.com
 
 # Copy the Caddy reverse-proxy config (optional)
 sudo cp deploy/Caddyfile /etc/caddy/sites-enabled/pcontrol.example.com
