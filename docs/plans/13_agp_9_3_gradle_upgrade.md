@@ -31,24 +31,24 @@ Compatibility notes:
 
 ### Stage 1: Version bumps
 
-- [ ] `android/build.gradle.kts`: AGP 9.2.1 → 9.3.2 (application + library).
-- [ ] `.github/workflows/android-tests.yml`: `gradle-version: 9.5.0` (2
+- [x] `android/build.gradle.kts`: AGP 9.2.1 → 9.3.2 (application + library).
+- [x] `.github/workflows/android-tests.yml`: `gradle-version: 9.5.0` (2
       occurrences: setup-gradle + wrapper generation).
-- [ ] `.github/workflows/android-build.yml`: same, 2 occurrences.
-- [ ] `AGENTS.md`: update Gradle version references (repo layout + CI note).
+- [x] `.github/workflows/android-build.yml`: same, 2 occurrences.
+- [x] `AGENTS.md`: update Gradle version references (repo layout + CI note).
 
 **Status:** done
 
 ### Stage 2: Local verification
 
-- [ ] `nix develop -c bash -c 'cd android && gradle test'` passes with
+- [x] `nix develop -c bash -c 'cd android && gradle test'` passes with
       Gradle 9.5.1 + AGP 9.3.2.
 
 **Status:** done
 
 ### Stage 3: Branch + CI
 
-- [ ] Branch `agp-9.3-gradle-9.5`, push, open PR.
-- [ ] Close #47 and #48 as superseded by this PR.
+- [x] Branch `agp-9.3-gradle-9.5`, push, open PR.
+- [x] Close #47 and #48 as superseded by this PR.
 
 **Status:** done
