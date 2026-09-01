@@ -246,6 +246,14 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   detached exactly once on service destruction. Validated on Xiaomi
   `2602BRT18C`, HyperOS `OS3.0.304.0.WPLCNXM`.
 
+- **AGP bumps must be coordinated with the CI Gradle pin.** CI has no committed
+  wrapper; `android-tests.yml` / `android-build.yml` generate one from a
+  hardcoded `gradle-version` pin. An AGP bump that exceeds that pin fails at
+  `gradle wrapper --gradle-version …` with
+  `NoClassDefFoundError: org/gradle/features/binding/ProjectTypeBinding` before
+  any test runs — Renovate PRs that only edit `build.gradle.kts` can never
+  pass (AGP 9.3 requires Gradle 9.5.0; see plan 13).
+
 - **The daily report email is gated by a send-after delay, not sent at
   midnight.** `report.Sender` waits `SendAfter` (default 3h,
   `--report-send-after` / `PCONTROL_REPORT_SEND_AFTER`) past local midnight
