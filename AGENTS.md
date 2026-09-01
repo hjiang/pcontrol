@@ -14,7 +14,7 @@ server/           Go module `pcontrol/server` (Go 1.26)
     store/        SQLite (modernc.org/sqlite, pure Go) + migrations.sql
     api/          Device-facing JSON API (POST /api/v1/sync, bearer auth)
     web/          Admin dashboard (html/template + HTMX, session auth)
-android/          Gradle project (Kotlin, JDK 17, Gradle 9.5.0)
+android/          Gradle project (Kotlin, JDK 17, Gradle 9.5.x)
   core/           Pure Kotlin JVM module — PolicyEngine, domain logic, no Android deps
   app/            Android app — TrackerService, enforcement, Room DB, sync
 deploy/           systemd unit + Caddyfile + Unraid Docker template (deploy/unraid/)
