@@ -14,7 +14,7 @@ server/           Go module `pcontrol/server` (Go 1.26)
     store/        SQLite (modernc.org/sqlite, pure Go) + migrations.sql
     api/          Device-facing JSON API (POST /api/v1/sync, bearer auth)
     web/          Admin dashboard (html/template + HTMX, session auth)
-android/          Gradle project (Kotlin, JDK 17, Gradle 9.4.1)
+android/          Gradle project (Kotlin, JDK 17, Gradle 9.5.0)
   core/           Pure Kotlin JVM module — PolicyEngine, domain logic, no Android deps
   app/            Android app — TrackerService, enforcement, Room DB, sync
 deploy/           systemd unit + Caddyfile + Unraid Docker template (deploy/unraid/)
@@ -26,7 +26,7 @@ docs/plans/       Numbered plan files (01_… is the normative original spec)
 Use the Nix dev shell (`nix develop`) — it provides Go, JDK 17, Gradle, the
 Android SDK, and sqlite. There is **no committed Gradle wrapper**; use the
 dev shell's `gradle` locally (CI generates a wrapper on the fly with
-`gradle wrapper --gradle-version 9.4.1`).
+`gradle wrapper --gradle-version 9.5.0`).
 
 ```sh
 # Server: tests + vet (run both before any commit touching server/)
