@@ -25,7 +25,7 @@ Compatibility notes:
   most an untested-combination warning.
 - Nix dev shell: `gradle_9` in nixpkgs-unstable is 9.5.1 — no flake change
   needed.
-- `maxSdk`/`targetSdk` unchanged (AGP 9.3 supports API level 37).
+- `minSdk`/`targetSdk` unchanged (AGP 9.3 supports API level 37).
 
 ## Stages
 
