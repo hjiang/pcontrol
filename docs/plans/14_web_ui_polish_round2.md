@@ -437,7 +437,7 @@ tooltips. No JS, no library.
 uses the `var(--primary)` token); tooltips work on hover; the old div-bar
 history markup is gone and its old assertions updated in the same commit.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 

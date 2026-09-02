@@ -562,6 +562,103 @@ func TestDashboard_HTMXPartial(t *testing.T) {
 	}
 }
 
+// TestDeviceDetail_HistoryChart pins the inline SVG 7-day chart (Stage 6):
+// server-rendered bars, per-bar tooltips, and a dashed limit line when a
+// total limit exists (and none when it doesn't).
+func TestDeviceDetail_HistoryChart(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("chart-device")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// 7 days of fixture data: today + 6 previous days.
+	now := time.Now()
+	var events []domain.Event
+	for i := 0; i < 7; i++ {
+		day := now.AddDate(0, 0, -i).Format("2006-01-02")
+		events = append(events, domain.Event{
+			EventID:         fmt.Sprintf("chart-%d", i),
+			DeviceID:        dev.ID,
+			Kind:            domain.KindApp,
+			Subject:         "com.chart.app",
+			Label:           "ChartApp",
+			Day:             day,
+			StartedAt:       now.AddDate(0, 0, -i),
+			DurationSeconds: (i + 1) * 60, // 1m..7m
+		})
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+	limit := 10
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<svg") {
+		t.Error("expected <svg chart on device page")
+	}
+	if !strings.Contains(body, `role="img"`) {
+		t.Error("expected role=img on the chart")
+	}
+	if got := strings.Count(body, "<rect"); got != 7 {
+		t.Errorf("expected 7 <rect> bars, got %d", got)
+	}
+	if !strings.Contains(body, "<title>") {
+		t.Error("expected per-bar <title> tooltips")
+	}
+	todayKey := now.Format("2006-01-02")
+	if !strings.Contains(body, "<title>"+todayKey) {
+		t.Errorf("expected a <title> containing fixture day key %s", todayKey)
+	}
+	if !strings.Contains(body, `<rect x="12"`) {
+		t.Error("expected first bar at x=12 (chart geometry)")
+	}
+	if !strings.Contains(body, "<line") {
+		t.Error("expected dashed limit <line> when a total limit exists")
+	}
+
+	// Without a limit there must be no limit line.
+	dev2, _, err := s.CreateDevice("chart-device-nolimit")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	for i := range events {
+		events[i].DeviceID = dev2.ID
+		events[i].EventID = fmt.Sprintf("chart-nolimit-%d", i)
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev2.ID), nil)
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	if strings.Contains(rec2.Body.String(), "<line") {
+		t.Error("expected no limit <line> without a total limit")
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")

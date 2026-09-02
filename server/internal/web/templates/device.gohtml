@@ -33,15 +33,19 @@
 {{if .History}}
 <h2>7-day history</h2>
 <div style="margin-bottom:1rem">
-{{range .History}}
-  <div style="display:flex;gap:0.5em;align-items:center;margin:3px 0">
-    <span style="width:6.5em;text-align:right;font-size:0.85em;color:var(--text-muted)">{{.Day}}</span>
-    <div class="bar-bg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{.BarPercent}}" aria-label="Usage {{.BarPercent}} percent of daily max" style="width:200px">
-      <div class="bar-fill" style="background:var(--primary);width:{{.BarPercent}}%;min-width:{{if .Minutes}}4px{{else}}0{{end}};border-radius:4px"></div>
-    </div>
-    <span style="font-size:0.85em;min-width:3em;color:var(--text)">{{dur .Minutes}}</span>
-  </div>
-{{end}}
+<svg viewBox="0 0 280 100" role="img"
+     aria-label="Daily usage over the last 7 days, maximum {{dur .HistoryMaxMinutes}}"
+     style="width:100%;max-width:420px;height:120px">
+  {{range .History}}
+  <g>
+    <title>{{.Day}}: {{dur .Minutes}}</title>
+    <rect x="{{.X}}" y="{{.Y}}" width="{{.Width}}" height="{{.Height}}"
+          rx="2" style="fill:var(--primary)"/>
+  </g>
+  {{end}}
+  {{if .HasLimit}}<line x1="0" x2="280" y1="{{.LimitLineY}}" y2="{{.LimitLineY}}"
+    style="stroke:var(--danger);stroke-width:1.5;stroke-dasharray:4 3"/>{{end}}
+</svg>
 </div>
 {{end}}
 

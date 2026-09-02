@@ -434,6 +434,7 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		}
 
 		// 7-day history: compute counted totals for the last 7 days
+		historyMax := 0
 		if parsedDay, err := time.Parse("2006-01-02", day); err == nil {
 			fromDay := parsedDay.AddDate(0, 0, -6).Format("2006-01-02")
 			dailyTotals, err := h.store.DailyTotalsWithExclusions(deviceID, fromDay, day, policy.Exclusions)
@@ -441,26 +442,36 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 				log.Printf("daily totals: %v", err)
 			} else {
 				// Find max for scaling
-				maxMinutes := 0
 				for i := 6; i >= 0; i-- {
 					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
-					min := dailyTotals[d] / 60
-					if min > maxMinutes {
-						maxMinutes = min
+					dayMinutes := dailyTotals[d] / 60
+					if dayMinutes > historyMax {
+						historyMax = dayMinutes
 					}
 				}
-				if maxMinutes == 0 {
-					maxMinutes = 1 // avoid division by zero
+				data.HistoryMaxMinutes = historyMax
+				scaleMax := historyMax
+				if scaleMax == 0 {
+					scaleMax = 1 // avoid division by zero
 				}
 				for i := 6; i >= 0; i-- {
 					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
 					dayMinutes := dailyTotals[d] / 60
-					pct := dayMinutes * 100 / maxMinutes
+					pct := min(dayMinutes*100/scaleMax, 100)
 					data.History = append(data.History, historyRow{
 						Day:        d,
 						Minutes:    dayMinutes,
-						BarPercent: min(pct, 100),
+						BarPercent: pct,
 					})
+				}
+				// Precompute SVG geometry (Stage 6): chart box viewBox="0 0 280 100",
+				// 7 bars of width 28 with 12px gaps, oldest day leftmost.
+				for idx := range data.History {
+					row := &data.History[idx]
+					row.X = idx*40 + 12
+					row.Width = 28
+					row.Height = row.BarPercent // already capped at 100
+					row.Y = 100 - row.Height
 				}
 			}
 		}
@@ -470,6 +481,12 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			data.HasLimit = true
 			data.LimitMin = limitMin
 			data.WarnPct = policy.WarnThresholdPercent
+			if historyMax > 0 {
+				// Dashed limit line on the history chart (Stage 6), scaled like
+				// the bars: limitMinutes*100/historyMax, capped at 100.
+				limitPct := min(limitMin*100/historyMax, 100)
+				data.LimitLineY = 100 - limitPct
+			}
 			pct := 0
 			if limitMin > 0 {
 				pct = int(totalMinutes) * 100 / limitMin
