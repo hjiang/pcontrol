@@ -51,6 +51,7 @@ func init() {
 	parsedTemplates, err = template.New("").Funcs(template.FuncMap{
 		"year":    func() int { return time.Now().Year() },
 		"version": func() string { return BuildVersion },
+		"dur":     formatDuration,
 	}).ParseFS(templateFS, "templates/*.gohtml")
 	if err != nil {
 		log.Fatalf("parse templates: %v", err)

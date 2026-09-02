@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -526,6 +527,20 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 
 func htmlEsc(s string) string {
 	return template.HTMLEscapeString(s)
+}
+
+// formatDuration renders a minute count for humans:
+// 0 → "0m", 45 → "45m", 60 → "1h", 125 → "2h 5m", 480 → "8h".
+func formatDuration(min int) string {
+	if min < 60 {
+		return strconv.Itoa(min) + "m"
+	}
+	h := min / 60
+	m := min % 60
+	if m == 0 {
+		return strconv.Itoa(h) + "h"
+	}
+	return strconv.Itoa(h) + "h " + strconv.Itoa(m) + "m"
 }
 
 // formatAge formats a duration as a human-readable age string

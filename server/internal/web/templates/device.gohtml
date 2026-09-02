@@ -18,15 +18,15 @@
   </form>
 </div>
 
-<h2>Usage for {{.Day}}: {{.TotalMinutes}} min</h2>
+<h2>Usage for {{.Day}}: {{dur .TotalMinutes}}</h2>
 {{if .HasLimit}}
   <div class="bar-bg bar-xl" style="width:100%;max-width:400px;margin-top:8px">
     <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
   </div>
-  <div class="text-muted text-sm" style="margin-top:2px">{{.TotalMinutes}}m / {{.LimitMin}}m — {{.BarPercent}}%</div>
+  <div class="text-muted text-sm" style="margin-top:2px">{{dur .TotalMinutes}} / {{dur .LimitMin}} — {{.BarPercent}}%</div>
   {{if .BlockedBadge}}<span class="pill-badge pill-danger">BLOCKED</span>{{end}}
   {{if .WarnBadge}}<span class="pill-badge pill-warning">WARN</span>{{end}}
-  <p class="muted">Limit: {{.LimitMin}}m (warn at {{.WarnPct}}%)</p>
+  <p class="muted">Limit: {{dur .LimitMin}} (warn at {{.WarnPct}}%)</p>
 {{else}}<p class="muted">No total limit set</p>{{end}}
 
 {{if .History}}
@@ -38,7 +38,7 @@
     <div class="bar-bg" style="width:200px">
       <div class="bar-fill" style="background:var(--primary);width:{{.BarPercent}}%;min-width:{{if .Minutes}}4px{{else}}0{{end}};border-radius:4px"></div>
     </div>
-    <span style="font-size:0.85em;min-width:3em;color:var(--text)">{{.Minutes}} min</span>
+    <span style="font-size:0.85em;min-width:3em;color:var(--text)">{{dur .Minutes}}</span>
   </div>
 {{end}}
 </div>
@@ -51,7 +51,7 @@
 {{range .Apps}}
 <tr>
   <td>{{.Label}}</td>
-  <td>{{.Minutes}}</td>
+  <td>{{dur .Minutes}}</td>
   <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
 {{else}}
@@ -68,7 +68,7 @@
 {{range .Websites}}
 <tr>
   <td>{{.Label}}</td>
-  <td>{{.Minutes}}</td>
+  <td>{{dur .Minutes}}</td>
   <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
 {{else}}

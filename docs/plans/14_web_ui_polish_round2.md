@@ -143,14 +143,11 @@ key-string assertions that pin the formatting: a dashboard render with a
 strings remain in `dashboard.gohtml` / `device.gohtml` except inside the
 `(no limit set)` branch and battery/last-seen text.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
 ## Stage 2 — Progress bar accessibility + warn tick
-
-**Goal:** bars are real progress bars to assistive tech, and the warn
-threshold is visible on the bar.
 
 **Files:** `layout.gohtml`, `dashboard.gohtml`, `device.gohtml`,
 `dashboard_test.go`.

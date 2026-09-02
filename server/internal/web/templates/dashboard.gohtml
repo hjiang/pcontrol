@@ -27,17 +27,17 @@
     <h2 style="margin:0 0 0.25rem 0;font-size:1.2rem"><a href="/devices/{{.ID}}">{{.Name}}</a></h2>
     <div class="text-muted text-sm" style="margin-bottom:0.75rem">Last usage report: {{.LastSeenAt}}</div>
     <div>
-      Today: <strong>{{.TotalMinutes}} min</strong>
-      {{if .HasLimit}} / {{.LimitMin}} min limit
+      Today: <strong>{{dur .TotalMinutes}}</strong>
+      {{if .HasLimit}} / {{dur .LimitMin}} limit
         <div class="bar-bg bar-tall">
           <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
         </div>
-        <div class="text-muted text-sm" style="margin-top:2px">{{.TotalMinutes}}m / {{.LimitMin}}m — {{.BarPercent}}%</div>
+        <div class="text-muted text-sm" style="margin-top:2px">{{dur .TotalMinutes}} / {{dur .LimitMin}} — {{.BarPercent}}%</div>
       {{else}}<span class="muted"> (no limit set)</span>{{end}}
     </div>
     {{if .TopEntries}}
     <div class="top-apps" style="margin-top:8px">
-      {{range $i, $e := .TopEntries}}<span class="app-pill">{{$e.Label}} ({{$e.Minutes}} min)</span>{{end}}{{if .HasMoreEntries}}<span class="app-pill">…</span>{{end}}
+      {{range $i, $e := .TopEntries}}<span class="app-pill">{{$e.Label}} ({{dur $e.Minutes}})</span>{{end}}{{if .HasMoreEntries}}<span class="app-pill">…</span>{{end}}
     </div>
     {{else}}
     <div class="text-muted text-sm" style="margin-top:8px">No activity today</div>

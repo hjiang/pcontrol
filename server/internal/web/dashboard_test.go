@@ -123,8 +123,8 @@ func TestDashboard_WithDevice(t *testing.T) {
 	if !strings.Contains(bodyStr, "test-phone") {
 		t.Error("expected device name on dashboard")
 	}
-	if !strings.Contains(bodyStr, "0 min") {
-		t.Error("expected '0 min' usage on dashboard for new device")
+	if !strings.Contains(bodyStr, "0m") {
+		t.Error("expected '0m' usage on dashboard for new device")
 	}
 	if !strings.Contains(bodyStr, "Last usage report: never") {
 		t.Error("expected never as last usage report for a device that has not reported")
@@ -290,6 +290,100 @@ func TestFormatAge(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("formatAge(%v) = %q, want %q", tt.age, got, tt.want)
 		}
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		min  int
+		want string
+	}{
+		{0, "0m"},
+		{45, "45m"},
+		{59, "59m"},
+		{60, "1h"},
+		{61, "1h 1m"},
+		{125, "2h 5m"},
+		{480, "8h"},
+		{1441, "24h 1m"},
+	}
+	for _, tt := range tests {
+		got := formatDuration(tt.min)
+		if got != tt.want {
+			t.Errorf("formatDuration(%d) = %q, want %q", tt.min, got, tt.want)
+		}
+	}
+}
+
+// TestDashboard_FormatDuration pins the human-readable duration formatting:
+// a device with 480 minutes of usage today must render as "8h", not "480 min".
+func TestDashboard_FormatDuration(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("duration-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	events := []domain.Event{
+		{EventID: "dur-1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.game", Label: "Game", Day: today, StartedAt: time.Now(), DurationSeconds: 480 * 60},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "8h") {
+		t.Errorf("expected '8h' on dashboard for 480 minutes, body: %s", body)
+	}
+	if strings.Contains(body, "480 min") {
+		t.Error("expected no raw '480 min' on dashboard")
+	}
+}
+
+// TestDeviceDetail_LimitFormatsAsDuration pins "/ 10h" on the device page
+// caption when the total limit is 600 minutes.
+func TestDeviceDetail_LimitFormatsAsDuration(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("limit-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	limit := 600
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/ 10h") {
+		t.Errorf("expected '/ 10h' on device page for 600 minute limit, body: %s", body)
+	}
+	if strings.Contains(body, "600 min") {
+		t.Error("expected no raw '600 min' on device page")
 	}
 }
 
@@ -539,10 +633,10 @@ func TestDeviceDetail_ShowsHistory(t *testing.T) {
 		t.Error("expected history section on device detail page")
 	}
 	// Should show day labels in the history
-	if !strings.Contains(body, "0 min") {
-		t.Error("expected at least some day with '0 min' in history")
+	if !strings.Contains(body, "0m") {
+		t.Error("expected at least some day with '0m' in history")
 	}
-	if !strings.Contains(body, "1 min") || !strings.Contains(body, "2 min") || !strings.Contains(body, "3 min") {
+	if !strings.Contains(body, "1m") || !strings.Contains(body, "2m") || !strings.Contains(body, "3m") {
 		t.Errorf("expected day entries with various minute values")
 	}
 }
