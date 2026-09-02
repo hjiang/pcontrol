@@ -11,7 +11,7 @@
 {{else}}
   <div class="card-grid">
   {{range .Devices}}
-  <div class="card">
+  <a class="card card-link" href="/devices/{{.ID}}">
     <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
       {{if .Online}}
         <span class="status-pill status-online" title="{{.LastSeenAt}}">● online</span>
@@ -24,7 +24,7 @@
         </span>
       {{end}}
     </div>
-    <h2 style="margin:0 0 0.25rem 0;font-size:1.2rem"><a href="/devices/{{.ID}}">{{.Name}}</a></h2>
+    <h2 style="margin:0 0 0.25rem 0;font-size:1.2rem">{{.Name}}</h2>
     <div class="text-muted text-sm" style="margin-bottom:0.75rem">Last usage report: {{.LastSeenAt}}</div>
     <div>
       Today: <strong>{{dur .TotalMinutes}}</strong>
@@ -42,7 +42,7 @@
     {{else}}
     <div class="text-muted text-sm" style="margin-top:8px">No activity today</div>
     {{end}}
-  </div>
+  </a>
   {{end}}
   </div>
 {{end}}

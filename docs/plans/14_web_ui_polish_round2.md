@@ -319,7 +319,7 @@ affordance.
 **Success criteria:** tests green; clicking anywhere on a card navigates;
 keyboard focus outline visible on card; name not double-rendered.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 

@@ -487,6 +487,41 @@ func TestDashboard_HasThemeToggle(t *testing.T) {
 	}
 }
 
+// TestDashboard_CardIsLink pins the whole-card link (Stage 4): each device
+// card is an <a class="card card-link">, the name is rendered once (no nested
+// anchor inside the h2).
+func TestDashboard_CardIsLink(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("link-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	wantLink := fmt.Sprintf(`<a class="card card-link" href="/devices/%d">`, dev.ID)
+	if !strings.Contains(body, wantLink) {
+		t.Errorf("expected whole-card link %q in dashboard body", wantLink)
+	}
+	if strings.Contains(body, `<h2 style="margin:0 0 0.25rem 0;font-size:1.2rem"><a href=`) {
+		t.Error("expected no nested anchor inside the card heading")
+	}
+	if got := strings.Count(body, "link-phone"); got != 1 {
+		t.Errorf("expected device name exactly once in card, got %d times", got)
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
