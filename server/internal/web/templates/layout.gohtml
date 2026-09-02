@@ -23,6 +23,37 @@
     --shadow-md: 0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
     --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --bar-bg: #eee;
+    --status-ok-bg: #d1fae5;
+    --status-ok-fg: #065f46;
+    --status-offline-bg: #f3f4f6;
+    --status-offline-fg: #6b7280;
+    --danger-bg: #fee2e2;
+    --danger-fg: #991b1b;
+    --warning-bg: #fef3c7;
+    --warning-fg: #92400e;
+  }
+
+  /* ── Dark theme (auto via prefers-color-scheme, overridable via toggle) ── */
+  [data-theme="dark"] {
+    --bg: #111827;
+    --surface: #1f2937;
+    --text: #e5e7eb;
+    --text-muted: #9ca3af;
+    --border: #374151;
+    --primary: #7c93f5;
+    --primary-hover: #94a7f7;
+    --shadow: 0 1px 3px rgba(0,0,0,.5);
+    --shadow-md: 0 4px 6px rgba(0,0,0,.5);
+    --bar-bg: #374151;
+    --status-ok-bg: #064e3b;
+    --status-ok-fg: #a7f3d0;
+    --status-offline-bg: #374151;
+    --status-offline-fg: #9ca3af;
+    --danger-bg: #7f1d1d;
+    --danger-fg: #fecaca;
+    --warning-bg: #78350f;
+    --warning-fg: #fde68a;
   }
 
   /* ── Reset ── */
@@ -196,7 +227,7 @@
 
   /* ── Progress bars ── */
   .bar-bg {
-    background: #eee;
+    background: var(--bar-bg);
     height: 16px;
     border-radius: 4px;
     overflow: hidden;
@@ -230,7 +261,7 @@
   .muted { color: var(--text-muted); font-size: 0.9em; }
   .battery { margin-left: 0.5em; font-size: 0.9em; }
   .battery-low { color: var(--danger); font-weight: bold; }
-  .top-apps { margin-top: 6px; font-size: 0.9em; color: #555; }
+  .top-apps { margin-top: 6px; font-size: 0.9em; color: var(--text-muted); }
   hr { margin: 1rem 0; border: none; border-top: 1px solid var(--border); }
 
   /* ── Status pills ── */
@@ -241,8 +272,8 @@
     font-size: 0.8em;
     font-weight: 600;
   }
-  .status-online { background: #d1fae5; color: #065f46; }
-  .status-offline { background: #f3f4f6; color: #6b7280; }
+  .status-online { background: var(--status-ok-bg); color: var(--status-ok-fg); }
+  .status-offline { background: var(--status-offline-bg); color: var(--status-offline-fg); }
 
   /* ── App pills ── */
   .app-pill {
@@ -280,8 +311,8 @@
     font-size: 0.75rem;
     font-weight: 600;
   }
-  .pill-danger { background: #fee2e2; color: #991b1b; }
-  .pill-warning { background: #fef3c7; color: #92400e; }
+  .pill-danger { background: var(--danger-bg); color: var(--danger-fg); }
+  .pill-warning { background: var(--warning-bg); color: var(--warning-fg); }
 
   /* ── HTMX indicator ── */
   .htmx-indicator { display: none; }
@@ -328,14 +359,14 @@
 
   /* ── Alert ── */
   .alert-error {
-    background: #fee2e2;
-    color: #991b1b;
+    background: var(--danger-bg);
+    color: var(--danger-fg);
     padding: 0.75rem;
     border-radius: var(--radius);
     margin-bottom: 1rem;
     font-size: 0.9rem;
     font-weight: 500;
-    border: 1px solid #fca5a5;
+    border: 1px solid var(--danger-fg);
   }
 
   /* ── Form utilities ── */
@@ -398,6 +429,8 @@
   <a href="/" class="nav-brand">🛡️ pcontrol</a>
   <a href="/devices/new" class="nav-link">Register device</a>
   <span class="nav-spacer"></span>
+  <button id="theme-toggle" class="btn-ghost" aria-label="Toggle dark mode"
+          onclick="toggleTheme()">🌙</button>
   <span class="nav-admin">admin</span>
   <form action="/logout" method="post"><button class="btn-ghost">Logout</button></form>
 </nav>
@@ -410,5 +443,19 @@
   pcontrol · {{version}} · {{year}}
 </footer>
 {{end}}
+<script>
+function applyTheme(t){document.documentElement.dataset.theme=t;
+  var b=document.getElementById('theme-toggle');
+  if(b){b.textContent = t==='dark' ? '☀️' : '🌙';}}
+function toggleTheme(){var t=document.documentElement.dataset.theme==='dark'?'light':'dark';
+  try{localStorage.setItem('pcontrol-theme',t)}catch(e){}
+  applyTheme(t);}
+(function(){
+  var t=null;
+  try{t=localStorage.getItem('pcontrol-theme')}catch(e){}
+  if(!t){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+  applyTheme(t);
+})();
+</script>
 </body>
 </html>

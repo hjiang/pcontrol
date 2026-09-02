@@ -465,6 +465,28 @@ func TestDashboard_ProgressbarAria(t *testing.T) {
 	}
 }
 
+// TestDashboard_HasThemeToggle pins the dark-mode toggle button in the nav.
+// The theming itself is CSS/JS and is verified by the manual smoke test.
+func TestDashboard_HasThemeToggle(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="theme-toggle"`) {
+		t.Error("expected theme toggle button in nav")
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")

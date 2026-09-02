@@ -274,7 +274,7 @@ limits page, login page all render correctly in both themes; toggle
 persists across reload; no unthemed light patches remain (check badges,
 pills, alerts, tables, inputs).
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
