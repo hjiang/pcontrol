@@ -545,7 +545,7 @@ raw package names.
    render test with fixture package `com.google.android.youtube` asserting
    `YouTube` is visible.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -560,13 +560,13 @@ Visit `http://127.0.0.1:8080/`, log in, and check with at least one
 registered device with data (or create fixture rows directly in SQLite
 per the test helpers' pattern):
 
-- [ ] Login page, dashboard, device page, limits page, register page all
+- [x] Login page, dashboard, device page, limits page, register page all
       render in light AND dark mode (toggle top-right).
-- [ ] Durations read "8h 15m" style everywhere; no raw "480 min".
-- [ ] Whole card is clickable; focus ring visible with keyboard nav.
-- [ ] Device grid auto-refreshes every 30 s (watch the network tab).
-- [ ] No console errors in the browser dev tools.
-- [ ] View-source check: no trailing whitespace introduced.
+- [x] Durations read "8h 15m" style everywhere; no raw "480 min".
+- [x] Whole card is clickable; focus ring visible with keyboard nav.
+- [x] Device grid auto-refreshes every 30 s (watch the network tab).
+- [x] No console errors in the browser dev tools.
+- [x] View-source check: no trailing whitespace introduced.
 
 ## 10. Out of scope (do not do)
 

@@ -34,7 +34,7 @@
     </div>
     {{if .TopEntries}}
     <div class="top-apps" style="margin-top:8px">
-      {{range $i, $e := .TopEntries}}<span class="app-pill">{{$e.Label}} ({{dur $e.Minutes}})</span>{{end}}{{if .HasMoreEntries}}<span class="app-pill">…</span>{{end}}
+      {{range $i, $e := .TopEntries}}<span class="app-pill" title="{{$e.Subject}}">{{$e.Label}} ({{dur $e.Minutes}})</span>{{end}}{{if .HasMoreEntries}}<span class="app-pill">…</span>{{end}}
     </div>
     {{else}}
     <div class="text-muted text-sm" style="margin-top:8px">No activity today</div>

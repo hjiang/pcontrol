@@ -23,6 +23,7 @@ type dashboardDeviceEntry struct {
 
 type topEntry struct {
 	Label   string
+	Subject string // raw package/domain, for the title attribute
 	Minutes int
 }
 
@@ -34,6 +35,7 @@ type dashboardData struct {
 
 type subjectRow struct {
 	Label   string
+	Subject string // raw package, for the title attribute (apps only)
 	Minutes int
 	Blocked bool
 	Warn    bool

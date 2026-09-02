@@ -819,6 +819,68 @@ func TestDeviceTimeZone_HTMXToast(t *testing.T) {
 	}
 }
 
+func TestFriendlyLabel(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"com.google.android.youtube", "YouTube"},
+		{"com.android.chrome", "Chrome"},
+		{"com.google.android.gm", "Gmail"},
+		{"com.zhiliaoapp.musically", "TikTok"},
+		{"com.instagram.android", "Instagram"},
+		{"com.mojang.minecraftpe", "Minecraft"},
+		{"com.example.superapp", "superapp"}, // 3 parts, unknown → last part
+		{"Game", "Game"},                     // ≤2 parts → unchanged
+		{"a.b", "a.b"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := friendlyLabel(tc.in); got != tc.want {
+			t.Errorf("friendlyLabel(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestDashboard_FriendlyAppLabels pins Stage 8: a top-app pill for a known
+// package shows the friendly label as visible text; the raw package stays
+// available as hover-only debug info in the title attribute.
+func TestDashboard_FriendlyAppLabels(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("labels-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	events := []domain.Event{
+		// No client-provided label: the raw package must still render friendly.
+		{EventID: "lbl-1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.google.android.youtube", Label: "", Day: today, StartedAt: time.Now(), DurationSeconds: 120 * 60},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "YouTube (2h)") {
+		t.Error("expected friendly label 'YouTube' in top-app pill")
+	}
+	if !strings.Contains(body, `title="com.google.android.youtube"`) {
+		t.Error("expected raw package preserved in title attribute")
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")

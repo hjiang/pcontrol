@@ -126,10 +126,10 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 				if label == "" {
 					label = a.Subject
 				}
-				top = append(top, topEntry{Label: label, Minutes: a.Seconds / 60})
+				top = append(top, topEntry{Label: friendlyLabel(label), Subject: a.Subject, Minutes: a.Seconds / 60})
 			}
 			for _, w2 := range webTotals {
-				top = append(top, topEntry{Label: w2.Label, Minutes: w2.Seconds / 60})
+				top = append(top, topEntry{Label: w2.Label, Subject: w2.Subject, Minutes: w2.Seconds / 60})
 			}
 			// Sort descending
 			for i := 1; i < len(top); i++ {
@@ -555,8 +555,13 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		}
 
 		for _, a := range appTotals {
+			label := a.Label
+			if label == "" {
+				label = a.Subject
+			}
 			row := subjectRow{
-				Label:   a.Label,
+				Label:   friendlyLabel(label),
+				Subject: a.Subject,
 				Minutes: a.Seconds / 60,
 			}
 			for _, l := range policy.Limits {

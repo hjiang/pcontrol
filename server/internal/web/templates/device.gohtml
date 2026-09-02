@@ -55,7 +55,7 @@
 <tbody>
 {{range .Apps}}
 <tr>
-  <td>{{.Label}}</td>
+  <td title="{{.Subject}}">{{.Label}}</td>
   <td>{{dur .Minutes}}</td>
   <td>{{if .Blocked}}<span class="pill-badge pill-danger">BLOCKED</span>{{else if .Warn}}<span class="pill-badge pill-warning">WARN</span>{{end}}</td>
 </tr>
