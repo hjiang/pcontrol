@@ -498,7 +498,7 @@ error page.
 toast appears, no reload; with JS off (or via curl) the old full-page
 flow still works (progressive enhancement intact).
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 

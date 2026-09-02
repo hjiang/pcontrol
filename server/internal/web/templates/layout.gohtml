@@ -403,6 +403,23 @@
   }
   .card-grid .card { margin: 0; }
 
+  /* ── Toast (HTMX save feedback) ── */
+  #toast > .toast {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 100;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--success);
+    padding: .6rem 1rem;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    animation: toast-in .2s ease-out;
+  }
+  #toast > .toast.toast-error { border-left-color: var(--danger); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
   /* ── Responsive ── */
   @media (max-width: 767px) {
     nav { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem; }
@@ -440,6 +457,7 @@
 {{end}}
 <main id="main-content">
 {{.ContentHTML}}
+<div id="toast" aria-live="polite"></div>
 </main>
 {{if not .MinimalLayout}}
 <footer>

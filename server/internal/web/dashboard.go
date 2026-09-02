@@ -206,6 +206,20 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 	}
 }
 
+// htmxToast writes a toast fragment for HTMX requests (Stage 7). msg must
+// already be HTML-safe; use htmlEsc on dynamic parts.
+func htmxToast(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="toast">%s</div>`, msg)
+}
+
+// htmxToastError writes an error toast fragment for HTMX requests (Stage 7).
+// The response is 200 so htmx swaps it into the live region.
+func htmxToastError(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="toast toast-error">%s</div>`, htmlEsc(msg))
+}
+
 func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -221,12 +235,20 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 		}
 		name := r.FormValue("name")
 		if name == "" {
+			if isHTMX(r) {
+				htmxToastError(w, "Device name cannot be empty")
+				return
+			}
 			http.Error(w, "name required", http.StatusBadRequest)
 			return
 		}
 		// The device name flows into the daily-report email Subject header, so
 		// reject CR/LF that could inject headers.
 		if strings.ContainsAny(name, "\r\n") {
+			if isHTMX(r) {
+				htmxToastError(w, "Device name cannot contain newlines")
+				return
+			}
 			http.Error(w, "invalid device name", http.StatusBadRequest)
 			return
 		}
@@ -240,6 +262,10 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 			return
 		}
 
+		if isHTMX(r) {
+			htmxToast(w, `Saved — device renamed to `+htmlEsc(name))
+			return
+		}
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
 	}
 }
@@ -295,6 +321,10 @@ func (h *webAuthHandler) deviceRecipients() http.HandlerFunc {
 				continue
 			}
 			if !validEmail(line) {
+				if isHTMX(r) {
+					htmxToastError(w, fmt.Sprintf("Invalid email address: %s", line))
+					return
+				}
 				http.Error(w, fmt.Sprintf("invalid email: %s", line), http.StatusBadRequest)
 				return
 			}
@@ -303,6 +333,16 @@ func (h *webAuthHandler) deviceRecipients() http.HandlerFunc {
 
 		if err := h.store.SetEmailRecipients(deviceID, emails); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if isHTMX(r) {
+			msg := "Saved — report recipients cleared"
+			if len(emails) == 1 {
+				msg = "Saved — 1 report recipient updated"
+			} else if len(emails) > 1 {
+				msg = fmt.Sprintf("Saved — %d report recipients updated", len(emails))
+			}
+			htmxToast(w, msg)
 			return
 		}
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
@@ -334,6 +374,10 @@ func (h *webAuthHandler) deviceTimeZone() http.HandlerFunc {
 		tz := strings.TrimSpace(r.FormValue("timezone"))
 		if tz != "" {
 			if _, err := time.LoadLocation(tz); err != nil {
+				if isHTMX(r) {
+					htmxToastError(w, "Invalid timezone")
+					return
+				}
 				http.Error(w, "invalid timezone", http.StatusBadRequest)
 				return
 			}
@@ -341,6 +385,14 @@ func (h *webAuthHandler) deviceTimeZone() http.HandlerFunc {
 
 		if err := h.store.SetTimeZone(deviceID, tz); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if isHTMX(r) {
+			if tz == "" {
+				htmxToast(w, "Saved — timezone cleared")
+			} else {
+				htmxToast(w, `Saved — timezone set to `+htmlEsc(tz))
+			}
 			return
 		}
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)

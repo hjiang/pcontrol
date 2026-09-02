@@ -86,7 +86,7 @@
 <details>
 <summary style="cursor:pointer;color:var(--primary);font-weight:500;font-size:1.15rem">⚙️ Device Settings</summary>
 <div style="margin-top:0.75rem">
-<form action="/devices/{{.ID}}/rename" method="post" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem">
+<form action="/devices/{{.ID}}/rename" method="post" hx-post="/devices/{{.ID}}/rename" hx-target="#toast" hx-swap="innerHTML" style="display:flex;gap:0.5rem;align-items:flex-end;margin-bottom:1rem">
   <div>
     <label for="rename">Rename device</label>
     <input id="rename" name="name" value="{{.Name}}" required>
@@ -95,7 +95,7 @@
 </form>
 
 <div style="margin-bottom:1rem">
-<form action="/devices/{{.ID}}/recipients" method="post">
+<form action="/devices/{{.ID}}/recipients" method="post" hx-post="/devices/{{.ID}}/recipients" hx-target="#toast" hx-swap="innerHTML">
   <div>
     <label for="recipients">Report email recipients</label>
     <textarea id="recipients" name="emails" rows="3" placeholder="one email per line">{{range .Emails}}{{.}}
@@ -107,7 +107,7 @@
 </div>
 
 <div style="margin-bottom:1rem">
-<form action="/devices/{{.ID}}/timezone" method="post" style="display:flex;gap:0.5rem;align-items:flex-end">
+<form action="/devices/{{.ID}}/timezone" method="post" hx-post="/devices/{{.ID}}/timezone" hx-target="#toast" hx-swap="innerHTML" style="display:flex;gap:0.5rem;align-items:flex-end">
   <div>
     <label for="timezone">Device timezone</label>
     <input id="timezone" name="timezone" value="{{.TimeZone}}" placeholder="e.g. America/New_York">

@@ -659,6 +659,166 @@ func TestDeviceDetail_HistoryChart(t *testing.T) {
 	}
 }
 
+// TestDeviceRename_HTMXToast pins the HTMX toast flow for rename (Stage 7):
+// success returns a toast fragment (no redirect), validation failure returns
+// a toast-error fragment with 200, and the store is only mutated on success.
+func TestDeviceRename_HTMXToast(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	dev, _, err := s.CreateDevice("old-name")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Success: toast fragment, no redirect, store updated.
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/rename", dev.ID), strings.NewReader("name=new-name"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 toast response, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("expected no redirect for HTMX request, got Location %q", loc)
+	}
+	if !strings.Contains(rec.Body.String(), `class="toast"`) {
+		t.Errorf("expected toast fragment in response, got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "new-name") {
+		t.Error("expected new device name in toast")
+	}
+	if updated, err := s.DeviceByTokenFromID(dev.ID); err != nil || updated.Name != "new-name" {
+		t.Errorf("expected store rename, got %v (%v)", updated, err)
+	}
+
+	// Validation failure: toast-error fragment with 200, store unchanged.
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/rename", dev.ID), strings.NewReader("name="))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("HX-Request", "true")
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 toast-error response for validation failure, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "toast toast-error") {
+		t.Errorf("expected toast-error fragment, got: %s", rec2.Body.String())
+	}
+	if updated, err := s.DeviceByTokenFromID(dev.ID); err != nil || updated.Name != "new-name" {
+		t.Errorf("expected name unchanged after failed rename, got %v (%v)", updated, err)
+	}
+}
+
+// TestDeviceRecipients_HTMXToast pins the HTMX toast flow for recipients.
+func TestDeviceRecipients_HTMXToast(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	dev, _, err := s.CreateDevice("toast-recipient-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Success.
+	body := "emails=" + url.QueryEscape("parent@example.com")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/recipients", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 toast response, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `class="toast"`) {
+		t.Errorf("expected toast fragment, got: %s", rec.Body.String())
+	}
+	if emails, _ := s.EmailRecipients(dev.ID); len(emails) != 1 || emails[0] != "parent@example.com" {
+		t.Errorf("expected recipient saved, got %v", emails)
+	}
+
+	// Validation failure: invalid email → toast-error, store unchanged.
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/recipients", dev.ID), strings.NewReader("emails=not-an-email"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("HX-Request", "true")
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 toast-error response, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "toast toast-error") {
+		t.Errorf("expected toast-error fragment, got: %s", rec2.Body.String())
+	}
+	if emails, _ := s.EmailRecipients(dev.ID); len(emails) != 1 {
+		t.Errorf("expected recipients unchanged after failure, got %v", emails)
+	}
+}
+
+// TestDeviceTimeZone_HTMXToast pins the HTMX toast flow for timezone.
+func TestDeviceTimeZone_HTMXToast(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	dev, _, err := s.CreateDevice("toast-tz-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Success.
+	body := "timezone=" + url.QueryEscape("Europe/Berlin")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/timezone", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 toast response, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `class="toast"`) {
+		t.Errorf("expected toast fragment, got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Europe/Berlin") {
+		t.Error("expected saved timezone echoed in toast")
+	}
+	if tz, _ := s.TimeZone(dev.ID); tz != "Europe/Berlin" {
+		t.Errorf("expected timezone saved, got %q", tz)
+	}
+
+	// Validation failure: invalid timezone → toast-error, store unchanged.
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/timezone", dev.ID), strings.NewReader("timezone=Not/AZone"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("HX-Request", "true")
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 toast-error response, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "toast toast-error") {
+		t.Errorf("expected toast-error fragment, got: %s", rec2.Body.String())
+	}
+	if tz, _ := s.TimeZone(dev.ID); tz != "Europe/Berlin" {
+		t.Errorf("expected timezone unchanged after failure, got %q", tz)
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
