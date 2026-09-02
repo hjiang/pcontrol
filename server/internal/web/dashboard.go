@@ -146,7 +146,18 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			devices = append(devices, entry)
 		}
 
-		if err := renderPage(w, "dashboard.gohtml", dashboardData{Devices: devices}); err != nil {
+		data := dashboardData{Devices: devices}
+		if isHTMX(r) {
+			// HTMX poll (Stage 5): return only the device grid partial. The
+			// layout cannot wrap a fragment, so bypass renderPage. On error the
+			// response may be partially written — log rather than http.Error.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := parsedTemplates.ExecuteTemplate(w, "device_grid.gohtml", data); err != nil {
+				log.Printf("render device grid partial: %v", err)
+			}
+			return
+		}
+		if err := renderPage(w, "dashboard.gohtml", data); err != nil {
 			log.Printf("render dashboard: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}

@@ -522,6 +522,46 @@ func TestDashboard_CardIsLink(t *testing.T) {
 	}
 }
 
+// TestDashboard_HTMXPartial pins content negotiation (Stage 5): with the
+// HX-Request header the dashboard handler returns only the device grid
+// partial — no layout, no nav — so HTMX can swap it in without flicker.
+func TestDashboard_HTMXPartial(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	if _, _, err := s.CreateDevice("partial-phone"); err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<nav") {
+		t.Error("HTMX partial must not contain the layout nav")
+	}
+	if strings.Contains(body, "<h1>") {
+		t.Error("HTMX partial must not contain the page heading")
+	}
+	if !strings.Contains(body, "partial-phone") {
+		t.Error("expected device name in HTMX partial")
+	}
+	if !strings.Contains(body, "status-pill") {
+		t.Error("expected status pill markup in HTMX partial")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html content type on partial, got %q", ct)
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")

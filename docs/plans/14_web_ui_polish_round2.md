@@ -371,7 +371,7 @@ the dashboard; register a sync from the other (or wait) and watch the
 grid update within ~30 s without reload; the `<h1>Devices</h1>` and count
 line do NOT flicker (they're outside the swapped region).
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
