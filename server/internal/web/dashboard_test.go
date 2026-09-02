@@ -387,6 +387,84 @@ func TestDeviceDetail_LimitFormatsAsDuration(t *testing.T) {
 	}
 }
 
+// TestDeviceDetail_WarnTick pins the warn-threshold tick on the device page
+// bar plus the progressbar ARIA attributes (Stage 2).
+func TestDeviceDetail_WarnTick(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("warn-tick-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	limit := 600
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+	if err := s.SetWarnPercent(dev.ID, 80); err != nil {
+		t.Fatalf("SetWarnPercent: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "bar-warn-tick") {
+		t.Error("expected warn tick element on device page bar")
+	}
+	if !strings.Contains(body, "left:80%") {
+		t.Error("expected warn tick positioned at left:80%")
+	}
+	if !strings.Contains(body, `role="progressbar"`) {
+		t.Error("expected role=progressbar on device page bar")
+	}
+	if !strings.Contains(body, `aria-valuenow="0"`) {
+		t.Error("expected aria-valuenow=0 on device page bar for zero usage")
+	}
+}
+
+// TestDashboard_ProgressbarAria pins the progressbar ARIA attributes on the
+// dashboard card bar (Stage 2).
+func TestDashboard_ProgressbarAria(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("aria-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	limit := 600
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `role="progressbar"`) {
+		t.Error("expected role=progressbar on dashboard card bar")
+	}
+	if !strings.Contains(body, `aria-label="Daily usage 0 percent of limit"`) {
+		t.Error("expected aria-label with percent on dashboard card bar")
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")

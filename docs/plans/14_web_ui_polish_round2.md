@@ -196,7 +196,7 @@ strings remain in `dashboard.gohtml` / `device.gohtml` except inside the
 `role="progressbar"`; device page shows the tick at the configured warn
 percent.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 

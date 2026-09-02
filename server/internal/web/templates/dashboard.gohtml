@@ -29,7 +29,7 @@
     <div>
       Today: <strong>{{dur .TotalMinutes}}</strong>
       {{if .HasLimit}} / {{dur .LimitMin}} limit
-        <div class="bar-bg bar-tall">
+        <div class="bar-bg bar-tall" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{.BarPercent}}" aria-label="Daily usage {{.BarPercent}} percent of limit">
           <div class="bar-fill" style="background:{{.BarColor}};width:{{.BarPercent}}%"></div>
         </div>
         <div class="text-muted text-sm" style="margin-top:2px">{{dur .TotalMinutes}} / {{dur .LimitMin}} — {{.BarPercent}}%</div>

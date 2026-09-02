@@ -443,12 +443,12 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 				}
 				for i := 6; i >= 0; i-- {
 					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
-					min := dailyTotals[d] / 60
-					pct := min * 100 / maxMinutes
+					dayMinutes := dailyTotals[d] / 60
+					pct := dayMinutes * 100 / maxMinutes
 					data.History = append(data.History, historyRow{
 						Day:        d,
-						Minutes:    min,
-						BarPercent: pct,
+						Minutes:    dayMinutes,
+						BarPercent: min(pct, 100),
 					})
 				}
 			}
