@@ -23,6 +23,7 @@ type dashboardDeviceEntry struct {
 
 type topEntry struct {
 	Label   string
+	Subject string // raw package/domain, for the title attribute
 	Minutes int
 }
 
@@ -34,6 +35,7 @@ type dashboardData struct {
 
 type subjectRow struct {
 	Label   string
+	Subject string // raw package, for the title attribute (apps only)
 	Minutes int
 	Blocked bool
 	Warn    bool
@@ -43,29 +45,35 @@ type historyRow struct {
 	Day        string
 	Minutes    int
 	BarPercent int
+	X          int // svg rect x
+	Width      int // svg rect width
+	Height     int // svg rect height
+	Y          int // svg rect y (= 100 - Height)
 }
 
 type deviceDetailData struct {
-	ID              int64
-	Name            string
-	Day             string
-	TotalMinutes    int
-	HasLimit        bool
-	LimitMin        int
-	WarnPct         int
-	BarColor        string
-	BarPercent      int
-	BlockedBadge    bool
-	WarnBadge       bool
-	HasBattery      bool
-	BatteryPercent  int
-	BatteryCharging bool
-	BatteryLow      bool
-	History         []historyRow
-	Apps            []subjectRow
-	Websites        []subjectRow
-	TimeZone        string
-	Emails          []string
+	ID                int64
+	Name              string
+	Day               string
+	TotalMinutes      int
+	HasLimit          bool
+	LimitMin          int
+	WarnPct           int
+	BarColor          string
+	BarPercent        int
+	BlockedBadge      bool
+	WarnBadge         bool
+	HasBattery        bool
+	BatteryPercent    int
+	BatteryCharging   bool
+	BatteryLow        bool
+	History           []historyRow
+	HistoryMaxMinutes int
+	LimitLineY        int
+	Apps              []subjectRow
+	Websites          []subjectRow
+	TimeZone          string
+	Emails            []string
 }
 
 // --- Limits page view data ---

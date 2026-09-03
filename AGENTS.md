@@ -265,6 +265,22 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   server was down is **not** backfilled — the job only ever emails
   'yesterday', so it would quietly skip the missed day.
 
+- **Web HTMX partials: negotiate on `HX-Request`, render the partial
+  directly.** `isHTMX(r)` lives in `web/limits.go`. For fragment responses
+  (dashboard `device_grid.gohtml` poll, settings toasts) set Content-Type
+  and call `parsedTemplates.ExecuteTemplate(w, "name.gohtml", data)` —
+  never `renderPage`, which wraps in the layout. Templates are named by
+  base filename and can `{{template "file.gohtml" .}}` each other without
+  registration. If a fragment render fails mid-write the response is
+  already partially sent — log it, don't `http.Error`.
+
+- **CSS `var()` does not work in SVG presentation attributes.** In inline
+  SVG use `style="fill:var(--primary)"`, not `fill="var(--primary)"`.
+
+- **Don't name Go locals `min`/`max` in this repo** — they shadow the Go
+  1.21+ builtins and turn later `min(pct, 100)` calls into compile errors
+  (this bit the 7-day history loop; its vars are `dayMinutes`/`historyMax`).
+
 ## Conventions
 
 - Follow the numbered plan files in `docs/plans/`. Larger work gets a new

@@ -123,8 +123,8 @@ func TestDashboard_WithDevice(t *testing.T) {
 	if !strings.Contains(bodyStr, "test-phone") {
 		t.Error("expected device name on dashboard")
 	}
-	if !strings.Contains(bodyStr, "0 min") {
-		t.Error("expected '0 min' usage on dashboard for new device")
+	if !strings.Contains(bodyStr, "0m") {
+		t.Error("expected '0m' usage on dashboard for new device")
 	}
 	if !strings.Contains(bodyStr, "Last usage report: never") {
 		t.Error("expected never as last usage report for a device that has not reported")
@@ -290,6 +290,686 @@ func TestFormatAge(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("formatAge(%v) = %q, want %q", tt.age, got, tt.want)
 		}
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		min  int
+		want string
+	}{
+		{0, "0m"},
+		{45, "45m"},
+		{59, "59m"},
+		{60, "1h"},
+		{61, "1h 1m"},
+		{125, "2h 5m"},
+		{480, "8h"},
+		{1441, "24h 1m"},
+	}
+	for _, tt := range tests {
+		got := formatDuration(tt.min)
+		if got != tt.want {
+			t.Errorf("formatDuration(%d) = %q, want %q", tt.min, got, tt.want)
+		}
+	}
+}
+
+// TestDashboard_FormatDuration pins the human-readable duration formatting:
+// a device with 480 minutes of usage today must render as "8h", not "480 min".
+func TestDashboard_FormatDuration(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("duration-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	events := []domain.Event{
+		{EventID: "dur-1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.game", Label: "Game", Day: today, StartedAt: time.Now(), DurationSeconds: 480 * 60},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "8h") {
+		t.Errorf("expected '8h' on dashboard for 480 minutes, body: %s", body)
+	}
+	if strings.Contains(body, "480 min") {
+		t.Error("expected no raw '480 min' on dashboard")
+	}
+}
+
+// TestDeviceDetail_LimitFormatsAsDuration pins "/ 10h" on the device page
+// caption when the total limit is 600 minutes.
+func TestDeviceDetail_LimitFormatsAsDuration(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("limit-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	limit := 600
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/ 10h") {
+		t.Errorf("expected '/ 10h' on device page for 600 minute limit, body: %s", body)
+	}
+	if strings.Contains(body, "600 min") {
+		t.Error("expected no raw '600 min' on device page")
+	}
+}
+
+// TestDeviceDetail_WarnTick pins the warn-threshold tick on the device page
+// bar plus the progressbar ARIA attributes (Stage 2).
+func TestDeviceDetail_WarnTick(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("warn-tick-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	limit := 600
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+	if err := s.SetWarnPercent(dev.ID, 80); err != nil {
+		t.Fatalf("SetWarnPercent: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "bar-warn-tick") {
+		t.Error("expected warn tick element on device page bar")
+	}
+	if !strings.Contains(body, "left:80%") {
+		t.Error("expected warn tick positioned at left:80%")
+	}
+	if !strings.Contains(body, `role="progressbar"`) {
+		t.Error("expected role=progressbar on device page bar")
+	}
+	if !strings.Contains(body, `aria-valuenow="0"`) {
+		t.Error("expected aria-valuenow=0 on device page bar for zero usage")
+	}
+}
+
+// TestDashboard_ProgressbarAria pins the progressbar ARIA attributes on the
+// dashboard card bar (Stage 2).
+func TestDashboard_ProgressbarAria(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("aria-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	limit := 600
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `role="progressbar"`) {
+		t.Error("expected role=progressbar on dashboard card bar")
+	}
+	if !strings.Contains(body, `aria-label="Daily usage 0 percent of limit"`) {
+		t.Error("expected aria-label with percent on dashboard card bar")
+	}
+}
+
+// TestDashboard_HasThemeToggle pins the dark-mode toggle button in the nav.
+// The theming itself is CSS/JS and is verified by the manual smoke test.
+func TestDashboard_HasThemeToggle(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="theme-toggle"`) {
+		t.Error("expected theme toggle button in nav")
+	}
+}
+
+// TestDashboard_CardIsLink pins the whole-card link (Stage 4): each device
+// card is an <a class="card card-link">, the name is rendered once (no nested
+// anchor inside the h2).
+func TestDashboard_CardIsLink(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("link-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	wantLink := fmt.Sprintf(`<a class="card card-link" href="/devices/%d">`, dev.ID)
+	if !strings.Contains(body, wantLink) {
+		t.Errorf("expected whole-card link %q in dashboard body", wantLink)
+	}
+	if strings.Contains(body, `<h2 style="margin:0 0 0.25rem 0;font-size:1.2rem"><a href=`) {
+		t.Error("expected no nested anchor inside the card heading")
+	}
+	if got := strings.Count(body, "link-phone"); got != 1 {
+		t.Errorf("expected device name exactly once in card, got %d times", got)
+	}
+}
+
+// TestDashboard_HTMXPartial pins content negotiation (Stage 5): with the
+// HX-Request header the dashboard handler returns only the device grid
+// partial — no layout, no nav — so HTMX can swap it in without flicker.
+func TestDashboard_HTMXPartial(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	if _, _, err := s.CreateDevice("partial-phone"); err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<nav") {
+		t.Error("HTMX partial must not contain the layout nav")
+	}
+	if strings.Contains(body, "<h1>") {
+		t.Error("HTMX partial must not contain the page heading")
+	}
+	if !strings.Contains(body, "partial-phone") {
+		t.Error("expected device name in HTMX partial")
+	}
+	if !strings.Contains(body, "status-pill") {
+		t.Error("expected status pill markup in HTMX partial")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html content type on partial, got %q", ct)
+	}
+}
+
+// The dashboard content-negotiates the same URL on HX-Request (full page
+// vs fragment), so every response must declare Vary: HX-Request to keep
+// caches from mixing the two representations.
+func TestDashboard_VaryHXRequest(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	for _, htmx := range []bool{true, false} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		req.AddCookie(sessionCookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("htmx=%v: expected 200, got %d", htmx, rec.Code)
+		}
+		if got := rec.Header().Get("Vary"); got != "HX-Request" {
+			t.Errorf("htmx=%v: expected Vary: HX-Request, got %q", htmx, got)
+		}
+	}
+}
+
+// TestDeviceDetail_HistoryChart pins the inline SVG 7-day chart (Stage 6):
+// server-rendered bars, per-bar tooltips, and a dashed limit line when a
+// total limit exists (and none when it doesn't).
+func TestDeviceDetail_HistoryChart(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	dev, _, err := s.CreateDevice("chart-device")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// 7 days of fixture data: today + 6 previous days.
+	now := time.Now()
+	var events []domain.Event
+	for i := 0; i < 7; i++ {
+		day := now.AddDate(0, 0, -i).Format("2006-01-02")
+		events = append(events, domain.Event{
+			EventID:         fmt.Sprintf("chart-%d", i),
+			DeviceID:        dev.ID,
+			Kind:            domain.KindApp,
+			Subject:         "com.chart.app",
+			Label:           "ChartApp",
+			Day:             day,
+			StartedAt:       now.AddDate(0, 0, -i),
+			DurationSeconds: (i + 1) * 60, // 1m..7m
+		})
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+	limit := 10
+	if err := s.SetTotalLimit(dev.ID, &limit); err != nil {
+		t.Fatalf("SetTotalLimit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<svg") {
+		t.Error("expected <svg chart on device page")
+	}
+	if !strings.Contains(body, `role="img"`) {
+		t.Error("expected role=img on the chart")
+	}
+	if got := strings.Count(body, "<rect"); got != 7 {
+		t.Errorf("expected 7 <rect> bars, got %d", got)
+	}
+	if !strings.Contains(body, "<title>") {
+		t.Error("expected per-bar <title> tooltips")
+	}
+	todayKey := now.Format("2006-01-02")
+	if !strings.Contains(body, "<title>"+todayKey) {
+		t.Errorf("expected a <title> containing fixture day key %s", todayKey)
+	}
+	if !strings.Contains(body, `<rect x="12"`) {
+		t.Error("expected first bar at x=12 (chart geometry)")
+	}
+	if !strings.Contains(body, "<line") {
+		t.Error("expected dashed limit <line> when a total limit exists")
+	}
+
+	// Without a limit there must be no limit line.
+	dev2, _, err := s.CreateDevice("chart-device-nolimit")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	for i := range events {
+		events[i].DeviceID = dev2.ID
+		events[i].EventID = fmt.Sprintf("chart-nolimit-%d", i)
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev2.ID), nil)
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	if strings.Contains(rec2.Body.String(), "<line") {
+		t.Error("expected no limit <line> without a total limit")
+	}
+}
+
+// TestDeviceRename_HTMXToast pins the HTMX toast flow for rename (Stage 7):
+// success returns a toast fragment (no redirect), validation failure returns
+// a toast-error fragment with 200, and the store is only mutated on success.
+func TestDeviceRename_HTMXToast(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	dev, _, err := s.CreateDevice("old-name")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Success: toast fragment, no redirect, store updated.
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/rename", dev.ID), strings.NewReader("name=new-name"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 toast response, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("expected no redirect for HTMX request, got Location %q", loc)
+	}
+	if !strings.Contains(rec.Body.String(), `class="toast"`) {
+		t.Errorf("expected toast fragment in response, got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "new-name") {
+		t.Error("expected new device name in toast")
+	}
+	if updated, err := s.DeviceByTokenFromID(dev.ID); err != nil || updated.Name != "new-name" {
+		t.Errorf("expected store rename, got %v (%v)", updated, err)
+	}
+
+	// Validation failure: toast-error fragment with 200, store unchanged.
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/rename", dev.ID), strings.NewReader("name="))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("HX-Request", "true")
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 toast-error response for validation failure, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "toast toast-error") {
+		t.Errorf("expected toast-error fragment, got: %s", rec2.Body.String())
+	}
+	if updated, err := s.DeviceByTokenFromID(dev.ID); err != nil || updated.Name != "new-name" {
+		t.Errorf("expected name unchanged after failed rename, got %v (%v)", updated, err)
+	}
+}
+
+// TestDeviceRecipients_HTMXToast pins the HTMX toast flow for recipients.
+func TestDeviceRecipients_HTMXToast(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	dev, _, err := s.CreateDevice("toast-recipient-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Success.
+	body := "emails=" + url.QueryEscape("parent@example.com")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/recipients", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 toast response, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `class="toast"`) {
+		t.Errorf("expected toast fragment, got: %s", rec.Body.String())
+	}
+	if emails, _ := s.EmailRecipients(dev.ID); len(emails) != 1 || emails[0] != "parent@example.com" {
+		t.Errorf("expected recipient saved, got %v", emails)
+	}
+
+	// Validation failure: invalid email → toast-error, store unchanged.
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/recipients", dev.ID), strings.NewReader("emails=not-an-email"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("HX-Request", "true")
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 toast-error response, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "toast toast-error") {
+		t.Errorf("expected toast-error fragment, got: %s", rec2.Body.String())
+	}
+	if emails, _ := s.EmailRecipients(dev.ID); len(emails) != 1 {
+		t.Errorf("expected recipients unchanged after failure, got %v", emails)
+	}
+}
+
+// TestDeviceTimeZone_HTMXToast pins the HTMX toast flow for timezone.
+func TestDeviceTimeZone_HTMXToast(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+	dev, _, err := s.CreateDevice("toast-tz-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+
+	// Success.
+	body := "timezone=" + url.QueryEscape("Europe/Berlin")
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/timezone", dev.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 toast response, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `class="toast"`) {
+		t.Errorf("expected toast fragment, got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Europe/Berlin") {
+		t.Error("expected saved timezone echoed in toast")
+	}
+	if tz, _ := s.TimeZone(dev.ID); tz != "Europe/Berlin" {
+		t.Errorf("expected timezone saved, got %q", tz)
+	}
+
+	// Validation failure: invalid timezone → toast-error, store unchanged.
+	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/devices/%d/timezone", dev.ID), strings.NewReader("timezone=Not/AZone"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("HX-Request", "true")
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 toast-error response, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "toast toast-error") {
+		t.Errorf("expected toast-error fragment, got: %s", rec2.Body.String())
+	}
+	if tz, _ := s.TimeZone(dev.ID); tz != "Europe/Berlin" {
+		t.Errorf("expected timezone unchanged after failure, got %q", tz)
+	}
+}
+
+func TestFriendlyLabel(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"com.google.android.youtube", "YouTube"},
+		{"com.android.chrome", "Chrome"},
+		{"com.google.android.gm", "Gmail"},
+		{"com.zhiliaoapp.musically", "TikTok"},
+		{"com.instagram.android", "Instagram"},
+		{"com.mojang.minecraftpe", "Minecraft"},
+		{"com.example.superapp", "superapp"}, // 3 parts, unknown → last part
+		{"Game", "Game"},                     // ≤2 parts → unchanged
+		{"a.b", "a.b"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := friendlyLabel(tc.in); got != tc.want {
+			t.Errorf("friendlyLabel(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestDashboard_FriendlyAppLabels pins Stage 8: a top-app pill for a known
+// package shows the friendly label as visible text; the raw package stays
+// available as hover-only debug info in the title attribute.
+func TestDashboard_FriendlyAppLabels(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("labels-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	events := []domain.Event{
+		// No client-provided label: the raw package must still render friendly.
+		{EventID: "lbl-1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.google.android.youtube", Label: "", Day: today, StartedAt: time.Now(), DurationSeconds: 120 * 60},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "YouTube (2h)") {
+		t.Error("expected friendly label 'YouTube' in top-app pill")
+	}
+	if !strings.Contains(body, `title="com.google.android.youtube"`) {
+		t.Error("expected raw package preserved in title attribute")
+	}
+}
+
+func TestDashboard_ClientLabelNotTruncated(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("clientlabel-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	events := []domain.Event{
+		// A legitimate human label containing dots must render verbatim,
+		// not be truncated by the package-name shortener.
+		{EventID: "clbl-1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.example.fancy", Label: "Foo.Bar.Baz", Day: today, StartedAt: time.Now(), DurationSeconds: 120 * 60},
+		// A client label that just echoes the raw package is still a
+		// package name, so it must be shortened to the friendly form.
+		{EventID: "clbl-2", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.example.superapp", Label: "com.example.superapp", Day: today, StartedAt: time.Now(), DurationSeconds: 60 * 60},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard: expected 200, got %d", rec.Code)
+	}
+	dash := rec.Body.String()
+	if !strings.Contains(dash, "Foo.Bar.Baz (2h)") {
+		t.Errorf("dashboard: expected client label 'Foo.Bar.Baz' verbatim in top-app pill")
+	}
+	if strings.Contains(dash, `>Baz<`) {
+		t.Errorf("dashboard: client label was truncated to 'Baz'")
+	}
+	if !strings.Contains(dash, `title="com.example.fancy"`) {
+		t.Errorf("dashboard: expected raw package preserved in title attribute")
+	}
+	if !strings.Contains(dash, "superapp (1h)") {
+		t.Errorf("dashboard: expected package-echoing label shortened to 'superapp'")
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("device page: expected 200, got %d", rec2.Code)
+	}
+	dev2 := rec2.Body.String()
+	if !strings.Contains(dev2, `title="com.example.fancy"`) || !strings.Contains(dev2, ">Foo.Bar.Baz<") {
+		t.Errorf("device page: expected 'Foo.Bar.Baz' verbatim with raw subject in title")
+	}
+	if strings.Contains(dev2, `>Baz<`) {
+		t.Errorf("device page: client label was truncated to 'Baz'")
+	}
+	if !strings.Contains(dev2, ">superapp<") {
+		t.Errorf("device page: expected package-echoing label shortened to 'superapp'")
 	}
 }
 
@@ -539,10 +1219,10 @@ func TestDeviceDetail_ShowsHistory(t *testing.T) {
 		t.Error("expected history section on device detail page")
 	}
 	// Should show day labels in the history
-	if !strings.Contains(body, "0 min") {
-		t.Error("expected at least some day with '0 min' in history")
+	if !strings.Contains(body, "0m") {
+		t.Error("expected at least some day with '0m' in history")
 	}
-	if !strings.Contains(body, "1 min") || !strings.Contains(body, "2 min") || !strings.Contains(body, "3 min") {
+	if !strings.Contains(body, "1m") || !strings.Contains(body, "2m") || !strings.Contains(body, "3m") {
 		t.Errorf("expected day entries with various minute values")
 	}
 }

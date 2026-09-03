@@ -143,14 +143,11 @@ key-string assertions that pin the formatting: a dashboard render with a
 strings remain in `dashboard.gohtml` / `device.gohtml` except inside the
 `(no limit set)` branch and battery/last-seen text.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
 ## Stage 2 — Progress bar accessibility + warn tick
-
-**Goal:** bars are real progress bars to assistive tech, and the warn
-threshold is visible on the bar.
 
 **Files:** `layout.gohtml`, `dashboard.gohtml`, `device.gohtml`,
 `dashboard_test.go`.
@@ -199,7 +196,7 @@ threshold is visible on the bar.
 `role="progressbar"`; device page shows the tick at the configured warn
 percent.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -277,7 +274,7 @@ limits page, login page all render correctly in both themes; toggle
 persists across reload; no unthemed light patches remain (check badges,
 pills, alerts, tables, inputs).
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -322,7 +319,7 @@ affordance.
 **Success criteria:** tests green; clicking anywhere on a card navigates;
 keyboard focus outline visible on card; name not double-rendered.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -374,7 +371,7 @@ the dashboard; register a sync from the other (or wait) and watch the
 grid update within ~30 s without reload; the `<h1>Devices</h1>` and count
 line do NOT flicker (they're outside the swapped region).
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -440,7 +437,7 @@ tooltips. No JS, no library.
 uses the `var(--primary)` token); tooltips work on hover; the old div-bar
 history markup is gone and its old assertions updated in the same commit.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -501,7 +498,7 @@ error page.
 toast appears, no reload; with JS off (or via curl) the old full-page
 flow still works (progressive enhancement intact).
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -548,7 +545,7 @@ raw package names.
    render test with fixture package `com.google.android.youtube` asserting
    `YouTube` is visible.
 
-**Status:** Not Started
+**Status:** Complete
 
 ---
 
@@ -563,13 +560,13 @@ Visit `http://127.0.0.1:8080/`, log in, and check with at least one
 registered device with data (or create fixture rows directly in SQLite
 per the test helpers' pattern):
 
-- [ ] Login page, dashboard, device page, limits page, register page all
+- [x] Login page, dashboard, device page, limits page, register page all
       render in light AND dark mode (toggle top-right).
-- [ ] Durations read "8h 15m" style everywhere; no raw "480 min".
-- [ ] Whole card is clickable; focus ring visible with keyboard nav.
-- [ ] Device grid auto-refreshes every 30 s (watch the network tab).
-- [ ] No console errors in the browser dev tools.
-- [ ] View-source check: no trailing whitespace introduced.
+- [x] Durations read "8h 15m" style everywhere; no raw "480 min".
+- [x] Whole card is clickable; focus ring visible with keyboard nav.
+- [x] Device grid auto-refreshes every 30 s (watch the network tab).
+- [x] No console errors in the browser dev tools.
+- [x] View-source check: no trailing whitespace introduced.
 
 ## 10. Out of scope (do not do)
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,14 +122,19 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			// Collect top 3 apps/sites
 			var top []topEntry
 			for _, a := range appTotals {
+				// friendlyLabel shortens Android package names; never run it
+				// on a client-provided human label (dots in a real label are
+				// not namespace separators). Fall back to the raw subject —
+				// the package — only when the label is missing or just
+				// echoes the package itself.
 				label := a.Label
-				if label == "" {
-					label = a.Subject
+				if label == "" || label == a.Subject {
+					label = friendlyLabel(a.Subject)
 				}
-				top = append(top, topEntry{Label: label, Minutes: a.Seconds / 60})
+				top = append(top, topEntry{Label: label, Subject: a.Subject, Minutes: a.Seconds / 60})
 			}
 			for _, w2 := range webTotals {
-				top = append(top, topEntry{Label: w2.Label, Minutes: w2.Seconds / 60})
+				top = append(top, topEntry{Label: w2.Label, Subject: w2.Subject, Minutes: w2.Seconds / 60})
 			}
 			// Sort descending
 			for i := 1; i < len(top); i++ {
@@ -145,7 +151,21 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			devices = append(devices, entry)
 		}
 
-		if err := renderPage(w, "dashboard.gohtml", dashboardData{Devices: devices}); err != nil {
+		data := dashboardData{Devices: devices}
+		// Same URL, two representations (full page vs HTMX fragment): tell
+		// caches to treat HX-Request as part of the cache key before we branch.
+		w.Header().Set("Vary", "HX-Request")
+		if isHTMX(r) {
+			// HTMX poll (Stage 5): return only the device grid partial. The
+			// layout cannot wrap a fragment, so bypass renderPage. On error the
+			// response may be partially written — log rather than http.Error.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := parsedTemplates.ExecuteTemplate(w, "device_grid.gohtml", data); err != nil {
+				log.Printf("render device grid partial: %v", err)
+			}
+			return
+		}
+		if err := renderPage(w, "dashboard.gohtml", data); err != nil {
 			log.Printf("render dashboard: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
@@ -194,6 +214,20 @@ func (h *webAuthHandler) deviceNew() http.HandlerFunc {
 	}
 }
 
+// htmxToast writes a toast fragment for HTMX requests (Stage 7). msg must
+// already be HTML-safe; use htmlEsc on dynamic parts.
+func htmxToast(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="toast">%s</div>`, msg)
+}
+
+// htmxToastError writes an error toast fragment for HTMX requests (Stage 7).
+// The response is 200 so htmx swaps it into the live region.
+func htmxToastError(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="toast toast-error">%s</div>`, htmlEsc(msg))
+}
+
 func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -209,12 +243,20 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 		}
 		name := r.FormValue("name")
 		if name == "" {
+			if isHTMX(r) {
+				htmxToastError(w, "Device name cannot be empty")
+				return
+			}
 			http.Error(w, "name required", http.StatusBadRequest)
 			return
 		}
 		// The device name flows into the daily-report email Subject header, so
 		// reject CR/LF that could inject headers.
 		if strings.ContainsAny(name, "\r\n") {
+			if isHTMX(r) {
+				htmxToastError(w, "Device name cannot contain newlines")
+				return
+			}
 			http.Error(w, "invalid device name", http.StatusBadRequest)
 			return
 		}
@@ -228,6 +270,10 @@ func (h *webAuthHandler) deviceRename() http.HandlerFunc {
 			return
 		}
 
+		if isHTMX(r) {
+			htmxToast(w, `Saved — device renamed to `+htmlEsc(name))
+			return
+		}
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
 	}
 }
@@ -283,6 +329,10 @@ func (h *webAuthHandler) deviceRecipients() http.HandlerFunc {
 				continue
 			}
 			if !validEmail(line) {
+				if isHTMX(r) {
+					htmxToastError(w, fmt.Sprintf("Invalid email address: %s", line))
+					return
+				}
 				http.Error(w, fmt.Sprintf("invalid email: %s", line), http.StatusBadRequest)
 				return
 			}
@@ -291,6 +341,16 @@ func (h *webAuthHandler) deviceRecipients() http.HandlerFunc {
 
 		if err := h.store.SetEmailRecipients(deviceID, emails); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if isHTMX(r) {
+			msg := "Saved — report recipients cleared"
+			if len(emails) == 1 {
+				msg = "Saved — 1 report recipient updated"
+			} else if len(emails) > 1 {
+				msg = fmt.Sprintf("Saved — %d report recipients updated", len(emails))
+			}
+			htmxToast(w, msg)
 			return
 		}
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
@@ -322,6 +382,10 @@ func (h *webAuthHandler) deviceTimeZone() http.HandlerFunc {
 		tz := strings.TrimSpace(r.FormValue("timezone"))
 		if tz != "" {
 			if _, err := time.LoadLocation(tz); err != nil {
+				if isHTMX(r) {
+					htmxToastError(w, "Invalid timezone")
+					return
+				}
 				http.Error(w, "invalid timezone", http.StatusBadRequest)
 				return
 			}
@@ -329,6 +393,14 @@ func (h *webAuthHandler) deviceTimeZone() http.HandlerFunc {
 
 		if err := h.store.SetTimeZone(deviceID, tz); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if isHTMX(r) {
+			if tz == "" {
+				htmxToast(w, "Saved — timezone cleared")
+			} else {
+				htmxToast(w, `Saved — timezone set to `+htmlEsc(tz))
+			}
 			return
 		}
 		http.Redirect(w, r, fmt.Sprintf("/devices/%d", deviceID), http.StatusSeeOther)
@@ -422,6 +494,7 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		}
 
 		// 7-day history: compute counted totals for the last 7 days
+		historyMax := 0
 		if parsedDay, err := time.Parse("2006-01-02", day); err == nil {
 			fromDay := parsedDay.AddDate(0, 0, -6).Format("2006-01-02")
 			dailyTotals, err := h.store.DailyTotalsWithExclusions(deviceID, fromDay, day, policy.Exclusions)
@@ -429,26 +502,36 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 				log.Printf("daily totals: %v", err)
 			} else {
 				// Find max for scaling
-				maxMinutes := 0
 				for i := 6; i >= 0; i-- {
 					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
-					min := dailyTotals[d] / 60
-					if min > maxMinutes {
-						maxMinutes = min
+					dayMinutes := dailyTotals[d] / 60
+					if dayMinutes > historyMax {
+						historyMax = dayMinutes
 					}
 				}
-				if maxMinutes == 0 {
-					maxMinutes = 1 // avoid division by zero
+				data.HistoryMaxMinutes = historyMax
+				scaleMax := historyMax
+				if scaleMax == 0 {
+					scaleMax = 1 // avoid division by zero
 				}
 				for i := 6; i >= 0; i-- {
 					d := parsedDay.AddDate(0, 0, -i).Format("2006-01-02")
-					min := dailyTotals[d] / 60
-					pct := min * 100 / maxMinutes
+					dayMinutes := dailyTotals[d] / 60
+					pct := min(dayMinutes*100/scaleMax, 100)
 					data.History = append(data.History, historyRow{
 						Day:        d,
-						Minutes:    min,
+						Minutes:    dayMinutes,
 						BarPercent: pct,
 					})
+				}
+				// Precompute SVG geometry (Stage 6): chart box viewBox="0 0 280 100",
+				// 7 bars of width 28 with 12px gaps, oldest day leftmost.
+				for idx := range data.History {
+					row := &data.History[idx]
+					row.X = idx*40 + 12
+					row.Width = 28
+					row.Height = row.BarPercent // already capped at 100
+					row.Y = 100 - row.Height
 				}
 			}
 		}
@@ -458,6 +541,12 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 			data.HasLimit = true
 			data.LimitMin = limitMin
 			data.WarnPct = policy.WarnThresholdPercent
+			if historyMax > 0 {
+				// Dashed limit line on the history chart (Stage 6), scaled like
+				// the bars: limitMinutes*100/historyMax, capped at 100.
+				limitPct := min(limitMin*100/historyMax, 100)
+				data.LimitLineY = 100 - limitPct
+			}
 			pct := 0
 			if limitMin > 0 {
 				pct = int(totalMinutes) * 100 / limitMin
@@ -474,8 +563,15 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		}
 
 		for _, a := range appTotals {
+			// See the dashboard loop: friendlyLabel is for package names,
+			// not for client-provided human labels.
+			label := a.Label
+			if label == "" || label == a.Subject {
+				label = friendlyLabel(a.Subject)
+			}
 			row := subjectRow{
-				Label:   a.Label,
+				Label:   label,
+				Subject: a.Subject,
 				Minutes: a.Seconds / 60,
 			}
 			for _, l := range policy.Limits {
@@ -526,6 +622,20 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 
 func htmlEsc(s string) string {
 	return template.HTMLEscapeString(s)
+}
+
+// formatDuration renders a minute count for humans:
+// 0 → "0m", 45 → "45m", 60 → "1h", 125 → "2h 5m", 480 → "8h".
+func formatDuration(min int) string {
+	if min < 60 {
+		return strconv.Itoa(min) + "m"
+	}
+	h := min / 60
+	m := min % 60
+	if m == 0 {
+		return strconv.Itoa(h) + "h"
+	}
+	return strconv.Itoa(h) + "h " + strconv.Itoa(m) + "m"
 }
 
 // formatAge formats a duration as a human-readable age string
