@@ -122,11 +122,16 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 			// Collect top 3 apps/sites
 			var top []topEntry
 			for _, a := range appTotals {
+				// friendlyLabel shortens Android package names; never run it
+				// on a client-provided human label (dots in a real label are
+				// not namespace separators). Fall back to the raw subject —
+				// the package — only when the label is missing or just
+				// echoes the package itself.
 				label := a.Label
-				if label == "" {
-					label = a.Subject
+				if label == "" || label == a.Subject {
+					label = friendlyLabel(a.Subject)
 				}
-				top = append(top, topEntry{Label: friendlyLabel(label), Subject: a.Subject, Minutes: a.Seconds / 60})
+				top = append(top, topEntry{Label: label, Subject: a.Subject, Minutes: a.Seconds / 60})
 			}
 			for _, w2 := range webTotals {
 				top = append(top, topEntry{Label: w2.Label, Subject: w2.Subject, Minutes: w2.Seconds / 60})
@@ -558,12 +563,14 @@ func (h *webAuthHandler) deviceDetail() http.HandlerFunc {
 		}
 
 		for _, a := range appTotals {
+			// See the dashboard loop: friendlyLabel is for package names,
+			// not for client-provided human labels.
 			label := a.Label
-			if label == "" {
-				label = a.Subject
+			if label == "" || label == a.Subject {
+				label = friendlyLabel(a.Subject)
 			}
 			row := subjectRow{
-				Label:   friendlyLabel(label),
+				Label:   label,
 				Subject: a.Subject,
 				Minutes: a.Seconds / 60,
 			}

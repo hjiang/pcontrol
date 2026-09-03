@@ -909,6 +909,70 @@ func TestDashboard_FriendlyAppLabels(t *testing.T) {
 	}
 }
 
+func TestDashboard_ClientLabelNotTruncated(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	dev, _, err := s.CreateDevice("clientlabel-phone")
+	if err != nil {
+		t.Fatalf("CreateDevice: %v", err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	events := []domain.Event{
+		// A legitimate human label containing dots must render verbatim,
+		// not be truncated by the package-name shortener.
+		{EventID: "clbl-1", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.example.fancy", Label: "Foo.Bar.Baz", Day: today, StartedAt: time.Now(), DurationSeconds: 120 * 60},
+		// A client label that just echoes the raw package is still a
+		// package name, so it must be shortened to the friendly form.
+		{EventID: "clbl-2", DeviceID: dev.ID, Kind: domain.KindApp, Subject: "com.example.superapp", Label: "com.example.superapp", Day: today, StartedAt: time.Now(), DurationSeconds: 60 * 60},
+	}
+	if err := s.InsertEvents(events); err != nil {
+		t.Fatalf("InsertEvents: %v", err)
+	}
+
+	sessionCookie := loginSession(t, mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard: expected 200, got %d", rec.Code)
+	}
+	dash := rec.Body.String()
+	if !strings.Contains(dash, "Foo.Bar.Baz (2h)") {
+		t.Errorf("dashboard: expected client label 'Foo.Bar.Baz' verbatim in top-app pill")
+	}
+	if strings.Contains(dash, `>Baz<`) {
+		t.Errorf("dashboard: client label was truncated to 'Baz'")
+	}
+	if !strings.Contains(dash, `title="com.example.fancy"`) {
+		t.Errorf("dashboard: expected raw package preserved in title attribute")
+	}
+	if !strings.Contains(dash, "superapp (1h)") {
+		t.Errorf("dashboard: expected package-echoing label shortened to 'superapp'")
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/devices/%d", dev.ID), nil)
+	req2.AddCookie(sessionCookie)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("device page: expected 200, got %d", rec2.Code)
+	}
+	dev2 := rec2.Body.String()
+	if !strings.Contains(dev2, `title="com.example.fancy"`) || !strings.Contains(dev2, ">Foo.Bar.Baz<") {
+		t.Errorf("device page: expected 'Foo.Bar.Baz' verbatim with raw subject in title")
+	}
+	if strings.Contains(dev2, `>Baz<`) {
+		t.Errorf("device page: client label was truncated to 'Baz'")
+	}
+	if !strings.Contains(dev2, ">superapp<") {
+		t.Errorf("device page: expected package-echoing label shortened to 'superapp'")
+	}
+}
+
 func TestDashboard_OnlineBadge(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
