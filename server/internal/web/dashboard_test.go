@@ -562,6 +562,34 @@ func TestDashboard_HTMXPartial(t *testing.T) {
 	}
 }
 
+// The dashboard content-negotiates the same URL on HX-Request (full page
+// vs fragment), so every response must declare Vary: HX-Request to keep
+// caches from mixing the two representations.
+func TestDashboard_VaryHXRequest(t *testing.T) {
+	s := newTestWebStore(t)
+	realHash := testBcryptHash(t, "secret")
+	mux := NewRouter(s, realHash)
+
+	sessionCookie := loginSession(t, mux)
+
+	for _, htmx := range []bool{true, false} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		req.AddCookie(sessionCookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("htmx=%v: expected 200, got %d", htmx, rec.Code)
+		}
+		if got := rec.Header().Get("Vary"); got != "HX-Request" {
+			t.Errorf("htmx=%v: expected Vary: HX-Request, got %q", htmx, got)
+		}
+	}
+}
+
 // TestDeviceDetail_HistoryChart pins the inline SVG 7-day chart (Stage 6):
 // server-rendered bars, per-bar tooltips, and a dashed limit line when a
 // total limit exists (and none when it doesn't).

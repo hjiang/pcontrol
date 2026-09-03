@@ -147,6 +147,9 @@ func (h *webAuthHandler) dashboard() http.HandlerFunc {
 		}
 
 		data := dashboardData{Devices: devices}
+		// Same URL, two representations (full page vs HTMX fragment): tell
+		// caches to treat HX-Request as part of the cache key before we branch.
+		w.Header().Set("Vary", "HX-Request")
 		if isHTMX(r) {
 			// HTMX poll (Stage 5): return only the device grid partial. The
 			// layout cannot wrap a fragment, so bypass renderPage. On error the
