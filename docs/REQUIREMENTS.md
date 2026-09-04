@@ -14,7 +14,7 @@ pcontrol is a self-hosted parental-control system. A Go server provides a JSON A
 
 ## Dashboard reporting
 
-- Every device card must visibly show the server time when it last reported usage. A device that has never reported must be shown as `never`.
+- Every device card must visibly show when the device last reported usage, rendered in the viewer's local timezone (raw UTC when JavaScript is disabled). A device that has never reported must be shown as `never`.
 
 ## Daily email reports
 
