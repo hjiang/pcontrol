@@ -22,7 +22,7 @@
       {{end}}
     </div>
     <h2 style="margin:0 0 0.25rem 0;font-size:1.2rem">{{.Name}}</h2>
-    <div class="text-muted text-sm" style="margin-bottom:0.75rem">Last usage report: {{.LastSeenAt}}</div>
+    <div class="text-muted text-sm" style="margin-bottom:0.75rem">Last usage report: {{if eq .LastSeenAt "never"}}never{{else}}<time class="js-local-time" datetime="{{.LastSeenAt}}">{{.LastSeenAt}}</time>{{end}}</div>
     <div>
       Today: <strong>{{dur .TotalMinutes}}</strong>
       {{if .HasLimit}} / {{dur .LimitMin}} limit

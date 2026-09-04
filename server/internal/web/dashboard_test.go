@@ -129,6 +129,9 @@ func TestDashboard_WithDevice(t *testing.T) {
 	if !strings.Contains(bodyStr, "Last usage report: never") {
 		t.Error("expected never as last usage report for a device that has not reported")
 	}
+	if strings.Contains(bodyStr, "js-local-time") {
+		t.Error("expected no localizable time element for a device that has not reported")
+	}
 }
 
 func TestDashboard_ShowsLastUsageReportTime(t *testing.T) {
@@ -155,8 +158,17 @@ func TestDashboard_ShowsLastUsageReportTime(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Last usage report: 2026-07-12T14:30:00Z") {
-		t.Errorf("expected visible last usage report time, got body: %s", body)
+	if !strings.Contains(body, `datetime="2026-07-12T14:30:00Z"`) {
+		t.Errorf("expected raw UTC datetime attribute for client-side localization, got body: %s", body)
+	}
+	if !strings.Contains(body, ">2026-07-12T14:30:00Z</time>") {
+		t.Errorf("expected visible no-JS fallback text, got body: %s", body)
+	}
+	if !strings.Contains(body, "Last usage report: <time") {
+		t.Errorf("expected label directly followed by localizable time element, got body: %s", body)
+	}
+	if !strings.Contains(body, `class="js-local-time"`) {
+		t.Errorf("expected js-local-time conversion hook class, got body: %s", body)
 	}
 }
 
