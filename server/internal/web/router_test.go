@@ -65,6 +65,26 @@ func TestStaticHtmxServed(t *testing.T) {
 	}
 }
 
+func TestStaticLocaltimeServed(t *testing.T) {
+	s, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	mux := NewRouter(s, "")
+	req := httptest.NewRequest(http.MethodGet, "/static/localtime.js", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /static/localtime.js, got %d", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Error("expected non-empty localtime.js body")
+	}
+}
+
 func TestHealthzOtherRoutesNotFound(t *testing.T) {
 	s, err := store.Open(t.TempDir() + "/test.db")
 	if err != nil {

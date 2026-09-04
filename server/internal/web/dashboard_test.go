@@ -170,6 +170,9 @@ func TestDashboard_ShowsLastUsageReportTime(t *testing.T) {
 	if !strings.Contains(body, `class="js-local-time"`) {
 		t.Errorf("expected js-local-time conversion hook class, got body: %s", body)
 	}
+	if !strings.Contains(body, `src="/static/localtime.js"`) {
+		t.Errorf("expected layout to load localtime.js, got body: %s", body)
+	}
 }
 
 func TestDashboard_DeviceNewFormShown(t *testing.T) {
@@ -537,13 +540,20 @@ func TestDashboard_CardIsLink(t *testing.T) {
 // TestDashboard_HTMXPartial pins content negotiation (Stage 5): with the
 // HX-Request header the dashboard handler returns only the device grid
 // partial — no layout, no nav — so HTMX can swap it in without flicker.
+// The polled fragment must also carry the js-local-time hook so that
+// browser-local rendering of the last usage report survives the 30s poll.
 func TestDashboard_HTMXPartial(t *testing.T) {
 	s := newTestWebStore(t)
 	realHash := testBcryptHash(t, "secret")
 	mux := NewRouter(s, realHash)
 
-	if _, _, err := s.CreateDevice("partial-phone"); err != nil {
+	dev, _, err := s.CreateDevice("partial-phone")
+	if err != nil {
 		t.Fatalf("CreateDevice: %v", err)
+	}
+	reportedAt := time.Date(2026, 7, 12, 14, 30, 0, 0, time.UTC)
+	if err := s.TouchLastSeen(dev.ID, reportedAt); err != nil {
+		t.Fatalf("TouchLastSeen: %v", err)
 	}
 
 	sessionCookie := loginSession(t, mux)
@@ -568,6 +578,12 @@ func TestDashboard_HTMXPartial(t *testing.T) {
 	}
 	if !strings.Contains(body, "status-pill") {
 		t.Error("expected status pill markup in HTMX partial")
+	}
+	if !strings.Contains(body, `class="js-local-time"`) {
+		t.Error("expected js-local-time hook on the last usage report time")
+	}
+	if !strings.Contains(body, `datetime="2026-07-12T14:30:00Z"`) {
+		t.Error("expected raw UTC datetime attribute in the partial")
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Errorf("expected text/html content type on partial, got %q", ct)
