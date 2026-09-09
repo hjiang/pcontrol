@@ -243,6 +243,11 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` + both FGS permissions), and
   `startForegroundSafely()` swallows failures — a crash there would take the
   bound accessibility service down with it.
+- **An APK update stops all services and nothing restarts them.** Not even
+  `START_STICKY`. Every install (auto-update included) left the tracker
+  dead until the next boot or manual app open — found while installing the
+  0.0.8 build on-device. `BootReceiver` handles `MY_PACKAGE_REPLACED` as
+  well as `BOOT_COMPLETED`.
 
 - **Usage during outages is backfilled from system UsageStats.** Live
   attribution is 10 s sampling: time with the process dead or frozen never

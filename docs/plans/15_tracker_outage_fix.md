@@ -96,7 +96,9 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 - Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 19 tests)
 - Stage 2 — **Done** (manifest + TrackerService)
+- Stage 2b — **Done** (`MY_PACKAGE_REPLACED` restart, 3 Robolectric tests)
 - Stage 3 — **Done** (0.0.8/8 defaults)
+- Device verification — **Done** (see below)
 
 ## Review round 1 findings (local reviewer agent, all verified and fixed)
 
@@ -157,13 +159,21 @@ mutex). Report-only P2s, addressed where cheap:
   successful query, immediately before merging — failed queries retry on
   the next stall/restart; merges stay at-most-once.
 
-## Verification on device (after installing the fixed APK)
+## Verification on device (done 2026-09-09, locally signed — same key lineage
+as the installed 0.0.7, in-place `adb install -r`, data kept)
 
-- `adb logcat | grep -E "TrackerService|ForegroundService"` shows no
-  `DidNotStopInTime` after >6 h of uptime;
-- kill the process (`adb shell am force-stop` … after boot) or let Greeze
-  freeze it — next tick logs `backfilled Ns over gap`;
-- server dashboard shows the previously missing hours.
+- `types=0x40000000` (**specialUse**) in `dumpsys activity services` — the
+  6-hour dataSync timeout no longer applies (0.0.7 showed `0x00000001`).
+- Reinstalling the APK restarts `TrackerService` by itself via the new
+  `MY_PACKAGE_REPLACED` handling (stage 2b).
+- Live backfill: force-stop → ~2.5 min of Settings usage → start via the
+  app button → logcat shows `Backfilled 153s over a 153s gap`, exactly
+  the missed window; synced as ordinary deltas.
 
-Manual install note: the CI-signed release is required for auto-update
-lineage; a locally signed APK needs a manual install (signature mismatch).
+### Stage 2b — restart after APK update (found during verification)
+
+An in-place APK update stops all running services and `START_STICKY` does
+**not** reschedule them — every update (including auto-update installs)
+would leave the tracker dead until the next boot or manual app open.
+`BootReceiver` now also handles `ACTION_MY_PACKAGE_REPLACED`; covered by
+`BootReceiverTest` (boot, package-replaced, unrelated broadcast).
