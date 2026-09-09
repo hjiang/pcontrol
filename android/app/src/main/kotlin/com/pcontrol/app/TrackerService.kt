@@ -542,8 +542,15 @@ class TrackerService : Service() {
         )
 
         // Claim the window after the successful query, before merging:
-        // at-most-once for merges, retryable for failed queries.
-        prefs.edit().putLong(KEY_TICK_CURSOR_MS, window.endMs).apply()
+        // at-most-once for merges, retryable for failed queries. Never move
+        // the cursor backwards — ticks resumed since launch may already have
+        // persisted a newer frontier while the query was in flight.
+        val prefsEditor = prefs.edit()
+        prefsEditor.putLong(
+            KEY_TICK_CURSOR_MS,
+            maxOf(window.endMs, prefs.getLong(KEY_TICK_CURSOR_MS, 0L))
+        )
+        prefsEditor.apply()
         if (slices.isEmpty()) return
 
         val db = AppDatabase.getInstance(this)
