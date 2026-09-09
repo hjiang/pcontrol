@@ -225,6 +225,13 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   total call timeout and deterministic `Response.close()`/`use`; otherwise one
   stuck or leaked HTTP exchange can hold `syncInFlight` and make the dashboard
   report an otherwise-live device offline.
+- **Only `ACTIVITY_RESUMED`/`ACTIVITY_PAUSED` (1/2) are UsageEvents
+  transitions.** The old `AppEvent.MOVE_TO_FOREGROUND = 6` /
+  `MOVE_TO_BACKGROUND = 7` aliased real `SYSTEM_INTERACTION`/
+  `USER_INTERACTION` — every touch read as a background transition and
+  zeroed event-derived foreground until the next resume. The wrong
+  constants are deleted; do not reintroduce them.
+
 - **`dataSync` foreground services die after 6 hours on Android 15+.**
   Diagnosed on Xiaomi 25097RP43C / HyperOS 3 / Android 16: at the 6 h mark
   `ForegroundServiceDidNotStopInTimeException` kills the process, then every

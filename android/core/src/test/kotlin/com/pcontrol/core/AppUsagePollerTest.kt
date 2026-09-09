@@ -40,7 +40,7 @@ class AppUsagePollerTest {
     fun `background app is not foreground`() {
         val events = listOf(
             AppEvent("com.game", AppEvent.ACTIVITY_RESUMED),
-            AppEvent("com.game", AppEvent.MOVE_TO_BACKGROUND),
+            AppEvent("com.game", AppEvent.ACTIVITY_PAUSED),
         )
         assertNull(AppUsagePoller.extractForegroundPackage(events))
     }
@@ -67,11 +67,11 @@ class AppUsagePollerTest {
     }
 
     @Test
-    fun `move to foreground also detected`() {
+    fun `sequential resume pause resume across three apps`() {
         val events = listOf(
-            AppEvent("com.app1", AppEvent.MOVE_TO_FOREGROUND),
-            AppEvent("com.app1", AppEvent.MOVE_TO_BACKGROUND),
-            AppEvent("com.app2", AppEvent.MOVE_TO_FOREGROUND),
+            AppEvent("com.app1", AppEvent.ACTIVITY_RESUMED),
+            AppEvent("com.app1", AppEvent.ACTIVITY_PAUSED),
+            AppEvent("com.app2", AppEvent.ACTIVITY_RESUMED),
         )
         assertEquals("com.app2", AppUsagePoller.extractForegroundPackage(events))
     }

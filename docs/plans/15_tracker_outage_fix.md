@@ -94,9 +94,43 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 ## Status
 
-- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 12 tests)
+- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 18 tests)
 - Stage 2 — **Done** (manifest + TrackerService)
 - Stage 3 — **Done** (0.0.8/8 defaults)
+
+## Review round 1 findings (local reviewer agent, all verified and fixed)
+
+1. **Blocker — past-day backfill booked under today.** `UsageDay.mergeCounter`
+   stamped created rows with `LocalDate.now()`, so a backfill slice for a
+   past day landed on today's key; worse, the `@Insert(REPLACE)` upsert
+   could wipe today's live-counted row and reset `syncedSeconds` →
+   duplicate server events. Fix: `mergeCounter` now takes the caller's day
+   explicitly (`UsageDay.mergeCounter(existing, day, …)`); regression test
+   added.
+2. **Major — leading interval never attributed.** `queryEvents` started
+   exactly at `window.startMs`, so the app foreground at outage start
+   could not be seeded. Fix: query with a `SEED_LOOKBACK_MS` (6 h)
+   lookback; `attribute` already clamps to the window. Phantom seeding of
+   an overnight screen-off is bounded by the 5-min silence cap.
+3. **Major — `USER_INTERACTION` consumed as a background transition.**
+   `AppEvent.MOVE_TO_BACKGROUND = 7` aliased the real
+   `UsageEvents.Event.USER_INTERACTION`; every touch cleared the
+   reconstructed foreground (and `MOVE_TO_FOREGROUND = 6` aliased
+   `SYSTEM_INTERACTION`). The live tick path shared the aliasing (masked by
+   the accessibility fallback). Fix: the wrong constants are deleted;
+   only real transitions `ACTIVITY_RESUMED (1)` / `ACTIVITY_PAUSED (2)` are
+   consumed anywhere (the deprecated MOVE_TO_* names are their aliases).
+   Regression tests for types 6/7 added.
+4. **Minor — throttled cursor persist.** 1/min throttle allowed ≤ ~70 s of
+   replayed overlap after a restart. Fix: the cursor persists on every
+   commit (small async write).
+5. **Minor — merge/markSynced lost update.** A read-merge-upsert straddling
+   the sync path's `markSynced` could REPLACE the row with stale
+   `syncedSeconds` and re-send uploaded seconds under a new `eventId`.
+   Fix: a `usageCounterMutex` serializes merges and the markSynced loop.
+
+Also added: DST-day midnight split test (America/New_York) and post-window
+clamping test.
 
 ## Verification on device (after installing the fixed APK)
 

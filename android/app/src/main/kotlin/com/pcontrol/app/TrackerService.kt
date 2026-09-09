@@ -39,6 +39,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.time.ZoneId
@@ -59,7 +61,6 @@ class TrackerService : Service() {
         // the UsageStats events of the missed period.
         private const val PREFS_NAME = "pcontrol"
         private const val KEY_TICK_CURSOR_MS = "tick_cursor_ms"
-        private const val CURSOR_PERSIST_INTERVAL_MS = 60_000L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -83,7 +84,10 @@ class TrackerService : Service() {
     private var lastLoggedAttributionSkip: String? = null
     // Loop-level heartbeat for stall (freeze-thaw) detection
     private var lastTickAtMs = 0L
-    private var lastCursorPersistMs = 0L
+    // Serializes counter read-merge-upsert against the sync path's
+    // markSynced writes: a merge straddling markSynced would REPLACE the
+    // row with a stale syncedSeconds and re-send already-uploaded seconds.
+    private val usageCounterMutex = Mutex()
 
     override fun onCreate() {
         super.onCreate()
@@ -285,9 +289,7 @@ class TrackerService : Service() {
             val pkg = event.packageName ?: continue
             when (event.eventType) {
                 AppEvent.ACTIVITY_RESUMED,
-                AppEvent.ACTIVITY_PAUSED,
-                AppEvent.MOVE_TO_FOREGROUND,
-                AppEvent.MOVE_TO_BACKGROUND -> eventList.add(AppEvent(pkg, event.eventType))
+                AppEvent.ACTIVITY_PAUSED -> eventList.add(AppEvent(pkg, event.eventType))
             }
         }
         // UsageEvents does not implement Closeable; resources freed by GC
@@ -463,20 +465,18 @@ class TrackerService : Service() {
 
     /**
      * Commits a tick's attribution cursor: updates in-memory foreground /
-     * query state and persists the wall-clock cursor (throttled) so a later
-     * restart or freeze-thaw knows exactly where live counting stopped.
+     * query state and persists the wall-clock cursor so a later restart or
+     * freeze-thaw knows exactly where live counting stopped. Persisting
+     * every tick (a small async SharedPreferences write) removes any
+     * restart replay overlap.
      */
     private fun commitTick(foregroundPkg: String?, endTime: Long) {
         currentForegroundPkg = foregroundPkg
         lastUsageEventQueryTime = endTime
-        val now = System.currentTimeMillis()
-        if (now - lastCursorPersistMs >= CURSOR_PERSIST_INTERVAL_MS) {
-            lastCursorPersistMs = now
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .edit()
-                .putLong(KEY_TICK_CURSOR_MS, endTime)
-                .apply()
-        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_TICK_CURSOR_MS, endTime)
+            .apply()
     }
 
     /**
@@ -494,21 +494,27 @@ class TrackerService : Service() {
         // Claim the window before merging so a mid-merge crash cannot
         // double-count it on the next attempt (at-most-once semantics).
         prefs.edit().putLong(KEY_TICK_CURSOR_MS, window.endMs).apply()
-        lastCursorPersistMs = System.currentTimeMillis()
 
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val usageEvents = usageStatsManager.queryEvents(window.startMs, window.endMs)
+        // Query with a lookback so the app that was foreground when tracking
+        // stopped seeds the replay — the leading interval is otherwise
+        // unattributable. UsageBackfill clamps and only counts in-window time.
+        val usageEvents = usageStatsManager.queryEvents(
+            maxOf(0L, window.startMs - UsageBackfill.SEED_LOOKBACK_MS),
+            window.endMs
+        )
         val timed = mutableListOf<TimedAppEvent>()
         while (usageEvents.hasNextEvent()) {
             val event = android.app.usage.UsageEvents.Event()
             usageEvents.getNextEvent(event)
             val pkg = event.packageName ?: continue
             when (event.eventType) {
+                // Only real transitions (1/2). UsageEvents type 7 is
+                // USER_INTERACTION — treating it as a background transition
+                // zeroes attribution after every touch.
                 AppEvent.ACTIVITY_RESUMED,
-                AppEvent.ACTIVITY_PAUSED,
-                AppEvent.MOVE_TO_FOREGROUND,
-                AppEvent.MOVE_TO_BACKGROUND ->
+                AppEvent.ACTIVITY_PAUSED ->
                     timed.add(TimedAppEvent(pkg, event.eventType, event.timeStamp))
             }
         }
@@ -557,34 +563,37 @@ class TrackerService : Service() {
         label: String,
         increment: Int
     ) {
-        val dao = db.usageCounterDao()
-        val existing = dao.get(day, kind, subject)
-        val merged = UsageDay.mergeCounter(
-            existing = existing?.let {
-                com.pcontrol.core.UsageCounter(
-                    day = it.day,
-                    kind = it.kind,
-                    subject = it.subject,
-                    label = it.label,
-                    seconds = it.seconds,
-                    syncedSeconds = it.syncedSeconds
-                )
-            },
-            kind = kind,
-            subject = subject,
-            label = label,
-            increment = increment
-        )
-        dao.upsert(
-            UsageCounterEntity(
-                day = merged.day,
-                kind = merged.kind,
-                subject = merged.subject,
-                label = merged.label,
-                seconds = merged.seconds,
-                syncedSeconds = merged.syncedSeconds
+        usageCounterMutex.withLock {
+            val dao = db.usageCounterDao()
+            val existing = dao.get(day, kind, subject)
+            val merged = UsageDay.mergeCounter(
+                existing = existing?.let {
+                    com.pcontrol.core.UsageCounter(
+                        day = it.day,
+                        kind = it.kind,
+                        subject = it.subject,
+                        label = it.label,
+                        seconds = it.seconds,
+                        syncedSeconds = it.syncedSeconds
+                    )
+                },
+                day = day,
+                kind = kind,
+                subject = subject,
+                label = label,
+                increment = increment
             )
-        )
+            dao.upsert(
+                UsageCounterEntity(
+                    day = merged.day,
+                    kind = merged.kind,
+                    subject = merged.subject,
+                    label = merged.label,
+                    seconds = merged.seconds,
+                    syncedSeconds = merged.syncedSeconds
+                )
+            )
+        }
     }
 
     private suspend fun onSync() {
@@ -633,9 +642,11 @@ class TrackerService : Service() {
         if (response == null) return // Network error, retry next sync
 
         // Mark synced counters using the snapshot values (not current seconds)
-        for (counter in unsynced) {
-            val sent = snapshotSeconds[Triple(counter.day, counter.kind, counter.subject)] ?: counter.seconds
-            db.usageCounterDao().markSynced(counter.day, counter.kind, counter.subject, sent)
+        usageCounterMutex.withLock {
+            for (counter in unsynced) {
+                val sent = snapshotSeconds[Triple(counter.day, counter.kind, counter.subject)] ?: counter.seconds
+                db.usageCounterDao().markSynced(counter.day, counter.kind, counter.subject, sent)
+            }
         }
 
         // Process policy update

@@ -39,25 +39,30 @@ object UsageDay {
     }
 
     /**
-     * Merges [increment] seconds into an existing counter, or creates a new one.
-     * The [existing] counter may be null (no prior row for this day/kind/subject).
+     * Merges [increment] seconds into an existing counter, or creates a new
+     * one under [day]. The [existing] counter may be null (no prior row for
+     * that day/kind/subject).
+     *
+     * The day of a created row comes from the caller — a backfill merge for
+     * a past day must never be booked under today's key (which would, via
+     * REPLACE upsert, overwrite and reset today's row).
      */
     fun mergeCounter(
         existing: UsageCounter?,
+        day: String,
         kind: String,
         subject: String,
         label: String,
         increment: Int
     ): UsageCounter {
-        val day = if (existing != null) existing.day
-        else LocalDate.now().toString()
+        val rowDay = if (existing != null) existing.day else day
 
         val prevSeconds = existing?.seconds ?: 0
         // Keep the existing syncedSeconds, or initialize to 0
         val synced = existing?.syncedSeconds ?: 0
 
         return UsageCounter(
-            day = day,
+            day = rowDay,
             kind = kind,
             subject = subject,
             label = label.ifEmpty { existing?.label ?: subject },

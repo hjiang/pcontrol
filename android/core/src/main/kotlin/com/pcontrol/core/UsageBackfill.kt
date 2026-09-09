@@ -28,6 +28,14 @@ object UsageBackfill {
     /** Older gaps are dropped (system event retention and sanity). */
     const val MAX_WINDOW_MS: Long = 7L * 24 * 60 * 60_000L
 
+    /**
+     * How far before the window start to query UsageEvents so the app that
+     * was foreground when tracking stopped seeds the replay (the leading
+     * interval [window.startMs, first in-window transition) is otherwise
+     * unattributable). Phantom attribution is bounded by the silence cap.
+     */
+    const val SEED_LOOKBACK_MS: Long = 6 * 60 * 60_000L
+
     /** A backfill query window, in wall-clock epoch milliseconds. */
     data class Window(val startMs: Long, val endMs: Long)
 
@@ -36,9 +44,7 @@ object UsageBackfill {
 
     private val TRANSITION_TYPES = setOf(
         AppEvent.ACTIVITY_RESUMED,
-        AppEvent.ACTIVITY_PAUSED,
-        AppEvent.MOVE_TO_FOREGROUND,
-        AppEvent.MOVE_TO_BACKGROUND
+        AppEvent.ACTIVITY_PAUSED
     )
 
     /**
@@ -129,8 +135,8 @@ object UsageBackfill {
 
     private fun applyTransition(current: String?, event: TimedAppEvent): String? =
         when (event.eventType) {
-            AppEvent.ACTIVITY_RESUMED, AppEvent.MOVE_TO_FOREGROUND -> event.packageName
-            AppEvent.ACTIVITY_PAUSED, AppEvent.MOVE_TO_BACKGROUND ->
+            AppEvent.ACTIVITY_RESUMED -> event.packageName
+            AppEvent.ACTIVITY_PAUSED ->
                 if (event.packageName == current) null else current
             else -> current
         }

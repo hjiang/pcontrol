@@ -219,7 +219,7 @@ class UsageBackfillTest {
             window = UsageBackfill.Window(start, end),
             zone = zone
         )
-        // 6 resumed intervals of 10 s, 20 s, 30 s, 40 s, 50 s, 60 s … capped at 10 s each
+        // six resumed segments of 10 s each, separated by background gaps
         assertEquals(listOf(UsageBackfill.Slice(day(start), "com.game", 60)), slices)
     }
 
@@ -239,6 +239,85 @@ class UsageBackfillTest {
             listOf(
                 UsageBackfill.Slice(day(start), "com.game", 60),
                 UsageBackfill.Slice(day(start), "com.video", 60)
+            ),
+            slices
+        )
+    }
+
+    @Test
+    fun `user interaction event does not clear the foreground`() {
+        // Real UsageEvents.Event.USER_INTERACTION = 7 — a touch on the
+        // currently-foreground app must not read as a background transition.
+        val start = 1_700_000_000_000L
+        val slices = UsageBackfill.attribute(
+            events = listOf(
+                TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, start),
+                TimedAppEvent("com.game", 7 /* USER_INTERACTION */, start + 30_000),
+                TimedAppEvent("com.game", 7 /* USER_INTERACTION */, start + 60_000)
+            ),
+            selfPackage = self,
+            window = UsageBackfill.Window(start, start + 90_000),
+            zone = zone
+        )
+        assertEquals(listOf(UsageBackfill.Slice(day(start), "com.game", 90)), slices)
+    }
+
+    @Test
+    fun `system interaction event does not set the foreground`() {
+        // Real UsageEvents.Event.SYSTEM_INTERACTION = 6 — not a resume.
+        val start = 1_700_000_000_000L
+        val slices = UsageBackfill.attribute(
+            events = listOf(
+                TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, start),
+                TimedAppEvent("com.system.thing", 6 /* SYSTEM_INTERACTION */, start + 30_000)
+            ),
+            selfPackage = self,
+            window = UsageBackfill.Window(start, start + 60_000),
+            zone = zone
+        )
+        assertEquals(listOf(UsageBackfill.Slice(day(start), "com.game", 60)), slices)
+    }
+
+    @Test
+    fun `events after window end are clamped away`() {
+        val start = 1_700_000_000_000L
+        val end = start + 60_000
+        val slices = UsageBackfill.attribute(
+            events = listOf(
+                TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, start),
+                TimedAppEvent("com.video", AppEvent.ACTIVITY_RESUMED, end + 120_000)
+            ),
+            selfPackage = self,
+            window = UsageBackfill.Window(start, end),
+            zone = zone
+        )
+        assertEquals(listOf(UsageBackfill.Slice(day(start), "com.game", 60)), slices)
+    }
+
+    @Test
+    fun `midnight split works across a DST fall-back boundary`() {
+        // America/New_York on the fall-back day: 2026-11-01 (02:00 EDT →
+        // 01:00 EST). Attribution is epoch-based; the local-day boundary
+        // must still split a capped interval that straddles midnight.
+        val ny = ZoneId.of("America/New_York")
+        val t1 = Instant.parse("2026-10-31T23:58:00-04:00").toEpochMilli()
+        val t2 = Instant.parse("2026-11-01T00:30:00-04:00").toEpochMilli()
+        val slices = UsageBackfill.attribute(
+            events = listOf(
+                TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, t1),
+                TimedAppEvent("com.video", AppEvent.ACTIVITY_RESUMED, t2)
+            ),
+            selfPackage = self,
+            window = UsageBackfill.Window(t1, t2 + 60_000),
+            zone = ny
+        )
+        // game interval [23:58 → 00:30) = 32 min, capped to 5 min from its
+        // start → 00:03; splits 120 s on 10-31 + 180 s on 11-01.
+        assertEquals(
+            listOf(
+                UsageBackfill.Slice("2026-10-31", "com.game", 120),
+                UsageBackfill.Slice("2026-11-01", "com.game", 180),
+                UsageBackfill.Slice("2026-11-01", "com.video", 60)
             ),
             slices
         )
