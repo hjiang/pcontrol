@@ -278,8 +278,9 @@ class TrackerService : Service() {
         val usageEvents = usageStatsManager.queryEvents(startTime, endTime)
         val eventList = mutableListOf<AppEvent>()
 
+        // One reusable event; getNextEvent overwrites it each iteration.
+        val event = android.app.usage.UsageEvents.Event()
         while (usageEvents.hasNextEvent()) {
-            val event = android.app.usage.UsageEvents.Event()
             usageEvents.getNextEvent(event)
             val pkg = event.packageName ?: continue
             when (event.eventType) {
@@ -520,8 +521,10 @@ class TrackerService : Service() {
             window.endMs
         )
         val timed = mutableListOf<TimedAppEvent>()
+        // One reusable event; getNextEvent overwrites it each iteration —
+        // multi-day windows can yield thousands of events.
+        val event = android.app.usage.UsageEvents.Event()
         while (usageEvents.hasNextEvent()) {
-            val event = android.app.usage.UsageEvents.Event()
             usageEvents.getNextEvent(event)
             val pkg = event.packageName ?: continue
             when (event.eventType) {
