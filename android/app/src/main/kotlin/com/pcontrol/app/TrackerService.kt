@@ -72,6 +72,7 @@ class TrackerService : Service() {
     /** Guards long-running side work so it never stalls the 10-second tick. */
     private val syncInFlight = AtomicBoolean(false)
     private val updateCheckInFlight = AtomicBoolean(false)
+    private val backfillInFlight = AtomicBoolean(false)
     private var ticksWithoutDomain = 0
 
     // Browser foreground session tracking
@@ -149,12 +150,9 @@ class TrackerService : Service() {
 
             // The process may have just been resurrected after hours or days
             // (crash, FGS timeout kill, boot, force-stop). Replay what the
-            // system UsageStats recorded while we were gone.
-            try {
-                maybeBackfill(System.currentTimeMillis())
-            } catch (e: Exception) {
-                Log.w(TAG, "startup backfill failed", e)
-            }
+            // system UsageStats recorded while we were gone — on its own
+            // coroutine: a multi-day replay must never stall the tick loop.
+            launchBackfill(System.currentTimeMillis())
 
             val updateState = UpdateState(this@TrackerService)
 
@@ -164,13 +162,10 @@ class TrackerService : Service() {
                     // The loop stalled with the process alive (e.g. a HyperOS
                     // Greeze freeze-thaw). The exact last attribution end is
                     // still in memory (survives freezes, unlike a restart) —
-                    // use it as the floor so nothing already counted is
-                    // replayed.
-                    try {
-                        maybeBackfill(tickStart, lastUsageEventQueryTime ?: 0L)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "stall backfill failed", e)
-                    }
+                    // pass it as the floor so nothing already counted is
+                    // replayed. Launched off-loop like sync/update checks so
+                    // ticks resume immediately.
+                    launchBackfill(tickStart, lastUsageEventQueryTime ?: 0L)
                 }
                 lastTickAtMs = tickStart
 
@@ -480,20 +475,39 @@ class TrackerService : Service() {
     }
 
     /**
+     * Launches a backfill on its own coroutine (guarded, single-flight) so
+     * the UsageStats query and counter merges — potentially large after a
+     * multi-day outage — never stall the 10-second tick loop.
+     */
+    private fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
+        if (!backfillInFlight.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                maybeBackfill(nowMs, minStartMs)
+            } catch (e: Exception) {
+                Log.w(TAG, "backfill failed", e)
+            } finally {
+                backfillInFlight.set(false)
+            }
+        }
+    }
+
+    /**
      * Replays the system UsageStats transitions for the period covered by
      * the persisted tick cursor and attributes it to per-day app counters.
      * Covers process death (crash, FGS kill, boot) and freeze-thaw stalls.
      * Web (domain) usage cannot be recovered this way — domains are only
      * readable live via the accessibility service.
+     *
+     * Ordering: the cursor is claimed only after a successful queryEvents,
+     * right before merging — a transient query failure leaves the cursor
+     * untouched so the next attempt retries, while a mid-merge crash still
+     * cannot double-count (at-most-once for merges).
      */
     private suspend fun maybeBackfill(nowMs: Long, minStartMs: Long = 0L) {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val cursor = maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), minStartMs)
         val window = UsageBackfill.plan(cursor, nowMs) ?: return
-
-        // Claim the window before merging so a mid-merge crash cannot
-        // double-count it on the next attempt (at-most-once semantics).
-        prefs.edit().putLong(KEY_TICK_CURSOR_MS, window.endMs).apply()
 
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
@@ -526,6 +540,10 @@ class TrackerService : Service() {
             window = window,
             zone = ZoneId.systemDefault()
         )
+
+        // Claim the window after the successful query, before merging:
+        // at-most-once for merges, retryable for failed queries.
+        prefs.edit().putLong(KEY_TICK_CURSOR_MS, window.endMs).apply()
         if (slices.isEmpty()) return
 
         val db = AppDatabase.getInstance(this)

@@ -252,9 +252,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   merges per-day app counters. Eventless intervals cap at 5 min so a locked
   screen never inflates hours; the cursor is claimed before merging
   (at-most-once); pcontrol's own package is excluded; web/domain usage is
-  not recoverable retroactively. The freeze-thaw path (process alive) floors
-  the replay start at the in-memory `lastUsageEventQueryTime` to avoid
-  double counting the ≤60 s cursor-persist lag.
+  not recoverable retroactively. The cursor persists on every commit; the
+  freeze-thaw path (process alive) additionally floors the replay start at
+  the in-memory `lastUsageEventQueryTime`. Backfill runs on its own
+  single-flight coroutine so a multi-day replay never stalls the tick loop,
+  and the cursor is claimed only after a successful `queryEvents` (failed
+  queries retry; merges stay at-most-once).
 
 - **HyperOS blocks background activity starts even with draw-over-other-apps.**
   Never use `startActivity` as an automatic enforcement surface: Xiaomi can

@@ -94,7 +94,7 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 ## Status
 
-- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 18 tests)
+- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 19 tests)
 - Stage 2 — **Done** (manifest + TrackerService)
 - Stage 3 — **Done** (0.0.8/8 defaults)
 
@@ -131,6 +131,31 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 Also added: DST-day midnight split test (America/New_York) and post-window
 clamping test.
+
+## Review round 2 (local reviewer) — APPROVE
+
+All five round-1 fixes verified present and semantically right (including a
+hand recomputation of the DST case and a deadlock/writer audit of the
+mutex). Report-only P2s, addressed where cheap:
+
+- ≤10 s over-count per recovery incident from the "10 s per tick"
+  sampling boundary — inherent to the model, accepted.
+- Stale "≤60 s cursor-persist lag" documentation — updated (persist is
+  per-tick now).
+- `UsageStatsAdapter.toAppEvents` is uncalled dead code — left in place
+  (harmless: `AppUsagePoller` ignores non-transition types; still the
+  pattern example AGENTS.md references).
+
+## Copilot review rounds — addressed
+
+- **Backfill ran inline on the tick coroutine** (startup + stall sites),
+  violating the repo's "never block the 10-second tick" convention. Fixed:
+  `launchBackfill` runs `maybeBackfill` on its own single-flight coroutine
+  (AtomicBoolean guard), like sync and update checks.
+- **Cursor advanced before `queryEvents`**: a transient query failure would
+  permanently skip the window. Fixed: the cursor is claimed only after a
+  successful query, immediately before merging — failed queries retry on
+  the next stall/restart; merges stay at-most-once.
 
 ## Verification on device (after installing the fixed APK)
 
