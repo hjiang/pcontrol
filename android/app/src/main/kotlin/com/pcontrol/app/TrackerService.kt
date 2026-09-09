@@ -462,8 +462,9 @@ class TrackerService : Service() {
      * Commits a tick's attribution cursor: updates in-memory foreground /
      * query state and persists the wall-clock cursor so a later restart or
      * freeze-thaw knows exactly where live counting stopped. Persisting
-     * every tick (a small async SharedPreferences write) removes any
-     * restart replay overlap.
+     * every tick (a small SharedPreferences write) minimizes restart
+     * replay overlap; apply() is async, so sudden process death can still
+     * lose the newest write — the residual overlap is bounded by one tick.
      */
     private fun commitTick(foregroundPkg: String?, endTime: Long) {
         currentForegroundPkg = foregroundPkg
