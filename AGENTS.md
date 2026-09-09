@@ -225,6 +225,30 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   total call timeout and deterministic `Response.close()`/`use`; otherwise one
   stuck or leaked HTTP exchange can hold `syncInFlight` and make the dashboard
   report an otherwise-live device offline.
+- **`dataSync` foreground services die after 6 hours on Android 15+.**
+  Diagnosed on Xiaomi 25097RP43C / HyperOS 3 / Android 16: at the 6 h mark
+  `ForegroundServiceDidNotStopInTimeException` kills the process, then every
+  sticky restart crashes with `ForegroundServiceStartNotAllowedException:
+  Time limit already exhausted` until the app is opened in the foreground —
+  silent multi-day outages (logcat evidence 08-21/08-26/08-28 in plan 15).
+  `TrackerService` now starts with `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` on
+  API 34+ (manifest declares `dataSync|specialUse` +
+  `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` + both FGS permissions), and
+  `startForegroundSafely()` swallows failures — a crash there would take the
+  bound accessibility service down with it.
+
+- **Usage during outages is backfilled from system UsageStats.** Live
+  attribution is 10 s sampling: time with the process dead or frozen never
+  reaches the counters. Ticks persist `tick_cursor_ms` (1/min throttle); on
+  service start and on ≥2 min loop stalls, `maybeBackfill()` replays
+  `queryEvents` through `UsageBackfill` (`:core`, pure, unit-tested) and
+  merges per-day app counters. Eventless intervals cap at 5 min so a locked
+  screen never inflates hours; the cursor is claimed before merging
+  (at-most-once); pcontrol's own package is excluded; web/domain usage is
+  not recoverable retroactively. The freeze-thaw path (process alive) floors
+  the replay start at the in-memory `lastUsageEventQueryTime` to avoid
+  double counting the ≤60 s cursor-persist lag.
+
 - **HyperOS blocks background activity starts even with draw-over-other-apps.**
   Never use `startActivity` as an automatic enforcement surface: Xiaomi can
   reject it with `Abort background activity starts`/`MIUIOP(10021)`. The bound

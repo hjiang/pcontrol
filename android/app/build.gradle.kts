@@ -14,7 +14,7 @@ android {
     // Version injected by CI from the release tag (via -PappVersionName /
     // -PappVersionCode). Defaults are for local dev builds; CI always
     // overrides with the tag version so auto-update can compare correctly.
-    val appVersionName: String = project.findProperty("appVersionName") as String? ?: "0.0.5"
+    val appVersionName: String = project.findProperty("appVersionName") as String? ?: "0.0.8"
     val appVersionCodeRaw = project.findProperty("appVersionCode") as String?
     val appVersionCode: Int = if (appVersionCodeRaw != null) {
         val parsed = appVersionCodeRaw.toIntOrNull()
@@ -24,7 +24,7 @@ android {
         }
         parsed
     } else {
-        5
+        8
     }
 
     val keyProperties = rootProject.file("key.properties")

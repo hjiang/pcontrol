@@ -9,11 +9,13 @@ import android.app.Service
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import java.util.concurrent.atomic.AtomicBoolean
 import com.pcontrol.app.update.UpdateCoordinator
 import com.pcontrol.app.update.UpdateResult
@@ -23,6 +25,8 @@ import com.pcontrol.core.AppUsagePoller
 import com.pcontrol.core.BrowserContext
 import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
+import com.pcontrol.core.TimedAppEvent
+import com.pcontrol.core.UsageBackfill
 import com.pcontrol.core.UsageDay
 import com.pcontrol.core.UsageAttribution
 import com.pcontrol.app.db.AppDatabase
@@ -49,6 +53,13 @@ class TrackerService : Service() {
         const val NOTIFICATION_ID = 1
         const val TICK_INTERVAL_MS = 10_000L  // 10 seconds
         const val SYNC_INTERVAL_MS = 60_000L  // 60 seconds
+
+        // Wall-clock cursor of the last committed attribution window,
+        // persisted so a restarted (or Greeze-thawed) tracker can replay
+        // the UsageStats events of the missed period.
+        private const val PREFS_NAME = "pcontrol"
+        private const val KEY_TICK_CURSOR_MS = "tick_cursor_ms"
+        private const val CURSOR_PERSIST_INTERVAL_MS = 60_000L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -70,12 +81,15 @@ class TrackerService : Service() {
     private var lastDay: String = ""
     private var lastLoggedForegroundCandidates: String? = null
     private var lastLoggedAttributionSkip: String? = null
+    // Loop-level heartbeat for stall (freeze-thaw) detection
+    private var lastTickAtMs = 0L
+    private var lastCursorPersistMs = 0L
 
     override fun onCreate() {
         super.onCreate()
         blockingCoordinator = BlockingCoordinator(this)
         createNotificationChannels()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForegroundSafely()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -93,6 +107,33 @@ class TrackerService : Service() {
 
     private lateinit var blockingCoordinator: BlockingCoordinator
 
+    /**
+     * Starts the foreground service with a type that has no lifetime cap.
+     *
+     * `dataSync` was the original type; Android 15+ kills dataSync FGS
+     * after 6 hours (`ForegroundServiceDidNotStopInTimeException`) and then
+     * rejects restarts with "Time limit already exhausted" until the app is
+     * opened in the foreground — the root cause of the multi-day tracker
+     * outages diagnosed on HyperOS 3 / Android 16 (plan 15). `specialUse` has
+     * no timeout; below API 34 only dataSync exists and no timeout applies.
+     *
+     * A failure here must never crash the process: the process also hosts
+     * the bound accessibility service. Degrade to a background service and
+     * let the next app-open or boot restore foreground state.
+     */
+    private fun startForegroundSafely() {
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        }
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
+        } catch (e: Exception) {
+            Log.w(TAG, "startForeground failed; running as background service", e)
+        }
+    }
+
     private fun startTicks() {
         tickJob?.cancel()
         tickJob = scope.launch {
@@ -100,10 +141,35 @@ class TrackerService : Service() {
             // 0 forces the first post-tick sync check to fire right away.
             lastSyncTime = 0L
             lastUsageEventQueryTime = null
+            lastTickAtMs = 0L
+
+            // The process may have just been resurrected after hours or days
+            // (crash, FGS timeout kill, boot, force-stop). Replay what the
+            // system UsageStats recorded while we were gone.
+            try {
+                maybeBackfill(System.currentTimeMillis())
+            } catch (e: Exception) {
+                Log.w(TAG, "startup backfill failed", e)
+            }
 
             val updateState = UpdateState(this@TrackerService)
 
             while (true) {
+                val tickStart = System.currentTimeMillis()
+                if (lastTickAtMs > 0 && tickStart - lastTickAtMs >= UsageBackfill.MIN_GAP_MS) {
+                    // The loop stalled with the process alive (e.g. a HyperOS
+                    // Greeze freeze-thaw). The exact last attribution end is
+                    // still in memory (survives freezes, unlike a restart) —
+                    // use it as the floor so nothing already counted is
+                    // replayed.
+                    try {
+                        maybeBackfill(tickStart, lastUsageEventQueryTime ?: 0L)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "stall backfill failed", e)
+                    }
+                }
+                lastTickAtMs = tickStart
+
                 try {
                     onTick()
                 } catch (e: Exception) {
@@ -231,6 +297,10 @@ class TrackerService : Service() {
             previousForegroundPackage = previousForegroundPkg,
             events = eventList
         )
+            // pcontrol's own dashboard is usage of the parent tool, not of the
+            // child — never attribute it (the accessibility path already
+            // excludes self via takeUnless below).
+            .takeUnless { it == packageName }
         // HyperOS can omit a UsageEvent when a task is resumed from Recents.
         // The bound accessibility service can still read the active root, so
         // prefer it for the periodic attribution/enforcement fallback.
@@ -266,8 +336,7 @@ class TrackerService : Service() {
             skip.browsersToClear.forEach { BrowserAccessibilityService.domainCache.clear(it) }
             browserForegroundPkg = null
             ticksWithoutDomain = 0
-            currentForegroundPkg = skip.nextForegroundPkg
-            lastUsageEventQueryTime = endTime
+            commitTick(skip.nextForegroundPkg, endTime)
             return
         }
 
@@ -280,8 +349,7 @@ class TrackerService : Service() {
                     ticksWithoutDomain = 0
                 }
             }
-            currentForegroundPkg = foregroundPkg
-            lastUsageEventQueryTime = endTime
+            commitTick(foregroundPkg, endTime)
             return
         }
 
@@ -332,8 +400,7 @@ class TrackerService : Service() {
         // Counters are durable at this point. Commit the cursor before
         // best-effort enforcement so an enforcement failure cannot replay and
         // double-count this tick's usage.
-        currentForegroundPkg = foregroundPkg
-        lastUsageEventQueryTime = endTime
+        commitTick(foregroundPkg, endTime)
 
         // ── Day rollover: clean up old warned entries ──────────────
         val dbForRollover = AppDatabase.getInstance(this)
@@ -394,12 +461,101 @@ class TrackerService : Service() {
 
 
 
+    /**
+     * Commits a tick's attribution cursor: updates in-memory foreground /
+     * query state and persists the wall-clock cursor (throttled) so a later
+     * restart or freeze-thaw knows exactly where live counting stopped.
+     */
+    private fun commitTick(foregroundPkg: String?, endTime: Long) {
+        currentForegroundPkg = foregroundPkg
+        lastUsageEventQueryTime = endTime
+        val now = System.currentTimeMillis()
+        if (now - lastCursorPersistMs >= CURSOR_PERSIST_INTERVAL_MS) {
+            lastCursorPersistMs = now
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_TICK_CURSOR_MS, endTime)
+                .apply()
+        }
+    }
+
+    /**
+     * Replays the system UsageStats transitions for the period covered by
+     * the persisted tick cursor and attributes it to per-day app counters.
+     * Covers process death (crash, FGS kill, boot) and freeze-thaw stalls.
+     * Web (domain) usage cannot be recovered this way — domains are only
+     * readable live via the accessibility service.
+     */
+    private suspend fun maybeBackfill(nowMs: Long, minStartMs: Long = 0L) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val cursor = maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), minStartMs)
+        val window = UsageBackfill.plan(cursor, nowMs) ?: return
+
+        // Claim the window before merging so a mid-merge crash cannot
+        // double-count it on the next attempt (at-most-once semantics).
+        prefs.edit().putLong(KEY_TICK_CURSOR_MS, window.endMs).apply()
+        lastCursorPersistMs = System.currentTimeMillis()
+
+        val usageStatsManager =
+            getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val usageEvents = usageStatsManager.queryEvents(window.startMs, window.endMs)
+        val timed = mutableListOf<TimedAppEvent>()
+        while (usageEvents.hasNextEvent()) {
+            val event = android.app.usage.UsageEvents.Event()
+            usageEvents.getNextEvent(event)
+            val pkg = event.packageName ?: continue
+            when (event.eventType) {
+                AppEvent.ACTIVITY_RESUMED,
+                AppEvent.ACTIVITY_PAUSED,
+                AppEvent.MOVE_TO_FOREGROUND,
+                AppEvent.MOVE_TO_BACKGROUND ->
+                    timed.add(TimedAppEvent(pkg, event.eventType, event.timeStamp))
+            }
+        }
+        // UsageEvents does not implement Closeable; resources freed by GC
+
+        val slices = UsageBackfill.attribute(
+            events = timed,
+            selfPackage = packageName,
+            window = window,
+            zone = ZoneId.systemDefault()
+        )
+        if (slices.isEmpty()) return
+
+        val db = AppDatabase.getInstance(this)
+        for (slice in slices) {
+            mergeCounter(
+                db = db,
+                day = slice.day,
+                kind = "app",
+                subject = slice.subject,
+                label = blockingCoordinator.resolveLabel(slice.subject),
+                increment = slice.seconds
+            )
+        }
+        val gapSeconds = (window.endMs - window.startMs) / 1000
+        val backfilledSeconds = slices.sumOf { it.seconds }
+        Log.i(TAG, "Backfilled ${backfilledSeconds}s over a ${gapSeconds}s gap")
+    }
+
     private suspend fun incrementCounter(
         db: AppDatabase,
         day: String,
         kind: String,
         subject: String,
         label: String
+    ) {
+        mergeCounter(db, day, kind, subject, label, increment = 10)  // 10-second tick
+    }
+
+    /** Read-merge-upsert for one (day, kind, subject) counter row. */
+    private suspend fun mergeCounter(
+        db: AppDatabase,
+        day: String,
+        kind: String,
+        subject: String,
+        label: String,
+        increment: Int
     ) {
         val dao = db.usageCounterDao()
         val existing = dao.get(day, kind, subject)
@@ -417,7 +573,7 @@ class TrackerService : Service() {
             kind = kind,
             subject = subject,
             label = label,
-            increment = 10  // 10-second tick
+            increment = increment
         )
         dao.upsert(
             UsageCounterEntity(
