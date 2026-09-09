@@ -241,8 +241,10 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   `TrackerService` now starts with `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` on
   API 34+ (manifest declares `dataSync|specialUse` +
   `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` + both FGS permissions), and
-  `startForegroundSafely()` swallows failures — a crash there would take the
-  bound accessibility service down with it.
+  `startForegroundSafely()` never crashes the process — a failed start logs
+  and `stopSelf()`s (callers use `startForegroundService`; lingering would
+  crash via RemoteServiceException seconds later; the bound accessibility
+  service keeps the process alive for the next retry).
 - **An APK update stops all services and nothing restarts them.** Not even
   `START_STICKY`. Every install (auto-update included) left the tracker
   dead until the next boot or manual app open — found while installing the

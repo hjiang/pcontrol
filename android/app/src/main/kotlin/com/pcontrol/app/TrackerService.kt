@@ -123,8 +123,14 @@ class TrackerService : Service() {
      * no timeout; below API 34 only dataSync exists and no timeout applies.
      *
      * A failure here must never crash the process: the process also hosts
-     * the bound accessibility service. Degrade to a background service and
-     * let the next app-open or boot restore foreground state.
+     * the bound accessibility service. Because every caller uses
+     * Context.startForegroundService, an unresolved start contract would
+     * crash the app anyway via RemoteServiceException ("did not then call
+     * Service.startForeground") seconds later — so a failed foreground
+     * start stops the service cleanly instead of lingering as a doomed
+     * background service. The bound accessibility service keeps the
+     * process alive, and the next boot, package replacement, or app-open
+     * retries the foreground start.
      */
     private fun startForegroundSafely() {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -135,7 +141,8 @@ class TrackerService : Service() {
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
         } catch (e: Exception) {
-            Log.w(TAG, "startForeground failed; running as background service", e)
+            Log.w(TAG, "startForeground failed; stopping service to avoid the FGS contract crash", e)
+            stopSelf()
         }
     }
 

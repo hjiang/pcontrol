@@ -71,10 +71,13 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
   `ServiceCompat.startForeground(..., type)` starts with
   `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` on API 34+ (no timeout) and
   `FOREGROUND_SERVICE_TYPE_DATA_SYNC` below.
-- **Crash-safe `startForeground`**: wrap in try/catch. A failure logs and
-  degrades to running as a background service instead of crashing the
-  process (which also kills the bound accessibility service). The next
-  app-open/boot starts it properly.
+- **Crash-safe `startForeground`**: wrap in try/catch. On failure the
+  service stops itself (`stopSelf`) — callers use
+  `Context.startForegroundService`, so lingering without a completed
+  foreground start would crash the app seconds later via
+  RemoteServiceException ("did not then call Service.startForeground").
+  The bound accessibility service keeps the process alive, and the next
+  app-open/boot/package-replace retries the foreground start.
 - **Cursor persistence**: each tick (throttled to 1/min) writes
   `tick_cursor_ms` (wall clock of the attribution window end).
 - **Gap backfill**: on service start and whenever a tick detects a stall
