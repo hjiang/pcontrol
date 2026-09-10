@@ -3,6 +3,7 @@ package com.pcontrol.app
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 /**
  * Restarts [TrackerService] after events that kill it with no auto-restart:
@@ -22,7 +23,17 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 val serviceIntent = Intent(appContext, TrackerService::class.java)
-                appContext.startForegroundService(serviceIntent)
+                try {
+                    appContext.startForegroundService(serviceIntent)
+                } catch (e: Exception) {
+                    // ForegroundServiceStartNotAllowedException (API 31+) or
+                    // OEM background-start IllegalStateExceptions can throw
+                    // here. A crashing receiver would take down the whole
+                    // process — including the bound accessibility service —
+                    // exactly when we are trying to resurrect the tracker.
+                    // Log it; the next boot/update/app-open retries.
+                    Log.w("BootReceiver", "Failed to restart TrackerService", e)
+                }
             }
         }
     }

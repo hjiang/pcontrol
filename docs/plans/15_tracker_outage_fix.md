@@ -78,7 +78,7 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
   RemoteServiceException ("did not then call Service.startForeground").
   The bound accessibility service keeps the process alive, and the next
   app-open/boot/package-replace retries the foreground start.
-- **Cursor persistence**: each tick (throttled to 1/min) writes
+- **Cursor persistence**: every committed tick writes
   `tick_cursor_ms` (wall clock of the attribution window end).
 - **Gap backfill**: on service start and whenever a tick detects a stall
   (`now - lastTickAt > 2 min`), replay `queryEvents(cursor, now)` through

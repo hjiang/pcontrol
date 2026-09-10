@@ -25,7 +25,11 @@ object UsageBackfill {
     /** Gaps below this are ignored (tick jitter). */
     const val MIN_GAP_MS: Long = 2 * 60_000L
 
-    /** Older gaps are dropped (system event retention and sanity). */
+    /**
+     * Windows are clamped to at most this span (system event retention and
+     * sanity): for an ancient cursor only the portion older than this is
+     * dropped — the most recent span is still backfilled.
+     */
     const val MAX_WINDOW_MS: Long = 7L * 24 * 60 * 60_000L
 
     /**

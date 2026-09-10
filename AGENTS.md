@@ -253,7 +253,7 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 
 - **Usage during outages is backfilled from system UsageStats.** Live
   attribution is 10 s sampling: time with the process dead or frozen never
-  reaches the counters. Ticks persist `tick_cursor_ms` (1/min throttle); on
+  reaches the counters. Ticks persist `tick_cursor_ms` on every commit; on
   service start and on ≥2 min loop stalls, `maybeBackfill()` replays
   `queryEvents` through `UsageBackfill` (`:core`, pure, unit-tested) and
   merges per-day app counters. Eventless intervals cap at 5 min so a locked
