@@ -82,6 +82,12 @@ class TrackerService : Service() {
         // could not be persisted (storage trouble) — retried until it
         // succeeds; the durable row stays as the consistency marker.
         private const val RETIRE_RETRY_BACKOFF_MS = 10_000L
+
+        // Legacy int op id for GET_USAGE_STATS (since API 21). Used via a
+        // reflectively resolved checkOpNoThrow(int, int, String) on API 26–28
+        // (the String overloads do not exist there), mirroring
+        // MainActivity.hasUsageStatsPermission().
+        private const val LEGACY_OP_GET_USAGE_STATS = 43
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -754,10 +760,17 @@ class TrackerService : Service() {
             backfillMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
                 val row = dao.get()
-                val next = pendingRecoveryWindows.removeFirstOrNull()
                 when {
-                    next != null ->
+                    // The pass could not run (UsageStats access currently
+                    // unavailable): leave the active row AND the queue exactly
+                    // as they are — claiming `next` here would overwrite the
+                    // active row's unrecovered remainder and lose it. Retry
+                    // after a backoff.
+                    !handled -> Unit
+                    pendingRecoveryWindows.isNotEmpty() -> {
+                        val next = pendingRecoveryWindows.removeFirstOrNull()!!
                         dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                    }
                     // No queued window — but a late registrar may have
                     // published a NEW pending row while we were finishing the
                     // previous one (registration is serialized with this
@@ -914,6 +927,14 @@ class TrackerService : Service() {
      * the PACKAGE_USAGE_STATS app-op, queryEvents() silently returns empty
      * data, which must never be mistaken for "nothing to recover" — the
      * caller keeps the pending row and retries until access is granted.
+     *
+     * Mirrors MainActivity.hasUsageStatsPermission()'s API-safety pattern:
+     * `unsafeCheckOpNoThrow` on API 29+, and the legacy int-id
+     * `checkOpNoThrow(int, int, String)` overload resolved reflectively
+     * below (the String overloads do not exist on API 26–28, and a
+     * NoSuchMethodError is an Error, not an Exception). Any probe failure
+     * returns false: deferring recovery is recoverable, advancing the
+     * frontier over unrecovered data is not.
      */
     private fun hasUsageStatsAccess(): Boolean = try {
         val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -924,18 +945,25 @@ class TrackerService : Service() {
                 packageName
             )
         } else {
-            @Suppress("DEPRECATION")
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
+            // Legacy int-id overload (op id 43, since API 21) — the String
+            // overloads are not present on API 26–28.
+            val check = AppOpsManager::class.java.getMethod(
+                "checkOpNoThrow",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                String::class.java
+            )
+            check.invoke(
+                appOps,
+                LEGACY_OP_GET_USAGE_STATS,
                 android.os.Process.myUid(),
                 packageName
-            )
+            ) as Int
         }
         mode == AppOpsManager.MODE_ALLOWED
-    } catch (e: Exception) {
-        // Cannot tell (OEM quirk) — assume access so recovery behaves as
-        // before instead of deferring forever.
-        true
+    } catch (t: Throwable) {
+        Log.w(TAG, "usage-stats access could not be confirmed; recovery deferred", t)
+        false
     }
 
     private suspend fun incrementCounter(

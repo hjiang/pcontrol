@@ -67,7 +67,7 @@ class AppUsagePollerTest {
     }
 
     @Test
-    fun `sequential resume pause resume across three apps`() {
+    fun `sequential resume pause resume across two apps`() {
         val events = listOf(
             AppEvent("com.app1", AppEvent.ACTIVITY_RESUMED),
             AppEvent("com.app1", AppEvent.ACTIVITY_PAUSED),
