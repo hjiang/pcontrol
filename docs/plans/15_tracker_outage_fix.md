@@ -245,6 +245,21 @@ tick cursor:
 - **The tick loop never waits on backfill I/O**: `backfillMutex` no longer
   involves `commitTick` (single-writer cursor, monotonic by construction);
   all Room access happens in backfill coroutines only.
+- **Detection hands off durably, synchronously**: `launchBackfill` writes
+  the detection debt (commit()) before returning — a process death after
+  the next commitTick can no longer skip the detected gap. An overlapping
+  unpromoted debt is merged (only possible when no live tick has committed
+  in between), and the registration write retries in place (3 × 2 s) on
+  transient Room failures.
+- **Clock rollback skips ticks**: the monotonic cursor can sit ahead of a
+  rolled-back clock; such ticks are skipped entirely (that wall-clock range
+  was already counted) instead of double-counting via a bootstrapped
+  window; counting resumes once the clock catches up.
+- **Claim is peek-then-remove** (the queued window is installed durably
+  before it leaves the queue), and the failure path keeps the worker alive
+  while ANY durable work remains (queued windows or a pending row with
+  `progressMs < endMs`) — retrying with backoff instead of stranding it
+  until the next detection.
 - **Retirement is gated on the live cursor catching up** and on remaining
   work: the claim/retire check distinguishes a newly published row
   (`progressMs < endMs` — process it) from the just-finished row

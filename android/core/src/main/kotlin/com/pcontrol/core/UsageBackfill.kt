@@ -122,7 +122,9 @@ object UsageBackfill {
      * caps are still measured on the true event timeline — an interval
      * whose allowance was consumed before the frontier gets nothing back.
      * Sub-second remainders are carried across chunks, so the per-chunk
-     * second totals sum exactly to the single-shot conversion.
+     * second totals sum exactly to the single-shot conversion — within one
+     * invocation: a retry from a durable frontier re-floors the sub-second
+     * remainder at that frontier, bounded by < 1 s per (day, subject).
      */
     fun attributeChunked(
         events: List<TimedAppEvent>,
