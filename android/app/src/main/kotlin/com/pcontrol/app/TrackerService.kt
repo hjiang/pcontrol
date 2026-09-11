@@ -570,27 +570,6 @@ class TrackerService : Service() {
      * Requests recovery of the gap ending at [nowMs], starting at the live
      * frontier (never before [minStartMs], which the freeze-thaw path sets
      * to the in-memory last query end so nothing already counted is
-     * replayed). Fire-and-forget: detection snapshots the frontier with one
-     * in-memory SharedPreferences read (captured before any tick can
-     * advance it — at worst one tick stale, within the accepted boundary
-     * noise) and hands everything else, including the Room registration,
-     * to a worker coroutine so the 10-second tick never waits on database
-     * I/O.
-     *
-     * The durable handoff happens SYNCHRONOUSLY as part of detection, before
-     * this function returns: the next commitTick can advance the live cursor
-     * past the gap the moment onTick runs, so a process death before the
-     * worker even starts must not leave the detected gap unregistered. The
-     * gap becomes the durable pending recovery window (Room
-     * `backfill_state`), which survives process death and is invisible to
-     * [commitTick]: live ticks can no longer erase an outage frontier, so
-     * a failed query or merge retries at the next stall/restart instead of
-     * permanently losing the missed usage.
-     */
-    /**
-     * Requests recovery of the gap ending at [nowMs], starting at the live
-     * frontier (never before [minStartMs], which the freeze-thaw path sets
-     * to the in-memory last query end so nothing already counted is
      * replayed). Fire-and-forget: the tick coroutine only snapshots the
      * frontier (an in-memory SharedPreferences read) — every durable write,
      * including the detection debt's synchronous commit(), happens on the
@@ -624,10 +603,10 @@ class TrackerService : Service() {
                     val window = planWindow(frontierMs, nowMs, minStartMs)
                     val debt = synchronized(debtLock) { pendingDebt() }
                     if (window != null) {
-                        // Durable handoff (commit(), worker-side) — merged
-                        // with a staged debt when they overlap (overlap
+                        // Durable handoff (commit(), worker-side). An
+                        // overlapping staged debt is merged — overlap
                         // implies no live tick has committed in between, so
-                        // the merged span is entirely uncounted).
+                        // the merged span is entirely uncounted.
                         val owed = if (debt != null &&
                             window.startMs < debt.endMs && window.endMs > debt.startMs
                         ) {
@@ -638,8 +617,20 @@ class TrackerService : Service() {
                         } else {
                             window
                         }
-                        writeDebt(owed)
-                        pendingRecoveryWindows.addLast(owed)
+                        // SINGLE durable publication: the debt is the record —
+                        // [promoteDebt] installs it as the pending row. Only a
+                        // gap disjoint from everything owed (its start at or
+                        // after the owed end) is queued, clamped against the
+                        // owed end; it lives in memory until claimed (a
+                        // process death loses it — documented residual).
+                        if (debt != null && window.startMs >= debt.endMs) {
+                            enqueueClamped(window, debt.endMs)
+                        } else if (!writeDebt(owed)) {
+                            // The durable record could not be persisted: the
+                            // next detection re-plans the gap from the live
+                            // frontier and retries (logged for diagnosis).
+                            Log.w(TAG, "detection debt commit failed; recovery deferred")
+                        }
                     }
                     // Start/retain the worker whenever this detection needs
                     // it — or whenever durable recovery work may exist (an
@@ -684,7 +675,25 @@ class TrackerService : Service() {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "backfill failed", e)
-                if (ownsGuard) backfillInFlight.set(false)
+                // A registration/recovery failure must not strand durable
+                // work (a staged debt, a pending row with remaining work, or
+                // queued windows): keep a worker retrying with backoff while
+                // anything is owed.
+                var retry = false
+                if (ownsGuard) {
+                    backfillMutex.withLock {
+                        val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
+                        val row = dao.get()
+                        val debt = synchronized(debtLock) { pendingDebt() }
+                        retry = pendingRecoveryWindows.isNotEmpty() ||
+                            (row != null && row.endMs > 0L && row.progressMs < row.endMs) ||
+                            debt != null
+                    }
+                }
+                if (retry) {
+                    delay(REGISTRATION_RETRY_BACKOFF_MS)
+                    launchBackfill(nowMs, minStartMs)
+                }
             }
         }
     }
@@ -781,9 +790,15 @@ class TrackerService : Service() {
                 // and dropped.
                 row != null && row.endMs > 0L && row.progressMs < row.endMs -> {
                     if (debt.endMs > row.endMs) {
-                        pendingRecoveryWindows.addLast(
-                            UsageBackfill.Window(maxOf(debt.startMs, row.endMs), debt.endMs)
+                        // Idempotent: if the debt clear below cannot be
+                        // persisted, the next pass re-stages the same tail —
+                        // guard against duplicate queue entries.
+                        val tail = UsageBackfill.Window(
+                            maxOf(debt.startMs, row.endMs), debt.endMs
                         )
+                        val alreadyQueued = pendingRecoveryWindows.lastOrNull()
+                            ?.let { it.startMs == tail.startMs && it.endMs == tail.endMs } == true
+                        if (!alreadyQueued) pendingRecoveryWindows.addLast(tail)
                     }
                     synchronized(debtLock) { clearPendingDebt() }
                 }
