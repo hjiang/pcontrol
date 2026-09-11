@@ -246,6 +246,24 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   detached exactly once on service destruction. Validated on Xiaomi
   `2602BRT18C`, HyperOS `OS3.0.304.0.WPLCNXM`.
 
+- **Xiaomi's built-in browser exposes its URL only transiently.** In
+  `com.android.browser` (HyperOS 3), the `id/url` accessibility node shows the
+  domain (`github.com`) for a few seconds during each page load, then swaps to
+  the page **title**, at any scroll position. This is fine for our design:
+  `handleBrowserUrlBar` runs on every browser event and `BrowserDomainCache`
+  never lets a `null` (title) overwrite a captured domain, which then persists
+  until the next navigation. Don't "fix" the registry entry back out because a
+  settled-state dump shows a title. Verified on Xiaomi `25097RP43C`.
+
+- **A release build on a device can only be diagnosed via adb + uiautomator +
+  logcat** (`run-as` fails: not debuggable). The accessibility tree a uiautomator
+  dump shows is the same tree `BrowserAccessibilityService` reads. Release logs
+  are change-deduped in-process (`lastLoggedForegroundCandidates`,
+  `lastLoggedEvaluation`), so `adb logcat -c` does NOT reset them — an absent
+  line after clearing the buffer may just mean "string unchanged since before
+  the clear", not "loop dead". Force a foreground change (HOME, then `am start`
+  another app) to elicit fresh lines.
+
 - **AGP bumps must be coordinated with the CI Gradle pin.** CI has no committed
   wrapper; `android-tests.yml` / `android-build.yml` generate one from a
   hardcoded `gradle-version` pin. An AGP bump that exceeds that pin fails at
