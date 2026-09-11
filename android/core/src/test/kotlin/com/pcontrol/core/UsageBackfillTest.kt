@@ -459,4 +459,87 @@ class UsageBackfillTest {
             chunks.map { it.slices }
         )
     }
+
+    @Test
+    fun `retry from a progress frontier does not restart the silence cap`() {
+        val start = 1_700_000_000_000L
+        // One eventless hour, chunked at 30 min. The committed first chunk
+        // already charged the 5-minute allowance from the interval's true
+        // start; a retry from the progress frontier must not grant a fresh
+        // allowance after the frontier.
+        val chunks = UsageBackfill.attributeChunked(
+            events = listOf(TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, start)),
+            selfPackage = self,
+            window = UsageBackfill.Window(start, start + 3_600_000L),
+            chunkMs = 30 * 60_000L,
+            zone = zone,
+            countFromMs = start + 30 * 60_000L
+        )
+        assertEquals(2, chunks.size)
+        assertEquals(emptyList<UsageBackfill.Slice>(), chunks[0].slices)
+        assertEquals(emptyList<UsageBackfill.Slice>(), chunks[1].slices)
+    }
+
+    @Test
+    fun `retry from a progress frontier counts only the unconsumed remainder`() {
+        val start = 1_700_000_000_000L
+        // Game resumed 1 min before the frontier; the committed chunk charged
+        // [29m, 30m) = 60 s of the 5-minute allowance. The retry may only add
+        // [30m, 34m) = 240 s — measured from the true interval start, so the
+        // total stays at the 300 s cap.
+        val resumedAt = start + 29 * 60_000L
+        val chunks = UsageBackfill.attributeChunked(
+            events = listOf(TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, resumedAt)),
+            selfPackage = self,
+            window = UsageBackfill.Window(start, start + 3_600_000L),
+            chunkMs = 30 * 60_000L,
+            zone = zone,
+            countFromMs = start + 30 * 60_000L
+        )
+        assertEquals(2, chunks.size)
+        assertEquals(emptyList<UsageBackfill.Slice>(), chunks[0].slices)
+        assertEquals(
+            listOf(UsageBackfill.Slice(day(start), "com.game", 240)),
+            chunks[1].slices
+        )
+        assertEquals(
+            (cap / 1000).toInt(),
+            60 + chunks[1].slices.sumOf { it.seconds }
+        )
+    }
+
+    @Test
+    fun `sub-second remainders carry across chunk boundaries`() {
+        val start = 1_700_000_000_000L
+        val events = listOf(
+            TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, start),
+            TimedAppEvent("com.game", AppEvent.ACTIVITY_PAUSED, start + 2000L)
+        )
+        // game [0, 2s) split at 1.5s: independent per-chunk flooring would
+        // emit 1 s + 0 s; the carry must emit 1 s + 1 s, matching the
+        // single-shot floor(2000ms) = 2 s.
+        val chunks = UsageBackfill.attributeChunked(
+            events = events,
+            selfPackage = self,
+            window = UsageBackfill.Window(start, start + 3000L),
+            chunkMs = 1500L,
+            zone = zone
+        )
+        assertEquals(
+            listOf(
+                listOf(UsageBackfill.Slice(day(start), "com.game", 1)),
+                listOf(UsageBackfill.Slice(day(start), "com.game", 1))
+            ),
+            chunks.map { it.slices }
+        )
+        assertEquals(
+            listOf(UsageBackfill.Slice(day(start), "com.game", 2)),
+            UsageBackfill.attribute(
+                events = events,
+                selfPackage = self,
+                window = UsageBackfill.Window(start, start + 3000L),
+                zone = zone
+            )
+        )
+    }
 }

@@ -69,6 +69,13 @@ class TrackerService : Service() {
         // Room transaction), so a mid-recovery process death can never put
         // more than one chunk's data at risk.
         private const val BACKFILL_CHUNK_MS = 60 * 60_000L
+
+        // Detection-debt record: a detected gap is written here BEFORE the
+        // Room registration is attempted, so a transient database failure
+        // cannot drop the window (the recovery job promotes the debt into
+        // the durable backfill_state row).
+        private const val KEY_BF_DEBT_START_MS = "backfill_debt_start_ms"
+        private const val KEY_BF_DEBT_END_MS = "backfill_debt_end_ms"
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -517,9 +524,12 @@ class TrackerService : Service() {
      * Requests recovery of the gap ending at [nowMs], starting at the live
      * frontier (never before [minStartMs], which the freeze-thaw path sets
      * to the in-memory last query end so nothing already counted is
-     * replayed). Runs on its own coroutine — the UsageStats query and
-     * counter merges, potentially large after a multi-day outage, must
-     * never stall the 10-second tick loop.
+     * replayed). Fire-and-forget: detection snapshots the frontier with one
+     * in-memory SharedPreferences read (captured before any tick can
+     * advance it — at worst one tick stale, within the accepted boundary
+     * noise) and hands everything else, including the Room registration,
+     * to a worker coroutine so the 10-second tick never waits on database
+     * I/O.
      *
      * The gap becomes the durable pending recovery window (Room
      * `backfill_state`), which survives process death and is invisible to
@@ -527,38 +537,76 @@ class TrackerService : Service() {
      * a failed query or merge retries at the next stall/restart instead of
      * permanently losing the missed usage.
      */
-    private suspend fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
-        if (!tryAcquireBackfill(nowMs, minStartMs)) return
+    private fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
+        val frontierMs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getLong(KEY_TICK_CURSOR_MS, 0L)
         scope.launch {
+            var ownsGuard = false
             try {
-                runRecovery()
+                ownsGuard = tryAcquireBackfill(frontierMs, nowMs, minStartMs)
+                if (!ownsGuard) return@launch
+                var failures = 0
+                while (true) {
+                    try {
+                        runRecovery()
+                        return@launch  // retired; guard released inside the lock
+                    } catch (e: Exception) {
+                        failures++
+                        Log.w(TAG, "backfill failed", e)
+                        // The durable pending window is untouched and will
+                        // retry at the next detection. If queued windows
+                        // still need a worker, keep the guard and retry —
+                        // bounded, so a persistently failing database cannot
+                        // spin. The guard is released inside the lock, with
+                        // the same queue handoff discipline as the retire
+                        // step, so a queued window can never be orphaned by
+                        // this failure path.
+                        var drained = false
+                        cursorMutex.withLock {
+                            if (pendingRecoveryWindows.isNotEmpty() && failures < 3) {
+                                drained = true
+                            } else {
+                                backfillInFlight.set(false)
+                            }
+                        }
+                        if (!drained) return@launch
+                    }
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "backfill failed", e)
-                // The durable pending window is untouched — the next stall
-                // or restart retries it.
-                backfillInFlight.set(false)
+                if (ownsGuard) backfillInFlight.set(false)
             }
         }
     }
 
     /**
-     * Registers a detected gap and reports whether the caller must launch
-     * the recovery job (the single-flight discipline).
+     * Registers a detected gap and reports whether the caller must run the
+     * recovery job (the single-flight discipline).
      *
      * When a job is already running, the request is NOT dropped: it is
      * queued as a pinned window that the running job processes before it
-     * retires — otherwise a freeze detected during the startup replay
-     * would be skipped forever. Detection runs under [cursorMutex], so the
-     * window start is the exact un-counted frontier and can never overlap
-     * a concurrent tick commit.
+     * retires — otherwise a freeze detected during the startup replay would
+     * be skipped forever. New windows are clamped against the durable
+     * pending window's end ([enqueueClamped]): a request starting before
+     * that end — e.g. a restart whose live cursor has not yet caught up
+     * with committed recovery progress — would overlap the still-owed
+     * region and replay already-merged slices.
      */
-    private suspend fun tryAcquireBackfill(nowMs: Long, minStartMs: Long): Boolean {
+    private suspend fun tryAcquireBackfill(
+        frontierMs: Long,
+        nowMs: Long,
+        minStartMs: Long
+    ): Boolean {
         if (!backfillInFlight.compareAndSet(false, true)) {
             // Loser path: no guard is ours to release — just try to queue.
             var takeover = false
             try {
                 cursorMutex.withLock {
-                    planBackfillWindow(nowMs, minStartMs)?.let { pendingRecoveryWindows.addLast(it) }
+                    val row = AppDatabase.getInstance(this).backfillStateDao().get()
+                    enqueueClamped(
+                        planWindow(frontierMs, nowMs, minStartMs),
+                        pendingEndMs(row, pendingDebt())
+                    )
                     // The running job may have retired between our failed CAS
                     // and this critical section (it releases the guard inside
                     // the same lock as its final queue check). If so, take
@@ -567,8 +615,8 @@ class TrackerService : Service() {
                     takeover = backfillInFlight.compareAndSet(false, true)
                 }
             } catch (e: Exception) {
-                // Registration must never kill the tick loop; the next
-                // stall/restart re-detects the gap.
+                // Registration must never take down the caller; the durable
+                // pending window (if any) still retries at the next detection.
                 Log.w(TAG, "backfill registration failed", e)
             }
             return takeover
@@ -578,13 +626,28 @@ class TrackerService : Service() {
         try {
             cursorMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
-                val hasPending = (dao.get()?.endMs ?: 0L) > 0L
-                val window = planBackfillWindow(nowMs, minStartMs)
+                val row = dao.get()
+                val debt = pendingDebt()
+                val hasPending = (row?.endMs ?: 0L) > 0L || debt != null
+                val window = planWindow(frontierMs, nowMs, minStartMs)
                 when {
-                    // A previous process died mid-recovery: the durable window
-                    // stays authoritative; any newly detected gap queues behind it.
-                    hasPending -> window?.let { pendingRecoveryWindows.addLast(it) }
-                    window != null -> dao.set(BackfillStateEntity(0, window.startMs, window.endMs))
+                    // A previous detection's window is still owed (Room row
+                    // mid-recovery, or an unpromoted detection debt): it
+                    // stays authoritative; the new gap is clamped against it
+                    // and queued behind it.
+                    hasPending -> enqueueClamped(window, pendingEndMs(row, debt))
+                    window != null -> {
+                        // Record the debt durably BEFORE the Room write: if
+                        // the database write fails, the debt record keeps the
+                        // detected window retryable instead of losing it to
+                        // the next live-tick cursor advance ([promoteDebt]
+                        // turns it into the durable row).
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putLong(KEY_BF_DEBT_START_MS, window.startMs)
+                            .putLong(KEY_BF_DEBT_END_MS, window.endMs)
+                            .apply()
+                        dao.set(BackfillStateEntity(0, window.startMs, window.endMs))
+                    }
                     else -> {
                         // No reportable gap — release the guard we just took.
                         backfillInFlight.set(false)
@@ -602,13 +665,72 @@ class TrackerService : Service() {
 
     /** Plans the recovery window for a detected gap, or null when it is
      *  not reportable (fresh install, sub-threshold gap, clock skew).
-     *  Must be called under [cursorMutex]. */
-    private fun planBackfillWindow(nowMs: Long, minStartMs: Long): UsageBackfill.Window? {
+     *  [frontierMs] is the live-cursor snapshot taken at detection time. */
+    private fun planWindow(
+        frontierMs: Long,
+        nowMs: Long,
+        minStartMs: Long
+    ): UsageBackfill.Window? =
+        UsageBackfill.plan(maxOf(frontierMs, minStartMs), nowMs)
+
+    private class PendingDebt(val startMs: Long, val endMs: Long)
+
+    private fun pendingDebt(): PendingDebt? {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        return UsageBackfill.plan(
-            maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), minStartMs),
-            nowMs
-        )
+        val end = prefs.getLong(KEY_BF_DEBT_END_MS, 0L)
+        if (end <= 0L) return null
+        return PendingDebt(prefs.getLong(KEY_BF_DEBT_START_MS, 0L), end)
+    }
+
+    /** The end of the still-owed region: the durable Room window if one is
+     *  active, otherwise the unpromoted detection debt. */
+    private fun pendingEndMs(
+        row: com.pcontrol.app.db.BackfillStateEntity?,
+        debt: PendingDebt?
+    ): Long = maxOf(row?.endMs ?: 0L, debt?.endMs ?: 0L)
+
+    /** Queues [window] for the running job, clamped so it cannot overlap
+     *  the still-owed region of the durable pending window: a request
+     *  starting before [pendingEndMs] would replay already-merged slices
+     *  once the pending window (whose progress advances chunk by chunk)
+     *  reaches its end. Fully-subsumed requests are dropped. */
+    private fun enqueueClamped(window: UsageBackfill.Window?, pendingEndMs: Long) {
+        var w = window ?: return
+        if (pendingEndMs > w.startMs) {
+            w = UsageBackfill.Window(pendingEndMs, maxOf(w.endMs, pendingEndMs))
+        }
+        if (w.endMs > w.startMs) pendingRecoveryWindows.addLast(w)
+    }
+
+    /**
+     * Promotes an unpromoted detection-debt record into the durable Room
+     * row. If the promotion write fails, the debt record survives and is
+     * retried on the next job pass or detection — a transient database
+     * failure can never permanently drop a detected outage window.
+     */
+    private suspend fun promoteDebt() {
+        cursorMutex.withLock {
+            val dao = AppDatabase.getInstance(this).backfillStateDao()
+            val row = dao.get()
+            val debt = pendingDebt() ?: return
+            if (row != null && row.endMs > 0L) {
+                // A row is already active: it was promoted from this debt (or
+                // covers it) — only a stale duplicate can remain; drop it if
+                // the row subsumes it.
+                if (debt.endMs <= row.endMs) {
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .remove(KEY_BF_DEBT_START_MS)
+                        .remove(KEY_BF_DEBT_END_MS)
+                        .apply()
+                }
+                return
+            }
+            dao.set(BackfillStateEntity(0, debt.startMs, debt.endMs))
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .remove(KEY_BF_DEBT_START_MS)
+                .remove(KEY_BF_DEBT_END_MS)
+                .apply()
+        }
     }
 
     /**
@@ -621,6 +743,7 @@ class TrackerService : Service() {
      */
     private suspend fun runRecovery() {
         while (true) {
+            promoteDebt()
             recoverPendingWindow()
             var retire = false
             cursorMutex.withLock {
@@ -655,18 +778,27 @@ class TrackerService : Service() {
     private suspend fun recoverPendingWindow() {
         val db = AppDatabase.getInstance(this)
         val state = db.backfillStateDao().get() ?: return
-        if (state.endMs <= 0L) return
-        // Sub-MIN_GAP residue (or a fully clamped window): nothing worth
-        // replaying; the retire step clears the state.
-        val window = UsageBackfill.plan(state.progressMs, state.endMs) ?: return
+        if (state.endMs <= 0L || state.endMs <= state.progressMs) return
+        // The window was threshold-vetted when it was registered; a retry
+        // must replay every remaining progressMs < endMs — including a
+        // short tail left behind by already-committed chunks, which the
+        // minimum-gap check would wrongly drop. Only the 7-day clamp
+        // applies here.
+        val window = UsageBackfill.Window(
+            maxOf(state.progressMs, state.endMs - UsageBackfill.MAX_WINDOW_MS),
+            state.endMs
+        )
 
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        // Query with a lookback so the app that was foreground when tracking
-        // stopped seeds the replay — the leading interval is otherwise
-        // unattributable. UsageBackfill clamps and only counts in-window time.
+        // Recompute from before the progress frontier (with the usual seed
+        // lookback) so the silence-cap clock keeps its true interval starts:
+        // an eventless interval whose allowance was consumed by already-
+        // committed chunks must not receive a fresh one after a retry. Only
+        // time at/after the durable progress frontier is counted.
+        val replayFrom = maxOf(0L, window.startMs - UsageBackfill.SEED_LOOKBACK_MS)
         val usageEvents = usageStatsManager.queryEvents(
-            maxOf(0L, window.startMs - UsageBackfill.SEED_LOOKBACK_MS),
+            maxOf(0L, replayFrom - UsageBackfill.SEED_LOOKBACK_MS),
             window.endMs
         )
         val timed = mutableListOf<TimedAppEvent>()
@@ -690,9 +822,10 @@ class TrackerService : Service() {
         val chunks = UsageBackfill.attributeChunked(
             events = timed,
             selfPackage = packageName,
-            window = window,
+            window = UsageBackfill.Window(replayFrom, window.endMs),
             chunkMs = BACKFILL_CHUNK_MS,
-            zone = ZoneId.systemDefault()
+            zone = ZoneId.systemDefault(),
+            countFromMs = window.startMs
         )
 
         val dao = db.backfillStateDao()

@@ -114,6 +114,15 @@ object UsageBackfill {
      * from the true interval start, NOT restarted at every chunk boundary
      * (a 45-minute eventless stretch contributes at most [silenceCapMs]
      * in total, never [silenceCapMs] per chunk it spans).
+     *
+     * [countFromMs] keeps that guarantee across RETRIES: a caller that
+     * resumes an interrupted recovery from a durable progress frontier
+     * passes the frontier here so time before it (already merged by the
+     * committed chunks) is not counted again, while interval starts and
+     * caps are still measured on the true event timeline — an interval
+     * whose allowance was consumed before the frontier gets nothing back.
+     * Sub-second remainders are carried across chunks, so the per-chunk
+     * second totals sum exactly to the single-shot conversion.
      */
     fun attributeChunked(
         events: List<TimedAppEvent>,
@@ -121,7 +130,8 @@ object UsageBackfill {
         window: Window,
         chunkMs: Long,
         zone: ZoneId,
-        silenceCapMs: Long = DEFAULT_SILENCE_CAP_MS
+        silenceCapMs: Long = DEFAULT_SILENCE_CAP_MS,
+        countFromMs: Long = window.startMs
     ): List<Chunk> {
         require(chunkMs > 0) { "chunkMs must be positive" }
         val chunkEnds = ArrayList<Long>()
@@ -134,14 +144,18 @@ object UsageBackfill {
         val accs = List(chunkEnds.size) { LinkedHashMap<Pair<String, String>, Long>() }
 
         // Charges [fromMs, toMs) to [pkg], distributing the (already
-        // silence-capped) span over the chunks it overlaps.
+        // silence-capped) span over the chunks it overlaps. Only time at or
+        // after [countFromMs] is counted; the cap clock still runs from the
+        // true interval start.
         fun charge(fromMs: Long, toMs: Long, pkg: String?) {
             if (pkg == null || pkg == selfPackage || toMs <= fromMs) return
             val cappedEnd = minOf(toMs, fromMs + silenceCapMs)
+            val countedFrom = maxOf(fromMs, countFromMs)
+            if (countedFrom >= cappedEnd) return
             var chunkStart = window.startMs
             for (i in chunkEnds.indices) {
                 val chunkEnd = chunkEnds[i]
-                val from = maxOf(fromMs, chunkStart)
+                val from = maxOf(countedFrom, chunkStart)
                 val to = minOf(cappedEnd, chunkEnd)
                 if (to > from) addInterval(accs[i], pkg, from, to, zone)
                 chunkStart = chunkEnd
@@ -163,12 +177,19 @@ object UsageBackfill {
             charge(intervalStart, window.endMs, foreground)
         }
 
+        // Carry sub-second remainders into the next chunk so the per-chunk
+        // Slice seconds sum exactly to the single-shot conversion — flooring
+        // every chunk independently would drop up to 1 s per key at each
+        // chunk boundary an interval crosses.
+        val carry = HashMap<Pair<String, String>, Long>()
         return chunkEnds.mapIndexed { i, end ->
             val start = if (i == 0) window.startMs else chunkEnds[i - 1]
             Chunk(
                 window = Window(start, end),
                 slices = accs[i].map { (dayAndSubject, ms) ->
-                    Slice(dayAndSubject.first, dayAndSubject.second, (ms / 1000L).toInt())
+                    val totalMs = ms + (carry[dayAndSubject] ?: 0L)
+                    carry[dayAndSubject] = totalMs % 1000L
+                    Slice(dayAndSubject.first, dayAndSubject.second, (totalMs / 1000L).toInt())
                 }
             )
         }

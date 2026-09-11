@@ -263,10 +263,18 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   advance commit in one Room transaction (crash ⇒ rollback ⇒ retry: no
   lost slices, no double-count); `cursorMutex` serializes cursor access so
   the frontier never moves backwards; gaps detected while a recovery runs
-  are queued as pinned windows and drained before the job retires (never
-  dropped by the single-flight guard); registration failures never kill
-  the tick loop. Eventless intervals cap at 5 min measured from interval
-  start (preserved across chunks); pcontrol's own package is excluded;
+  are queued as pinned windows — clamped against the durable pending end —
+  and drained before the job retires (never dropped by the single-flight
+  guard); a detection is also recorded as a prefs "debt" before the Room
+  registration, so a failed registration retries instead of dropping the
+  window, and registration never blocks the tick loop (only an in-memory
+  frontier snapshot runs there). Retries replay from before the progress
+  frontier with only uncommitted time counted, so a retry neither resets
+  the 5-min silence cap nor drops a short tail (the min-gap check applies
+  only when creating a window, never on retry). Eventless intervals cap at
+  5 min measured from interval
+  start (preserved across chunks and retries; sub-second remainders carry
+  across chunks); pcontrol's own package is excluded;
   web/domain usage is not recoverable retroactively. The freeze-thaw path
   additionally floors the replay start at the in-memory
   `lastUsageEventQueryTime`. Backfill runs on its own single-flight

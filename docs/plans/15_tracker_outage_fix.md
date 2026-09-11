@@ -101,7 +101,7 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 ## Status
 
-- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 23 tests)
+- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 26 tests)
 - Stage 2 — **Done** (manifest + TrackerService)
 - Stage 2b — **Done** (`MY_PACKAGE_REPLACED` restart, 3 Robolectric tests)
 - Stage 3 — **Done** (0.0.8/8 defaults)
@@ -191,13 +191,33 @@ tick cursor:
   guard is released inside the final queue check's critical section, so a
   queue entry can never be orphaned by the exit race). A freeze that starts
   during the startup replay is therefore recovered.
+- **Queued/new windows are clamped against the durable pending end**: a
+  detection whose start precedes the still-owed region (e.g. a restart
+  whose live cursor has not yet caught up with committed recovery
+  progress) is clamped to that end, so it can never replay
+  already-merged slices.
+- **Detections are durable before Room**: the gap is recorded as a
+  detection-debt record in SharedPreferences before the Room registration
+  is attempted; the job promotes the debt into `backfill_state`. A failed
+  Room registration therefore retries instead of dropping the window, and
+  registration itself runs off the 10-second loop (only an in-memory
+  frontier snapshot happens on the tick coroutine).
+- **Retries keep silence-cap and tail semantics**: a retried window is
+  replayed from before the durable progress frontier with only time at/
+  after the frontier counted (`attributeChunked(countFromMs = …)`), so an
+  interval whose 5-min allowance was consumed by committed chunks gets no
+  fresh allowance; and the retry replays every remaining
+  `progressMs < endMs` (no minimum-gap check on retry — a 1-minute tail
+  left by committed chunks is still recovered).
 - Silence-cap semantics survive chunking: the cap is measured from the
   true interval start across chunk boundaries (a 45-min eventless stretch
-  still contributes ≤ 5 min total, never 5 min per chunk).
+  still contributes ≤ 5 min total, never 5 min per chunk); sub-second
+  remainders carry across chunks so per-chunk seconds sum exactly to the
+  single-shot conversion.
 - Residual (documented, accepted): pinned windows are in-memory, so a
   process death between a queueing detection and the running job's drain
-  loses that queued gap until the next detection; recovery progress itself
-  is always durable.
+  loses that queued gap until the next detection; recovery progress (Room
+  row + detection debt) is always durable.
 
 ## Verification on device (done 2026-09-09, locally signed dev build —
 see lineage note)
