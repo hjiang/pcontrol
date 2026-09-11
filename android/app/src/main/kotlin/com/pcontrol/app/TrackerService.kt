@@ -76,6 +76,11 @@ class TrackerService : Service() {
         // the durable backfill_state row).
         private const val KEY_BF_DEBT_START_MS = "backfill_debt_start_ms"
         private const val KEY_BF_DEBT_END_MS = "backfill_debt_end_ms"
+
+        // Backoff when retirement cannot complete because the debt clear
+        // could not be persisted (storage trouble) — retried until it
+        // succeeds; the durable row stays as the consistency marker.
+        private const val RETIRE_RETRY_BACKOFF_MS = 10_000L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -84,12 +89,13 @@ class TrackerService : Service() {
     private var lastUsageEventQueryTime: Long? = null
     private var currentForegroundPkg: String? = null
 
-    // Serializes the live tick cursor (KEY_TICK_CURSOR_MS) and the pending
-    // recovery state between the 10-second tick loop (commitTick), gap
-    // detection, and the backfill coroutine — a detection must never read a
-    // stale frontier, and no writer but commitTick ever touches the live
-    // cursor, so it can never move backwards.
-    private val cursorMutex = Mutex()
+    // Serializes the backfill bookkeeping — pending-row registration and
+    // retirement, the detection debt, and the pinned-window queue — among
+    // the backfill coroutines (detections and the worker). The live tick
+    // cursor is NOT part of this state: commitTick is its single writer and
+    // never takes this mutex, so no database I/O here can ever delay the
+    // 10-second tick.
+    private val backfillMutex = Mutex()
 
     // Gap windows detected while a recovery job was already running (the
     // single-flight guard). Pinned (start, end) pairs, drained by the
@@ -502,22 +508,26 @@ class TrackerService : Service() {
      * replay overlap; apply() is async, so sudden process death can still
      * lose the newest write — the residual overlap is bounded by one tick.
      *
-     * Serialized on [cursorMutex]: this is the ONLY writer of the live
-     * cursor, and gap detection reads it under the same lock, so the
-     * frontier is monotonic and detection windows can never overlap
-     * already-counted ticks. A pending usage-backfill recovery lives in a
-     * separate durable state (Room `backfill_state`) that this path cannot
-     * overwrite — a failed or in-flight backfill keeps its frontier.
+     * The cursor is MONOTONIC: both the in-memory query anchor and the
+     * persisted frontier only ever move forward (max of the previous value
+     * and this tick's end), so a wall-clock rollback (NTP correction,
+     * manual clock change) can never rewind the frontier over
+     * already-counted usage — live queries idle (the inverted-window guard
+     * in [onTick] bootstraps a fresh window) until the clock catches up.
+     * This method is the cursor's only writer (the tick coroutine), so no
+     * lock is needed here; the backfill bookkeeping has its own mutex that
+     * this path never touches, keeping database I/O off the 10-second loop.
      */
     private suspend fun commitTick(foregroundPkg: String?, endTime: Long) {
         currentForegroundPkg = foregroundPkg
-        lastUsageEventQueryTime = endTime
-        cursorMutex.withLock {
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .edit()
-                .putLong(KEY_TICK_CURSOR_MS, endTime)
-                .apply()
-        }
+        lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: endTime, endTime)
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefs.edit()
+            .putLong(
+                KEY_TICK_CURSOR_MS,
+                maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), endTime)
+            )
+            .apply()
     }
 
     /**
@@ -562,7 +572,7 @@ class TrackerService : Service() {
                         // step, so a queued window can never be orphaned by
                         // this failure path.
                         var drained = false
-                        cursorMutex.withLock {
+                        backfillMutex.withLock {
                             if (pendingRecoveryWindows.isNotEmpty() && failures < 3) {
                                 drained = true
                             } else {
@@ -581,86 +591,62 @@ class TrackerService : Service() {
 
     /**
      * Registers a detected gap and reports whether the caller must run the
-     * recovery job (the single-flight discipline).
+     * recovery job (it won the single-flight CAS).
+     *
+     * Registration and guard acquisition are serialized under one mutex, so
+     * a request can never queue "before" another detector's window is
+     * visible: whoever holds the lock sees every previously published
+     * window and either clamps behind it or — when nothing is owed yet —
+     * publishes this gap as the durable pending row itself. A late
+     * registrar can therefore never enqueue a duplicate of a window that
+     * is about to be (or is being) recovered.
      *
      * When a job is already running, the request is NOT dropped: it is
-     * queued as a pinned window that the running job processes before it
-     * retires — otherwise a freeze detected during the startup replay would
-     * be skipped forever. New windows are clamped against the durable
-     * pending window's end ([enqueueClamped]): a request starting before
-     * that end — e.g. a restart whose live cursor has not yet caught up
-     * with committed recovery progress — would overlap the still-owed
-     * region and replay already-merged slices.
+     * queued (clamped against everything still owed) and drained by the
+     * running job before it retires — otherwise a freeze detected during
+     * the startup replay would be skipped forever.
      */
     private suspend fun tryAcquireBackfill(
         frontierMs: Long,
         nowMs: Long,
         minStartMs: Long
     ): Boolean {
-        if (!backfillInFlight.compareAndSet(false, true)) {
-            // Loser path: no guard is ours to release — just try to queue.
-            var takeover = false
-            try {
-                cursorMutex.withLock {
-                    val row = AppDatabase.getInstance(this).backfillStateDao().get()
-                    enqueueClamped(
-                        planWindow(frontierMs, nowMs, minStartMs),
-                        pendingEndMs(row, pendingDebt())
-                    )
-                    // The running job may have retired between our failed CAS
-                    // and this critical section (it releases the guard inside
-                    // the same lock as its final queue check). If so, take
-                    // over and drain what we just queued; if the flag is still
-                    // set, the running job is guaranteed to poll again.
-                    takeover = backfillInFlight.compareAndSet(false, true)
-                }
-            } catch (e: Exception) {
-                // Registration must never take down the caller; the durable
-                // pending window (if any) still retries at the next detection.
-                Log.w(TAG, "backfill registration failed", e)
-            }
-            return takeover
-        }
-        // Winner path: we hold the single-flight guard — release it on any
-        // failure so future detections are never permanently blocked.
         try {
-            cursorMutex.withLock {
+            backfillMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
-                val row = dao.get()
-                val debt = pendingDebt()
-                val hasPending = (row?.endMs ?: 0L) > 0L || debt != null
                 val window = planWindow(frontierMs, nowMs, minStartMs)
+                val pendingEnd = pendingEndMs(dao.get(), pendingDebt())
                 when {
-                    // A previous detection's window is still owed (Room row
-                    // mid-recovery, or an unpromoted detection debt): it
-                    // stays authoritative; the new gap is clamped against it
-                    // and queued behind it.
-                    hasPending -> enqueueClamped(window, pendingEndMs(row, debt))
+                    // A window is already owed (Room row mid-recovery or an
+                    // unpromoted detection debt): clamp this gap against it
+                    // and queue the remainder behind it.
+                    window != null && pendingEnd > 0L ->
+                        enqueueClamped(window, pendingEnd)
                     window != null -> {
-                        // Record the debt durably BEFORE the Room write: if
-                        // the database write fails, the debt record keeps the
-                        // detected window retryable instead of losing it to
-                        // the next live-tick cursor advance ([promoteDebt]
-                        // turns it into the durable row).
-                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                            .putLong(KEY_BF_DEBT_START_MS, window.startMs)
-                            .putLong(KEY_BF_DEBT_END_MS, window.endMs)
-                            .apply()
+                        // First registrant for this gap. Record the debt
+                        // synchronously (commit(), not apply()) BEFORE the
+                        // Room write: if the database write fails and the
+                        // process dies, the debt must already be on disk or
+                        // the window would be lost to the next live-tick
+                        // cursor advance ([promoteDebt] turns it into the
+                        // durable row). A failed commit only degrades the
+                        // crash-fallback; the Room write is still attempted.
+                        if (!writeDebt(window)) {
+                            Log.w(TAG, "detection debt commit failed; crash-fallback degraded")
+                        }
                         dao.set(BackfillStateEntity(0, window.startMs, window.endMs))
                     }
-                    else -> {
-                        // No reportable gap — release the guard we just took.
-                        backfillInFlight.set(false)
-                        return false
-                    }
+                    // No new gap: still take the guard if it is free — the
+                    // no-op worker pass re-checks pending state and retires.
                 }
+                return backfillInFlight.compareAndSet(false, true)
             }
         } catch (e: Exception) {
+            // Registration must never take down the caller; the durable
+            // pending window (if any) still retries at the next detection.
             Log.w(TAG, "backfill registration failed", e)
-            backfillInFlight.set(false)
             return false
         }
-        return true
     }
 
     /** Plans the recovery window for a detected gap, or null when it is
@@ -682,6 +668,28 @@ class TrackerService : Service() {
         return PendingDebt(prefs.getLong(KEY_BF_DEBT_START_MS, 0L), end)
     }
 
+    /** Synchronously records the detection debt (commit(), not apply(): the
+     *  debt is the crash-fallback for a failed Room registration, so it must
+     *  be on disk the moment registration proceeds). Returns whether it was
+     *  persisted — false only downgrades the crash-fallback. */
+    private fun writeDebt(window: UsageBackfill.Window): Boolean =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_BF_DEBT_START_MS, window.startMs)
+            .putLong(KEY_BF_DEBT_END_MS, window.endMs)
+            .commit()
+
+    /** Synchronously removes the detection-debt record; false when the
+     *  removal could not be persisted — the caller must then keep whatever
+     *  durable state assumes the debt is gone, or a stale debt could
+     *  resurrect an already-recovered window on the next restart. */
+    private fun clearPendingDebt(): Boolean =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .remove(KEY_BF_DEBT_START_MS)
+            .remove(KEY_BF_DEBT_END_MS)
+            .commit()
+
     /** The end of the still-owed region: the durable Room window if one is
      *  active, otherwise the unpromoted detection debt. */
     private fun pendingEndMs(
@@ -690,14 +698,16 @@ class TrackerService : Service() {
     ): Long = maxOf(row?.endMs ?: 0L, debt?.endMs ?: 0L)
 
     /** Queues [window] for the running job, clamped so it cannot overlap
-     *  the still-owed region of the durable pending window: a request
-     *  starting before [pendingEndMs] would replay already-merged slices
-     *  once the pending window (whose progress advances chunk by chunk)
-     *  reaches its end. Fully-subsumed requests are dropped. */
-    private fun enqueueClamped(window: UsageBackfill.Window?, pendingEndMs: Long) {
+     *  anything still owed: neither the durable pending window (whose
+     *  progress advances chunk by chunk) nor windows already queued ahead
+     *  of it — two detections with a stale frontier would otherwise enqueue
+     *  overlapping ranges. Fully-subsumed requests are dropped. */
+    private fun enqueueClamped(window: UsageBackfill.Window?, owedThroughMs: Long) {
         var w = window ?: return
-        if (pendingEndMs > w.startMs) {
-            w = UsageBackfill.Window(pendingEndMs, maxOf(w.endMs, pendingEndMs))
+        var owed = owedThroughMs
+        pendingRecoveryWindows.lastOrNull()?.let { owed = maxOf(owed, it.endMs) }
+        if (owed > w.startMs) {
+            w = UsageBackfill.Window(owed, maxOf(w.endMs, owed))
         }
         if (w.endMs > w.startMs) pendingRecoveryWindows.addLast(w)
     }
@@ -706,10 +716,13 @@ class TrackerService : Service() {
      * Promotes an unpromoted detection-debt record into the durable Room
      * row. If the promotion write fails, the debt record survives and is
      * retried on the next job pass or detection — a transient database
-     * failure can never permanently drop a detected outage window.
+     * failure can never permanently drop a detected outage window. The
+     * debt is removed synchronously and only after a successful promotion;
+     * if that removal cannot be persisted, it is retried on a later pass
+     * (a stale debt with an active row that subsumes it is harmless).
      */
     private suspend fun promoteDebt() {
-        cursorMutex.withLock {
+        backfillMutex.withLock {
             val dao = AppDatabase.getInstance(this).backfillStateDao()
             val row = dao.get()
             val debt = pendingDebt() ?: return
@@ -717,19 +730,11 @@ class TrackerService : Service() {
                 // A row is already active: it was promoted from this debt (or
                 // covers it) — only a stale duplicate can remain; drop it if
                 // the row subsumes it.
-                if (debt.endMs <= row.endMs) {
-                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                        .remove(KEY_BF_DEBT_START_MS)
-                        .remove(KEY_BF_DEBT_END_MS)
-                        .apply()
-                }
+                if (debt.endMs <= row.endMs) clearPendingDebt()
                 return
             }
             dao.set(BackfillStateEntity(0, debt.startMs, debt.endMs))
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .remove(KEY_BF_DEBT_START_MS)
-                .remove(KEY_BF_DEBT_END_MS)
-                .apply()
+            clearPendingDebt()
         }
     }
 
@@ -737,8 +742,8 @@ class TrackerService : Service() {
      * Processes the durable pending recovery window, then any gap windows
      * that were queued while it ran, then retires. The retire step clears
      * the pending state and releases the single-flight guard inside
-     * [cursorMutex] together with the final queue check, so a concurrent
-     * detector either queues before the check (the job loops and drains
+     * [backfillMutex] together with the final work check, so a concurrent
+     * detector either registers before the check (the job loops and drains
      * it) or acquires the guard afterwards (and starts a fresh job).
      */
     private suspend fun runRecovery() {
@@ -746,18 +751,39 @@ class TrackerService : Service() {
             promoteDebt()
             recoverPendingWindow()
             var retire = false
-            cursorMutex.withLock {
+            var retryLater = false
+            backfillMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
                 val next = pendingRecoveryWindows.removeFirstOrNull()
-                if (next != null) {
-                    dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
-                } else {
-                    dao.clear()
-                    backfillInFlight.set(false)
-                    retire = true
+                when {
+                    next != null ->
+                        dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                    // No queued window — but a late registrar may have
+                    // published a new pending row while we were finishing the
+                    // previous one (registration is serialized with this
+                    // check): process it instead of retiring.
+                    dao.get()?.endMs?.takeIf { it > 0L } != null -> Unit
+                    else -> {
+                        // Retire only if the detection debt can be cleared
+                        // SYNCHRONOUSLY: a debt that survives on disk while
+                        // the row is gone would resurrect an already-
+                        // recovered window on the next restart. If the clear
+                        // cannot be persisted, keep the row as the retry
+                        // marker and back off.
+                        if (clearPendingDebt()) {
+                            dao.clear()
+                            backfillInFlight.set(false)
+                            retire = true
+                        } else {
+                            retryLater = true
+                        }
+                    }
                 }
             }
-            if (retire) return
+            when {
+                retire -> return
+                retryLater -> delay(RETIRE_RETRY_BACKOFF_MS)
+            }
         }
     }
 

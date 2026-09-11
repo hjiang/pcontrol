@@ -66,8 +66,9 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 ### Stage 2 — service fixes
 
 - **FGS type**: manifest becomes `foregroundServiceType="dataSync|specialUse"`
-  plus `PROPERTY_SPECIAL_USE_FGS_SUBTYPE = "continuous_usage_tracking"` and
-  the `FOREGROUND_SERVICE_SPECIAL_USE` permission. At runtime,
+  plus `PROPERTY_SPECIAL_USE_FGS_SUBTYPE =
+  "continuous_usage_tracking_for_parental_controls"` (exact manifest value)
+  and the `FOREGROUND_SERVICE_SPECIAL_USE` permission. At runtime,
   `ServiceCompat.startForeground(..., type)` starts with
   `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` on API 34+ (no timeout) and
   `FOREGROUND_SERVICE_TYPE_DATA_SYNC` below.
@@ -182,9 +183,17 @@ tick cursor:
   merges + its `advanceProgress` commit in ONE Room transaction — a crash
   rolls both back (no lost slices, no double-counted ones). The old
   claim-the-whole-window-before-merging is gone.
-- **Cursor accesses are serialized**: a `cursorMutex` guards
-  `commitTick`'s cursor write and every detection read; the backfill never
-  writes `tick_cursor_ms` at all, so the frontier cannot move backwards.
+- **The cursor is monotonic and lock-free**: `commitTick` is the cursor's
+  single writer and persists `max(previous, endTime)` (in-memory anchor
+  too), so neither a racing detection nor a wall-clock rollback can move
+  the frontier backwards; the backfill never writes `tick_cursor_ms`.
+- **Registration is serialized with publication** under `backfillMutex`:
+  a detector always sees previously published windows and either clamps
+  behind them or publishes its own gap as the pending row when nothing is
+  owed — a request can never queue an un-clamped duplicate of another
+  detector's gap, and queued windows are clamped against the latest
+  queued end. `backfillMutex` never involves `commitTick`, so backfill
+  database I/O cannot delay the tick.
 - **Detection during an in-flight recovery is queued, not dropped**:
   requests arriving while the single-flight guard is held are appended as
   pinned windows and drained by the running job before it retires (the
@@ -214,6 +223,28 @@ tick cursor:
   still contributes ≤ 5 min total, never 5 min per chunk); sub-second
   remainders carry across chunks so per-chunk seconds sum exactly to the
   single-shot conversion.
+- **Sub-second remainders carry across chunks** so per-chunk seconds sum
+  exactly to the single-shot conversion; and a stray `ACTIVITY_PAUSED` for
+  a non-current app no longer restarts the silence-cap clock — the interval
+  only closes when the attribution state actually changes.
+- **The live tick cursor is monotonic**: `commitTick` writes
+  `max(previous, endTime)` for both the persisted frontier and the
+  in-memory query anchor, so a wall-clock rollback can never rewind the
+  frontier over already-counted usage (live queries idle until the clock
+  catches up).
+- **Registration is serialized with publication** under one mutex
+  (`backfillMutex`): a detector sees every previously published window and
+  publishes its own gap as the pending row when nothing is owed yet, so a
+  request can never queue an un-clamped duplicate of the winner's gap.
+  Queued windows are additionally clamped against the latest queued end.
+- **Detection-debt writes and clears are synchronous** (`commit()`):
+  the debt must be on disk before registration proceeds, and retirement
+  only clears the durable row after a verified debt clear — a stale debt
+  can never resurrect a recovered window. Retirement retries with backoff
+  if the clear cannot be persisted.
+- **The tick loop never waits on backfill I/O**: `backfillMutex` no longer
+  involves `commitTick` (single-writer cursor, monotonic by construction);
+  all Room access happens in backfill coroutines only.
 - Residual (documented, accepted): pinned windows are in-memory, so a
   process death between a queueing detection and the running job's drain
   loses that queued gap until the next detection; recovery progress (Room

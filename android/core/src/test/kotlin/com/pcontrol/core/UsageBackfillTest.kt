@@ -509,6 +509,29 @@ class UsageBackfillTest {
     }
 
     @Test
+    fun `stray pause of a non-current app does not restart the silence cap`() {
+        val start = 1_700_000_000_000L
+        val slices = UsageBackfill.attribute(
+            events = listOf(
+                TimedAppEvent("com.game", AppEvent.ACTIVITY_RESUMED, start),
+                // Out-of-order/stray pauses for apps that are not foreground:
+                // attribution must continue uninterrupted for com.game.
+                TimedAppEvent("com.other", AppEvent.ACTIVITY_PAUSED, start + 4 * 60_000),
+                TimedAppEvent("com.other", AppEvent.ACTIVITY_PAUSED, start + 8 * 60_000)
+            ),
+            selfPackage = self,
+            window = UsageBackfill.Window(start, start + 3_600_000L),
+            zone = zone
+        )
+        // One continuous game interval → capped once at 5 min. 540 s would
+        // mean the stray pauses restarted the cap clock (240 s + 300 s).
+        assertEquals(
+            listOf(UsageBackfill.Slice(day(start), "com.game", (cap / 1000).toInt())),
+            slices
+        )
+    }
+
+    @Test
     fun `sub-second remainders carry across chunk boundaries`() {
         val start = 1_700_000_000_000L
         val events = listOf(

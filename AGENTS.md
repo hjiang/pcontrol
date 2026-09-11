@@ -254,18 +254,23 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - **Usage during outages is backfilled from system UsageStats.** Live
   attribution is 10 s sampling: time with the process dead or frozen never
   reaches the counters. Ticks persist `tick_cursor_ms` (the live frontier,
-  written only by `commitTick` under `cursorMutex`) on every commit; on
+  written only by `commitTick` — its single writer — and monotonic:
+  `max(previous, endTime)`, so clock rollback cannot rewind it) on every
+  commit; on
   service start and on ≥2 min loop stalls, a detected gap becomes a
   **durable pending recovery window** (Room `backfill_state`, schema v3)
   that live ticks cannot overwrite, then replays `queryEvents` through
   `UsageBackfill` (`:core`, pure, unit-tested) and merges per-day app
   counters. Key invariants: each ~1 h chunk's merges + its progress
   advance commit in one Room transaction (crash ⇒ rollback ⇒ retry: no
-  lost slices, no double-count); `cursorMutex` serializes cursor access so
-  the frontier never moves backwards; gaps detected while a recovery runs
-  are queued as pinned windows — clamped against the durable pending end —
-  and drained before the job retires (never dropped by the single-flight
-  guard); a detection is also recorded as a prefs "debt" before the Room
+  lost slices, no double-count); registration is serialized with
+  publication under `backfillMutex` (a detector publishes its gap as the
+  pending row when nothing is owed, so requests can never queue
+  un-clamped duplicates of another detector's window; queued windows are
+  clamped against the latest queued end) and drained before the job
+  retires (never dropped by the single-flight
+  guard); a detection is also recorded as a prefs "debt" (synchronous
+  `commit()`, cleared checked) before the Room
   registration, so a failed registration retries instead of dropping the
   window, and registration never blocks the tick loop (only an in-memory
   frontier snapshot runs there). Retries replay from before the progress

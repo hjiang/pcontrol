@@ -167,11 +167,16 @@ object UsageBackfill {
         for (event in events.sortedBy { it.timestampMs }) {
             if (event.eventType !in TRANSITION_TYPES) continue
             val ts = event.timestampMs.coerceIn(window.startMs, window.endMs)
-            if (ts > intervalStart) {
-                charge(intervalStart, ts, foreground)
+            val next = applyTransition(foreground, event)
+            if (next != foreground) {
+                // Only an actual change of the attribution state closes the
+                // interval: a PAUSED for a non-current app (stray or
+                // out-of-order event) is a no-op and must not restart the
+                // silence-cap clock of the app that is still foreground.
+                if (ts > intervalStart) charge(intervalStart, ts, foreground)
                 intervalStart = ts
+                foreground = next
             }
-            foreground = applyTransition(foreground, event)
         }
         if (window.endMs > intervalStart) {
             charge(intervalStart, window.endMs, foreground)
