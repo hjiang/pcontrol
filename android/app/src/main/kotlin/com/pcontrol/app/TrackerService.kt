@@ -14,6 +14,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -108,6 +109,12 @@ class TrackerService : Service() {
     // 10-second tick.
     private val backfillMutex = Mutex()
 
+    // Guards the detection-debt preference operations (stage/merge, read,
+    // clear) so a detector's staging is atomic against the worker's
+    // promotion and clearing. All operations under it are non-suspending
+    // preference accesses, so the tick never blocks on storage here.
+    private val debtLock = Any()
+
     // Gap windows detected while a recovery job was already running (the
     // single-flight guard). Pinned (start, end) pairs, drained by the
     // running job before it retires — a freeze that begins during the
@@ -128,7 +135,8 @@ class TrackerService : Service() {
     private var lastDay: String = ""
     private var lastLoggedForegroundCandidates: String? = null
     private var lastLoggedAttributionSkip: String? = null
-    // Loop-level heartbeat for stall (freeze-thaw) detection
+    // Loop-level heartbeat for stall (freeze-thaw) detection, measured in
+    // SystemClock.elapsedRealtime() (monotonic — immune to wall-clock changes)
     private var lastTickAtMs = 0L
     // Serializes counter read-merge-upsert against the sync path's
     // markSynced writes: a merge straddling markSynced would REPLACE the
@@ -209,17 +217,21 @@ class TrackerService : Service() {
             val updateState = UpdateState(this@TrackerService)
 
             while (true) {
-                val tickStart = System.currentTimeMillis()
-                if (lastTickAtMs > 0 && tickStart - lastTickAtMs >= UsageBackfill.MIN_GAP_MS) {
+                // Stall detection measures ELAPSED time (monotonic): a
+                // wall-clock change (NTP correction, manual set) must not
+                // fabricate a multi-minute stall — advancing recovery through
+                // future wall-clock time — or suppress a real one.
+                val tickStartElapsed = SystemClock.elapsedRealtime()
+                if (lastTickAtMs > 0 && tickStartElapsed - lastTickAtMs >= UsageBackfill.MIN_GAP_MS) {
                     // The loop stalled with the process alive (e.g. a HyperOS
                     // Greeze freeze-thaw). The exact last attribution end is
                     // still in memory (survives freezes, unlike a restart) —
                     // pass it as the floor so nothing already counted is
                     // replayed. Launched off-loop like sync/update checks so
                     // ticks resume immediately.
-                    launchBackfill(tickStart, lastUsageEventQueryTime ?: 0L)
+                    launchBackfill(System.currentTimeMillis(), lastUsageEventQueryTime ?: 0L)
                 }
-                lastTickAtMs = tickStart
+                lastTickAtMs = tickStartElapsed
 
                 try {
                     onTick()
@@ -575,34 +587,72 @@ class TrackerService : Service() {
      * a failed query or merge retries at the next stall/restart instead of
      * permanently losing the missed usage.
      */
+    /**
+     * Requests recovery of the gap ending at [nowMs], starting at the live
+     * frontier (never before [minStartMs], which the freeze-thaw path sets
+     * to the in-memory last query end so nothing already counted is
+     * replayed). Fire-and-forget: the tick coroutine only snapshots the
+     * frontier (an in-memory SharedPreferences read) — every durable write,
+     * including the detection debt's synchronous commit(), happens on the
+     * recovery worker, so the 10-second tick never waits on storage.
+     *
+     * A worker pass is started whenever durable recovery work may exist — a
+     * newly detected gap, an unpromoted detection debt, or a pending row
+     * with remaining work — even when no new live gap is planned: a restart
+     * whose frontier is recent (the death gap is under [UsageBackfill.MIN_GAP_MS])
+     * must still resume an interrupted recovery instead of stranding it.
+     *
+     * Durable handoff: the gap is recorded as the detection debt (commit(),
+     * worker-side) and then promoted into the pending row by
+     * [runRecovery] → [promoteDebt]. A durable-handoff gap is additionally
+     * merged with an existing staged debt only when their ranges overlap —
+     * which implies no live tick has committed in between (the frontier
+     * would sit past the staged debt's end otherwise) — so the merged span
+     * is entirely uncounted.
+     */
     private fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val frontierMs = prefs.getLong(KEY_TICK_CURSOR_MS, 0L)
-        val window = planWindow(frontierMs, nowMs, minStartMs) ?: return
-
-        // Synchronous durable handoff (detection debts are rare — a real
-        // gap — so commit() on the tick coroutine is acceptable). An existing
-        // unpromoted debt is merged only when the ranges overlap, which
-        // implies no live tick has committed in between (the frontier would
-        // sit past the debt end otherwise), so the merged span is entirely
-        // uncounted. Disjoint gaps are left to the worker: it promotes the
-        // debt and queues the new window.
-        val debt = pendingDebt()
-        if (debt == null) {
-            writeDebt(window)
-        } else if (window.startMs < debt.endMs && window.endMs > debt.startMs) {
-            writeDebt(
-                UsageBackfill.Window(
-                    minOf(debt.startMs, window.startMs),
-                    maxOf(debt.endMs, window.endMs)
-                )
-            )
-        }
-
+        // Snapshot the frontier: an in-memory read, safe on the tick loop.
+        // Taken at detection time so the recovery window starts exactly at
+        // the un-counted frontier even though live ticks keep committing.
+        val frontierMs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getLong(KEY_TICK_CURSOR_MS, 0L)
         scope.launch {
             var ownsGuard = false
             try {
-                ownsGuard = tryAcquireBackfill(frontierMs, nowMs, minStartMs)
+                backfillMutex.withLock {
+                    val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
+                    val window = planWindow(frontierMs, nowMs, minStartMs)
+                    val debt = synchronized(debtLock) { pendingDebt() }
+                    if (window != null) {
+                        // Durable handoff (commit(), worker-side) — merged
+                        // with a staged debt when they overlap (overlap
+                        // implies no live tick has committed in between, so
+                        // the merged span is entirely uncounted).
+                        val owed = if (debt != null &&
+                            window.startMs < debt.endMs && window.endMs > debt.startMs
+                        ) {
+                            UsageBackfill.Window(
+                                minOf(debt.startMs, window.startMs),
+                                maxOf(debt.endMs, window.endMs)
+                            )
+                        } else {
+                            window
+                        }
+                        writeDebt(owed)
+                        pendingRecoveryWindows.addLast(owed)
+                    }
+                    // Start/retain the worker whenever this detection needs
+                    // it — or whenever durable recovery work may exist (an
+                    // unpromoted debt or a pending row with remaining work):
+                    // a restart whose frontier is recent must still resume an
+                    // interrupted recovery instead of stranding it.
+                    val row = dao.get()
+                    val hasDurableWork = window != null || debt != null ||
+                        (row != null && row.endMs > 0L && row.progressMs < row.endMs)
+                    if (hasDurableWork) {
+                        ownsGuard = backfillInFlight.compareAndSet(false, true)
+                    }
+                }
                 if (!ownsGuard) return@launch
                 var failures = 0
                 while (true) {
@@ -613,20 +663,19 @@ class TrackerService : Service() {
                         failures++
                         Log.w(TAG, "backfill failed (attempt $failures)", e)
                         // The durable pending state is untouched and will
-                        // retry. Queued windows exist only in memory, so
-                        // releasing the guard while any remain would silently
-                        // abandon them — keep the worker and retry after a
-                        // backoff instead. The delay keeps a persistently
-                        // failing database from spinning.
+                        // retry. ANY durable recovery work — queued windows,
+                        // a pending row with remaining work, or an unpromoted
+                        // detection debt — keeps the worker alive (with
+                        // backoff): releasing the guard would strand it until
+                        // the next detection.
                         var drained = false
                         backfillMutex.withLock {
                             val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
                             val row = dao.get()
-                            // A durable pending row with remaining work keeps
-                            // the worker alive too — releasing the guard here
-                            // would strand it until the next detection.
+                            val debt = synchronized(debtLock) { pendingDebt() }
                             drained = pendingRecoveryWindows.isNotEmpty() ||
-                                (row != null && row.endMs > 0L && row.progressMs < row.endMs)
+                                (row != null && row.endMs > 0L && row.progressMs < row.endMs) ||
+                                debt != null
                             if (!drained) backfillInFlight.set(false)
                         }
                         if (!drained) return@launch
@@ -637,87 +686,6 @@ class TrackerService : Service() {
                 Log.w(TAG, "backfill failed", e)
                 if (ownsGuard) backfillInFlight.set(false)
             }
-        }
-    }
-
-    /**
-     * Registers a detected gap and reports whether the caller must run the
-     * recovery job (it won the single-flight CAS).
-     *
-     * Registration and guard acquisition are serialized under one mutex, so
-     * a request can never queue "before" another detector's window is
-     * visible: whoever holds the lock sees every previously published
-     * window and either clamps behind it or — when nothing is owed yet —
-     * publishes this gap as the durable pending row itself. A late
-     * registrar can therefore never enqueue a duplicate of a window that
-     * is about to be (or is being) recovered.
-     *
-     * When a job is already running, the request is NOT dropped: it is
-     * queued (clamped against everything still owed) and drained by the
-     * running job before it retires — otherwise a freeze detected during
-     * the startup replay would be skipped forever.
-     */
-    private suspend fun tryAcquireBackfill(
-        frontierMs: Long,
-        nowMs: Long,
-        minStartMs: Long
-    ): Boolean {
-        try {
-            backfillMutex.withLock {
-                val dao = AppDatabase.getInstance(this).backfillStateDao()
-                val window = planWindow(frontierMs, nowMs, minStartMs)
-                val pendingEnd = pendingEndMs(dao.get(), pendingDebt())
-                when {
-                    // A window is already owed (Room row mid-recovery or an
-                    // unpromoted detection debt): clamp this gap against it
-                    // and queue the remainder behind it.
-                    window != null && pendingEnd > 0L ->
-                        enqueueClamped(window, pendingEnd)
-                    window != null -> {
-                        // First registrant for this gap. Record the debt
-                        // synchronously (commit(), not apply()) BEFORE the
-                        // Room write: if the database write fails and the
-                        // process dies, the debt must already be on disk or
-                        // the window would be lost to the next live-tick
-                        // cursor advance ([promoteDebt] turns it into the
-                        // durable row). A failed commit only degrades the
-                        // crash-fallback; the Room write is still attempted.
-                        if (!writeDebt(window)) {
-                            Log.w(TAG, "detection debt commit failed; crash-fallback degraded")
-                        }
-                        // Transient Room failures: retry the registration
-                        // write in place (bounded) so a detected gap is not
-                        // left unpromoted until the next detection — the
-                        // durable debt prevents loss either way, and a
-                        // persistent failure keeps it retryable.
-                        var registered = false
-                        var attempt = 0
-                        while (!registered && attempt < 3) {
-                            attempt++
-                            try {
-                                dao.set(BackfillStateEntity(0, window.startMs, window.endMs))
-                                registered = true
-                            } catch (e: Exception) {
-                                Log.w(TAG, "backfill registration write failed (attempt $attempt)", e)
-                                if (attempt < 3) delay(REGISTRATION_RETRY_BACKOFF_MS)
-                            }
-                        }
-                        if (!registered) {
-                            throw IllegalStateException(
-                                "backfill registration write failed after $attempt attempts"
-                            )
-                        }
-                    }
-                    // No new gap: still take the guard if it is free — the
-                    // no-op worker pass re-checks pending state and retires.
-                }
-                return backfillInFlight.compareAndSet(false, true)
-            }
-        } catch (e: Exception) {
-            // Registration must never take down the caller; the durable
-            // pending window (if any) still retries at the next detection.
-            Log.w(TAG, "backfill registration failed", e)
-            return false
         }
     }
 
@@ -795,18 +763,42 @@ class TrackerService : Service() {
      */
     private suspend fun promoteDebt() {
         backfillMutex.withLock {
-            val dao = AppDatabase.getInstance(this).backfillStateDao()
+            val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
             val row = dao.get()
-            val debt = pendingDebt() ?: return
-            if (row != null && row.endMs > 0L) {
-                // A row is already active: it was promoted from this debt (or
-                // covers it) — only a stale duplicate can remain; drop it if
-                // the row subsumes it.
-                if (debt.endMs <= row.endMs) clearPendingDebt()
-                return
+            // Debt read/clear is serialized against the detector's staging
+            // via [debtLock] (both are fast preference operations; the Room
+            // write in between stays outside the detector's reach, and the
+            // clear below is conditional on the debt being unchanged since
+            // it was read).
+            val debt = synchronized(debtLock) { pendingDebt() }
+            when {
+                debt == null -> return
+                // Row still owes work: a debt staged while this row was
+                // mid-recovery starts at/after the row's end (detectors clamp
+                // against the owed frontier), so its uncovered tail is queued
+                // behind the row — otherwise retirement would wipe it. A debt
+                // fully inside the row's remaining work is already covered
+                // and dropped.
+                row != null && row.endMs > 0L && row.progressMs < row.endMs -> {
+                    if (debt.endMs > row.endMs) {
+                        pendingRecoveryWindows.addLast(
+                            UsageBackfill.Window(maxOf(debt.startMs, row.endMs), debt.endMs)
+                        )
+                    }
+                    synchronized(debtLock) { clearPendingDebt() }
+                }
+                else -> {
+                    // Promote the debt as the next window, never moving the
+                    // progress backwards past what the completed row already
+                    // recovered.
+                    val start = maxOf(debt.startMs, row?.endMs ?: 0L)
+                    val end = maxOf(debt.endMs, row?.endMs ?: 0L)
+                    if (end > start) {
+                        dao.set(BackfillStateEntity(0, start, end))
+                    }
+                    synchronized(debtLock) { clearPendingDebt() }
+                }
             }
-            dao.set(BackfillStateEntity(0, debt.startMs, debt.endMs))
-            clearPendingDebt()
         }
     }
 
