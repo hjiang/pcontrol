@@ -13,6 +13,14 @@ object BrowserRegistry {
         "org.mozilla.firefox" to "org.mozilla.firefox:id/mozac_browser_toolbar_url_view",
         "com.brave.browser" to "com.brave.browser:id/url_bar",
         "com.microsoft.emmx" to "com.microsoft.emmx:id/url_bar",
+        "com.vivaldi.browser" to "com.vivaldi.browser:id/url_bar",
+        // Xiaomi's built-in browser. Verified on Xiaomi 25097RP43C (HyperOS 3):
+        // its URL-bar node (id/url) shows the DOMAIN transiently during each
+        // page load (a few seconds), then swaps to the page title. The
+        // event-driven handleBrowserUrlBar + BrowserDomainCache (null never
+        // overwrites) are designed for this: the domain is captured on load
+        // events and persists until the next navigation replaces it.
+        "com.android.browser" to "com.android.browser:id/url",
     )
 
     /** Returns the URL-bar view ID for a known browser, or null for unknown apps. */
