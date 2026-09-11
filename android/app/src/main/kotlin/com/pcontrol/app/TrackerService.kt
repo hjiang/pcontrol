@@ -30,7 +30,9 @@ import com.pcontrol.core.UsageBackfill
 import com.pcontrol.core.UsageDay
 import com.pcontrol.core.UsageAttribution
 import com.pcontrol.app.db.AppDatabase
+import com.pcontrol.app.db.BackfillStateEntity
 import com.pcontrol.app.db.UsageCounterEntity
+import androidx.room.withTransaction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +63,12 @@ class TrackerService : Service() {
         // the UsageStats events of the missed period.
         private const val PREFS_NAME = "pcontrol"
         private const val KEY_TICK_CURSOR_MS = "tick_cursor_ms"
+
+        // Recovery progress is committed in chunks of at most this span
+        // (each chunk's counter merges + progress advance commit in one
+        // Room transaction), so a mid-recovery process death can never put
+        // more than one chunk's data at risk.
+        private const val BACKFILL_CHUNK_MS = 60 * 60_000L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -68,6 +76,19 @@ class TrackerService : Service() {
     private var lastSyncTime = 0L
     private var lastUsageEventQueryTime: Long? = null
     private var currentForegroundPkg: String? = null
+
+    // Serializes the live tick cursor (KEY_TICK_CURSOR_MS) and the pending
+    // recovery state between the 10-second tick loop (commitTick), gap
+    // detection, and the backfill coroutine — a detection must never read a
+    // stale frontier, and no writer but commitTick ever touches the live
+    // cursor, so it can never move backwards.
+    private val cursorMutex = Mutex()
+
+    // Gap windows detected while a recovery job was already running (the
+    // single-flight guard). Pinned (start, end) pairs, drained by the
+    // running job before it retires — a freeze that begins during the
+    // startup replay is queued, never silently dropped.
+    private val pendingRecoveryWindows = ArrayDeque<UsageBackfill.Window>()
 
     /** Guards long-running side work so it never stalls the 10-second tick. */
     private val syncInFlight = AtomicBoolean(false)
@@ -473,50 +494,171 @@ class TrackerService : Service() {
      * every tick (a small SharedPreferences write) minimizes restart
      * replay overlap; apply() is async, so sudden process death can still
      * lose the newest write — the residual overlap is bounded by one tick.
+     *
+     * Serialized on [cursorMutex]: this is the ONLY writer of the live
+     * cursor, and gap detection reads it under the same lock, so the
+     * frontier is monotonic and detection windows can never overlap
+     * already-counted ticks. A pending usage-backfill recovery lives in a
+     * separate durable state (Room `backfill_state`) that this path cannot
+     * overwrite — a failed or in-flight backfill keeps its frontier.
      */
-    private fun commitTick(foregroundPkg: String?, endTime: Long) {
+    private suspend fun commitTick(foregroundPkg: String?, endTime: Long) {
         currentForegroundPkg = foregroundPkg
         lastUsageEventQueryTime = endTime
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .edit()
-            .putLong(KEY_TICK_CURSOR_MS, endTime)
-            .apply()
+        cursorMutex.withLock {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_TICK_CURSOR_MS, endTime)
+                .apply()
+        }
     }
 
     /**
-     * Launches a backfill on its own coroutine (guarded, single-flight) so
-     * the UsageStats query and counter merges — potentially large after a
-     * multi-day outage — never stall the 10-second tick loop.
+     * Requests recovery of the gap ending at [nowMs], starting at the live
+     * frontier (never before [minStartMs], which the freeze-thaw path sets
+     * to the in-memory last query end so nothing already counted is
+     * replayed). Runs on its own coroutine — the UsageStats query and
+     * counter merges, potentially large after a multi-day outage, must
+     * never stall the 10-second tick loop.
+     *
+     * The gap becomes the durable pending recovery window (Room
+     * `backfill_state`), which survives process death and is invisible to
+     * [commitTick]: live ticks can no longer erase an outage frontier, so
+     * a failed query or merge retries at the next stall/restart instead of
+     * permanently losing the missed usage.
      */
-    private fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
-        if (!backfillInFlight.compareAndSet(false, true)) return
+    private suspend fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
+        if (!tryAcquireBackfill(nowMs, minStartMs)) return
         scope.launch {
             try {
-                maybeBackfill(nowMs, minStartMs)
+                runRecovery()
             } catch (e: Exception) {
                 Log.w(TAG, "backfill failed", e)
-            } finally {
+                // The durable pending window is untouched — the next stall
+                // or restart retries it.
                 backfillInFlight.set(false)
             }
         }
     }
 
     /**
-     * Replays the system UsageStats transitions for the period covered by
-     * the persisted tick cursor and attributes it to per-day app counters.
-     * Covers process death (crash, FGS kill, boot) and freeze-thaw stalls.
-     * Web (domain) usage cannot be recovered this way — domains are only
-     * readable live via the accessibility service.
+     * Registers a detected gap and reports whether the caller must launch
+     * the recovery job (the single-flight discipline).
      *
-     * Ordering: the cursor is claimed only after a successful queryEvents,
-     * right before merging — a transient query failure leaves the cursor
-     * untouched so the next attempt retries, while a mid-merge crash still
-     * cannot double-count (at-most-once for merges).
+     * When a job is already running, the request is NOT dropped: it is
+     * queued as a pinned window that the running job processes before it
+     * retires — otherwise a freeze detected during the startup replay
+     * would be skipped forever. Detection runs under [cursorMutex], so the
+     * window start is the exact un-counted frontier and can never overlap
+     * a concurrent tick commit.
      */
-    private suspend fun maybeBackfill(nowMs: Long, minStartMs: Long = 0L) {
+    private suspend fun tryAcquireBackfill(nowMs: Long, minStartMs: Long): Boolean {
+        if (!backfillInFlight.compareAndSet(false, true)) {
+            // Loser path: no guard is ours to release — just try to queue.
+            var takeover = false
+            try {
+                cursorMutex.withLock {
+                    planBackfillWindow(nowMs, minStartMs)?.let { pendingRecoveryWindows.addLast(it) }
+                    // The running job may have retired between our failed CAS
+                    // and this critical section (it releases the guard inside
+                    // the same lock as its final queue check). If so, take
+                    // over and drain what we just queued; if the flag is still
+                    // set, the running job is guaranteed to poll again.
+                    takeover = backfillInFlight.compareAndSet(false, true)
+                }
+            } catch (e: Exception) {
+                // Registration must never kill the tick loop; the next
+                // stall/restart re-detects the gap.
+                Log.w(TAG, "backfill registration failed", e)
+            }
+            return takeover
+        }
+        // Winner path: we hold the single-flight guard — release it on any
+        // failure so future detections are never permanently blocked.
+        try {
+            cursorMutex.withLock {
+                val dao = AppDatabase.getInstance(this).backfillStateDao()
+                val hasPending = (dao.get()?.endMs ?: 0L) > 0L
+                val window = planBackfillWindow(nowMs, minStartMs)
+                when {
+                    // A previous process died mid-recovery: the durable window
+                    // stays authoritative; any newly detected gap queues behind it.
+                    hasPending -> window?.let { pendingRecoveryWindows.addLast(it) }
+                    window != null -> dao.set(BackfillStateEntity(0, window.startMs, window.endMs))
+                    else -> {
+                        // No reportable gap — release the guard we just took.
+                        backfillInFlight.set(false)
+                        return false
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "backfill registration failed", e)
+            backfillInFlight.set(false)
+            return false
+        }
+        return true
+    }
+
+    /** Plans the recovery window for a detected gap, or null when it is
+     *  not reportable (fresh install, sub-threshold gap, clock skew).
+     *  Must be called under [cursorMutex]. */
+    private fun planBackfillWindow(nowMs: Long, minStartMs: Long): UsageBackfill.Window? {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val cursor = maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), minStartMs)
-        val window = UsageBackfill.plan(cursor, nowMs) ?: return
+        return UsageBackfill.plan(
+            maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), minStartMs),
+            nowMs
+        )
+    }
+
+    /**
+     * Processes the durable pending recovery window, then any gap windows
+     * that were queued while it ran, then retires. The retire step clears
+     * the pending state and releases the single-flight guard inside
+     * [cursorMutex] together with the final queue check, so a concurrent
+     * detector either queues before the check (the job loops and drains
+     * it) or acquires the guard afterwards (and starts a fresh job).
+     */
+    private suspend fun runRecovery() {
+        while (true) {
+            recoverPendingWindow()
+            var retire = false
+            cursorMutex.withLock {
+                val dao = AppDatabase.getInstance(this).backfillStateDao()
+                val next = pendingRecoveryWindows.removeFirstOrNull()
+                if (next != null) {
+                    dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                } else {
+                    dao.clear()
+                    backfillInFlight.set(false)
+                    retire = true
+                }
+            }
+            if (retire) return
+        }
+    }
+
+    /**
+     * Replays one pending recovery window — (progressMs, endMs] from the
+     * durable backfill state — covering process death (crash, FGS kill,
+     * boot) and freeze-thaw stalls. Web (domain) usage cannot be recovered
+     * this way — domains are only readable live via the accessibility
+     * service.
+     *
+     * Durability: each chunk's counter merges and its progress advance
+     * commit in ONE Room transaction. A crash or failed write rolls both
+     * back, so the window retries from the failed chunk with no lost
+     * slices and no double-counted ones — recovery progress is always
+     * tied to successfully written counters. (The mutex keeps the
+     * transaction from straddling the sync path's markSynced writes.)
+     */
+    private suspend fun recoverPendingWindow() {
+        val db = AppDatabase.getInstance(this)
+        val state = db.backfillStateDao().get() ?: return
+        if (state.endMs <= 0L) return
+        // Sub-MIN_GAP residue (or a fully clamped window): nothing worth
+        // replaying; the retire step clears the state.
+        val window = UsageBackfill.plan(state.progressMs, state.endMs) ?: return
 
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
@@ -545,38 +687,42 @@ class TrackerService : Service() {
         }
         // UsageEvents does not implement Closeable; resources freed by GC
 
-        val slices = UsageBackfill.attribute(
+        val chunks = UsageBackfill.attributeChunked(
             events = timed,
             selfPackage = packageName,
             window = window,
+            chunkMs = BACKFILL_CHUNK_MS,
             zone = ZoneId.systemDefault()
         )
 
-        // Claim the window after the successful query, before merging:
-        // at-most-once for merges, retryable for failed queries. Never move
-        // the cursor backwards — ticks resumed since launch may already have
-        // persisted a newer frontier while the query was in flight.
-        val prefsEditor = prefs.edit()
-        prefsEditor.putLong(
-            KEY_TICK_CURSOR_MS,
-            maxOf(window.endMs, prefs.getLong(KEY_TICK_CURSOR_MS, 0L))
-        )
-        prefsEditor.apply()
-        if (slices.isEmpty()) return
-
-        val db = AppDatabase.getInstance(this)
-        for (slice in slices) {
-            mergeCounter(
-                db = db,
-                day = slice.day,
-                kind = "app",
-                subject = slice.subject,
-                label = blockingCoordinator.resolveLabel(slice.subject),
-                increment = slice.seconds
-            )
+        val dao = db.backfillStateDao()
+        var backfilledSeconds = 0L
+        for (chunk in chunks) {
+            val labelled = chunk.slices.map { slice ->
+                slice to blockingCoordinator.resolveLabel(slice.subject)
+            }
+            if (labelled.isEmpty()) {
+                dao.advanceProgress(chunk.window.endMs)
+                continue
+            }
+            usageCounterMutex.withLock {
+                db.withTransaction {
+                    for ((slice, label) in labelled) {
+                        mergeCounterLocked(
+                            db = db,
+                            day = slice.day,
+                            kind = "app",
+                            subject = slice.subject,
+                            label = label,
+                            increment = slice.seconds
+                        )
+                    }
+                    dao.advanceProgress(chunk.window.endMs)
+                }
+            }
+            backfilledSeconds += chunk.slices.sumOf { it.seconds.toLong() }
         }
         val gapSeconds = (window.endMs - window.startMs) / 1000
-        val backfilledSeconds = slices.sumOf { it.seconds }
         Log.i(TAG, "Backfilled ${backfilledSeconds}s over a ${gapSeconds}s gap")
     }
 
@@ -600,8 +746,26 @@ class TrackerService : Service() {
         increment: Int
     ) {
         usageCounterMutex.withLock {
-            val dao = db.usageCounterDao()
-            val existing = dao.get(day, kind, subject)
+            mergeCounterLocked(db, day, kind, subject, label, increment)
+        }
+    }
+
+    /**
+     * [mergeCounter] without the mutex — for callers that already hold
+     * [usageCounterMutex] (the backfill transaction) or need many rows in
+     * one critical section. Not reentrant: never call while holding the
+     * mutex.
+     */
+    private suspend fun mergeCounterLocked(
+        db: AppDatabase,
+        day: String,
+        kind: String,
+        subject: String,
+        label: String,
+        increment: Int
+    ) {
+        val dao = db.usageCounterDao()
+        val existing = dao.get(day, kind, subject)
             val merged = UsageDay.mergeCounter(
                 existing = existing?.let {
                     com.pcontrol.core.UsageCounter(
@@ -629,7 +793,6 @@ class TrackerService : Service() {
                     syncedSeconds = merged.syncedSeconds
                 )
             )
-        }
     }
 
     private suspend fun onSync() {

@@ -46,6 +46,15 @@ object UsageBackfill {
     /** Attributed usage for one day/subject, in whole seconds. */
     data class Slice(val day: String, val subject: String, val seconds: Int)
 
+    /**
+     * One chunk of a chunked attribution: a contiguous sub-window of the
+     * overall window plus the slices attributed within it. Chunks let a
+     * caller merge counters and persist durable progress piece by piece
+     * (TrackerService), so a mid-recovery process death can never put more
+     * than one chunk's data at risk.
+     */
+    data class Chunk(val window: Window, val slices: List<Slice>)
+
     private val TRANSITION_TYPES = setOf(
         AppEvent.ACTIVITY_RESUMED,
         AppEvent.ACTIVITY_PAUSED
@@ -88,48 +97,100 @@ object UsageBackfill {
         window: Window,
         zone: ZoneId,
         silenceCapMs: Long = DEFAULT_SILENCE_CAP_MS
-    ): List<Slice> {
-        val acc = LinkedHashMap<Pair<String, String>, Long>()
-        var foreground: String? = null
-        var cursor = window.startMs
+    ): List<Slice> =
+        attributeChunked(
+            events = events,
+            selfPackage = selfPackage,
+            window = window,
+            chunkMs = maxOf(1L, window.endMs - window.startMs),
+            zone = zone,
+            silenceCapMs = silenceCapMs
+        ).flatMap { it.slices }
 
+    /**
+     * [attribute] split into consecutive chunks of at most [chunkMs] for
+     * durable per-chunk progress. Per-interval semantics are identical to
+     * the single-shot call — in particular the silence cap is measured
+     * from the true interval start, NOT restarted at every chunk boundary
+     * (a 45-minute eventless stretch contributes at most [silenceCapMs]
+     * in total, never [silenceCapMs] per chunk it spans).
+     */
+    fun attributeChunked(
+        events: List<TimedAppEvent>,
+        selfPackage: String,
+        window: Window,
+        chunkMs: Long,
+        zone: ZoneId,
+        silenceCapMs: Long = DEFAULT_SILENCE_CAP_MS
+    ): List<Chunk> {
+        require(chunkMs > 0) { "chunkMs must be positive" }
+        val chunkEnds = ArrayList<Long>()
+        var boundary = window.startMs
+        while (boundary < window.endMs) {
+            chunkEnds += minOf(boundary + chunkMs, window.endMs)
+            boundary += chunkMs
+        }
+        if (chunkEnds.isEmpty()) return emptyList()
+        val accs = List(chunkEnds.size) { LinkedHashMap<Pair<String, String>, Long>() }
+
+        // Charges [fromMs, toMs) to [pkg], distributing the (already
+        // silence-capped) span over the chunks it overlaps.
+        fun charge(fromMs: Long, toMs: Long, pkg: String?) {
+            if (pkg == null || pkg == selfPackage || toMs <= fromMs) return
+            val cappedEnd = minOf(toMs, fromMs + silenceCapMs)
+            var chunkStart = window.startMs
+            for (i in chunkEnds.indices) {
+                val chunkEnd = chunkEnds[i]
+                val from = maxOf(fromMs, chunkStart)
+                val to = minOf(cappedEnd, chunkEnd)
+                if (to > from) addInterval(accs[i], pkg, from, to, zone)
+                chunkStart = chunkEnd
+            }
+        }
+
+        var foreground: String? = null
+        var intervalStart = window.startMs
         for (event in events.sortedBy { it.timestampMs }) {
             if (event.eventType !in TRANSITION_TYPES) continue
             val ts = event.timestampMs.coerceIn(window.startMs, window.endMs)
-            if (ts > cursor) {
-                attributeInterval(acc, foreground, cursor, ts, selfPackage, zone, silenceCapMs)
-                cursor = ts
+            if (ts > intervalStart) {
+                charge(intervalStart, ts, foreground)
+                intervalStart = ts
             }
             foreground = applyTransition(foreground, event)
         }
-        if (window.endMs > cursor) {
-            attributeInterval(acc, foreground, cursor, window.endMs, selfPackage, zone, silenceCapMs)
+        if (window.endMs > intervalStart) {
+            charge(intervalStart, window.endMs, foreground)
         }
 
-        return acc.map { (dayAndSubject, ms) ->
-            Slice(dayAndSubject.first, dayAndSubject.second, (ms / 1000L).toInt())
+        return chunkEnds.mapIndexed { i, end ->
+            val start = if (i == 0) window.startMs else chunkEnds[i - 1]
+            Chunk(
+                window = Window(start, end),
+                slices = accs[i].map { (dayAndSubject, ms) ->
+                    Slice(dayAndSubject.first, dayAndSubject.second, (ms / 1000L).toInt())
+                }
+            )
         }
     }
 
     /**
-     * Charges [fromMs, toMs) to [pkg], capped at [silenceCapMs] measured
-     * from the interval start (activity was provable at the start; long
-     * silence implies the screen went off).
+     * Charges [fromMs, toMs) to [pkg], splitting at local midnights so day
+     * keys match the live tick path's device-local convention. The caller
+     * applies any silence cap; this only distributes a final span across
+     * day buckets.
      */
-    private fun attributeInterval(
+    private fun addInterval(
         acc: MutableMap<Pair<String, String>, Long>,
-        pkg: String?,
+        pkg: String,
         fromMs: Long,
         toMs: Long,
-        selfPackage: String,
-        zone: ZoneId,
-        silenceCapMs: Long
+        zone: ZoneId
     ) {
-        if (pkg == null || pkg == selfPackage || toMs <= fromMs) return
-        val cappedEnd = minOf(toMs, fromMs + silenceCapMs)
+        if (toMs <= fromMs) return
         var t = fromMs
-        while (t < cappedEnd) {
-            val segmentEnd = minOf(cappedEnd, nextMidnightMs(t, zone))
+        while (t < toMs) {
+            val segmentEnd = minOf(toMs, nextMidnightMs(t, zone))
             if (segmentEnd <= t) break // DST anomaly guard
             val key = dayKey(t, zone) to pkg
             acc[key] = (acc[key] ?: 0L) + (segmentEnd - t)

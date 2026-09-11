@@ -50,9 +50,9 @@ mechanism below also covers intra-process stalls.
 New `TimedAppEvent(packageName, eventType, timestampMs)` and
 `UsageBackfill`:
 
-- `plan(cursorMs, nowMs, minGapMs, maxWindowMs)` → `Window?` — decide
-  whether a persisted tick cursor indicates a reportable gap
-  (≥ 2 min, clamped to 7 days).
+- `plan(cursorMs, nowMs)` → `Window?` — decide whether a persisted tick
+  cursor indicates a reportable gap; thresholds are the fixed constants
+  `MIN_GAP_MS` (≥ 2 min) and `MAX_WINDOW_MS` (clamped to 7 days).
 - `attribute(events, selfPackage, window, zone, silenceCapMs)` →
   `List<Slice(day, subject, seconds)>` — folds UsageEvents transitions over
   the gap, attributing each eventless interval to the then-foreground app:
@@ -81,10 +81,14 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 - **Cursor persistence**: every committed tick writes
   `tick_cursor_ms` (wall clock of the attribution window end).
 - **Gap backfill**: on service start and whenever a tick detects a stall
-  (`now - lastTickAt > 2 min`), replay `queryEvents(cursor, now)` through
-  `UsageBackfill` and merge the slices into the app counters via
-  `UsageDay.mergeCounter`. Backfilled seconds flow to the server as ordinary
-  unsynced deltas.
+  (`now - lastTickAt > 2 min`), the gap becomes a durable **pending
+  recovery window** (Room `backfill_state`) that live ticks cannot
+  overwrite; the replay runs `queryEvents` through `UsageBackfill`
+  chunk-by-chunk (~1 h), committing each chunk's counter merges and its
+  progress advance in one Room transaction, and merges the slices into
+  the app counters via `UsageDay.mergeCounter`. Backfilled seconds flow
+  to the server as ordinary unsynced deltas. (See the hardening section
+  below for the failure-mode rationale.)
 - Web (domain) usage cannot be backfilled retroactively — domains are only
   readable live via the accessibility service. Documented limitation.
 - Tick-path consistency: the event-derived foreground can be pcontrol
@@ -97,7 +101,7 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 ## Status
 
-- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 19 tests)
+- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 23 tests)
 - Stage 2 — **Done** (manifest + TrackerService)
 - Stage 2b — **Done** (`MY_PACKAGE_REPLACED` restart, 3 Robolectric tests)
 - Stage 3 — **Done** (0.0.8/8 defaults)
@@ -155,15 +159,58 @@ mutex). Report-only P2s, addressed where cheap:
 
 - **Backfill ran inline on the tick coroutine** (startup + stall sites),
   violating the repo's "never block the 10-second tick" convention. Fixed:
-  `launchBackfill` runs `maybeBackfill` on its own single-flight coroutine
+  `launchBackfill` runs the replay on its own single-flight coroutine
   (AtomicBoolean guard), like sync and update checks.
 - **Cursor advanced before `queryEvents`**: a transient query failure would
-  permanently skip the window. Fixed: the cursor is claimed only after a
-  successful query, immediately before merging — failed queries retry on
-  the next stall/restart; merges stay at-most-once.
+  permanently skip the window. Fixed in the rounds below: recovery progress
+  moved to its own durable state that ticks cannot overwrite.
 
-## Verification on device (done 2026-09-09, locally signed — same key lineage
-as the installed 0.0.7, in-place `adb install -r`, data kept)
+## Copilot review rounds — recovery-state hardening (final round)
+
+The single `tick_cursor_ms` frontier conflated "live counting reached here"
+with "recovery has reconstructed through here", which let live ticks erase
+an outage frontier and let a mid-merge death drop a whole window. Redesigned
+as a durable **pending recovery window** (Room `backfill_state`, schema v3:
+`progressMs` / `endMs`, 0 = none), kept strictly separate from the live
+tick cursor:
+
+- **Live ticks can no longer erase a pending recovery** (`commitTick` never
+  touches `backfill_state`). A failed query/merge leaves the frontier
+  intact; the next stall/restart retries the window.
+- **Progress is tied to written data**: each chunk (~1 h) of the window is
+  attributed via `UsageBackfill.attributeChunked`, and the chunk's counter
+  merges + its `advanceProgress` commit in ONE Room transaction — a crash
+  rolls both back (no lost slices, no double-counted ones). The old
+  claim-the-whole-window-before-merging is gone.
+- **Cursor accesses are serialized**: a `cursorMutex` guards
+  `commitTick`'s cursor write and every detection read; the backfill never
+  writes `tick_cursor_ms` at all, so the frontier cannot move backwards.
+- **Detection during an in-flight recovery is queued, not dropped**:
+  requests arriving while the single-flight guard is held are appended as
+  pinned windows and drained by the running job before it retires (the
+  guard is released inside the final queue check's critical section, so a
+  queue entry can never be orphaned by the exit race). A freeze that starts
+  during the startup replay is therefore recovered.
+- Silence-cap semantics survive chunking: the cap is measured from the
+  true interval start across chunk boundaries (a 45-min eventless stretch
+  still contributes ≤ 5 min total, never 5 min per chunk).
+- Residual (documented, accepted): pinned windows are in-memory, so a
+  process death between a queueing detection and the running job's drain
+  loses that queued gap until the next detection; recovery progress itself
+  is always durable.
+
+## Verification on device (done 2026-09-09, locally signed dev build —
+see lineage note)
+
+**Signing lineage (corrected):** this verification ran against the
+locally signed dev build (dev keystore per plan 06) installed over a
+locally signed predecessor on the dev device, in-place `adb install -r`,
+data kept. It does **not** attest the CI-signed release artifact: the
+dev key and the CI keystore are different keys (AGENTS.md signing
+invariant), and a locally built APK cannot update a CI-signed install in
+place — verified earlier, non-destructively (signature mismatch). Release
+verification rides the `android-v0.0.8` tag → CI APK → auto-update path,
+where signature continuity is guaranteed by the single CI keystore.
 
 - `types=0x40000000` (**specialUse**) in `dumpsys activity services` — the
   6-hour dataSync timeout no longer applies (0.0.7 showed `0x00000001`).

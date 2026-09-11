@@ -253,18 +253,27 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 
 - **Usage during outages is backfilled from system UsageStats.** Live
   attribution is 10 s sampling: time with the process dead or frozen never
-  reaches the counters. Ticks persist `tick_cursor_ms` on every commit; on
-  service start and on ≥2 min loop stalls, `maybeBackfill()` replays
-  `queryEvents` through `UsageBackfill` (`:core`, pure, unit-tested) and
-  merges per-day app counters. Eventless intervals cap at 5 min so a locked
-  screen never inflates hours; the cursor is claimed before merging
-  (at-most-once); pcontrol's own package is excluded; web/domain usage is
-  not recoverable retroactively. The cursor persists on every commit; the
-  freeze-thaw path (process alive) additionally floors the replay start at
-  the in-memory `lastUsageEventQueryTime`. Backfill runs on its own
-  single-flight coroutine so a multi-day replay never stalls the tick loop,
-  and the cursor is claimed only after a successful `queryEvents` (failed
-  queries retry; merges stay at-most-once).
+  reaches the counters. Ticks persist `tick_cursor_ms` (the live frontier,
+  written only by `commitTick` under `cursorMutex`) on every commit; on
+  service start and on ≥2 min loop stalls, a detected gap becomes a
+  **durable pending recovery window** (Room `backfill_state`, schema v3)
+  that live ticks cannot overwrite, then replays `queryEvents` through
+  `UsageBackfill` (`:core`, pure, unit-tested) and merges per-day app
+  counters. Key invariants: each ~1 h chunk's merges + its progress
+  advance commit in one Room transaction (crash ⇒ rollback ⇒ retry: no
+  lost slices, no double-count); `cursorMutex` serializes cursor access so
+  the frontier never moves backwards; gaps detected while a recovery runs
+  are queued as pinned windows and drained before the job retires (never
+  dropped by the single-flight guard); registration failures never kill
+  the tick loop. Eventless intervals cap at 5 min measured from interval
+  start (preserved across chunks); pcontrol's own package is excluded;
+  web/domain usage is not recoverable retroactively. The freeze-thaw path
+  additionally floors the replay start at the in-memory
+  `lastUsageEventQueryTime`. Backfill runs on its own single-flight
+  coroutine so a multi-day replay never stalls the tick loop. Residual:
+  pinned windows are in-memory — a death between queueing and the drain
+  loses that queued gap until the next detection; recovery progress
+  itself is always durable.
 
 - **HyperOS blocks background activity starts even with draw-over-other-apps.**
   Never use `startActivity` as an automatic enforcement surface: Xiaomi can
