@@ -74,6 +74,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - **Enforcement is local**: the phone blocks apps/sites from its cached
   policy; the server is the source of truth for policy and the sink for
   usage. The dashboard is pull-only — no push channel exists.
+- **Usage attribution counts only genuinely-interactive time**: `TrackerService`
+  credits app/web usage only when the display is on AND the keyguard is not
+  locked (`UsageAttribution.shouldAttribute` in `:core`; the gate also clears
+  browser domain state and advances the usage-events cursor so unlocking never
+  replays the gap). Locked-screen time is attributed to nobody — do not
+  "fix" attribution to run behind a keyguard.
 - **`:core` stays pure JVM**: no Android imports. Anything needing Android
   APIs gets a thin adapter in `:app` (see `UsageStatsAdapter.kt`) so logic
   remains unit-testable without Robolectric.
