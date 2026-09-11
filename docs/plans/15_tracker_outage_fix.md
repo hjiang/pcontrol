@@ -102,7 +102,7 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
 
 ## Status
 
-- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 26 tests)
+- Stage 1 — **Done** (`UsageBackfill` + `TimedAppEvent`, 27 tests)
 - Stage 2 — **Done** (manifest + TrackerService)
 - Stage 2b — **Done** (`MY_PACKAGE_REPLACED` restart, 3 Robolectric tests)
 - Stage 3 — **Done** (0.0.8/8 defaults)
@@ -245,6 +245,19 @@ tick cursor:
 - **The tick loop never waits on backfill I/O**: `backfillMutex` no longer
   involves `commitTick` (single-writer cursor, monotonic by construction);
   all Room access happens in backfill coroutines only.
+- **Retirement is gated on the live cursor catching up** and on remaining
+  work: the claim/retire check distinguishes a newly published row
+  (`progressMs < endMs` — process it) from the just-finished row
+  (`progressMs == endMs` — no hot loop), and only clears the row once
+  `tick_cursor_ms ≥ recovered end`, so a restart with a stale cursor can
+  never re-register and replay a recovered window; until then the
+  completed row stays as the recovered-through marker.
+- **Recovery defers when UsageStats access is unavailable**: without the
+  PACKAGE_USAGE_STATS app-op, queryEvents silently returns empty data —
+  that is no longer mistaken for a successful recovery; the pending row
+  is kept and the pass retried until access is granted. The worker also
+  stays alive (with backoff) until queued windows are drained instead of
+  releasing the guard after a bounded number of failures.
 - Residual (documented, accepted): pinned windows are in-memory, so a
   process death between a queueing detection and the running job's drain
   loses that queued gap until the next detection; recovery progress (Room

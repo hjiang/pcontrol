@@ -1,5 +1,6 @@
 package com.pcontrol.app
 
+import android.app.AppOpsManager
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -562,24 +563,20 @@ class TrackerService : Service() {
                         return@launch  // retired; guard released inside the lock
                     } catch (e: Exception) {
                         failures++
-                        Log.w(TAG, "backfill failed", e)
-                        // The durable pending window is untouched and will
-                        // retry at the next detection. If queued windows
-                        // still need a worker, keep the guard and retry —
-                        // bounded, so a persistently failing database cannot
-                        // spin. The guard is released inside the lock, with
-                        // the same queue handoff discipline as the retire
-                        // step, so a queued window can never be orphaned by
-                        // this failure path.
+                        Log.w(TAG, "backfill failed (attempt $failures)", e)
+                        // The durable pending state is untouched and will
+                        // retry. Queued windows exist only in memory, so
+                        // releasing the guard while any remain would silently
+                        // abandon them — keep the worker and retry after a
+                        // backoff instead. The delay keeps a persistently
+                        // failing database from spinning.
                         var drained = false
                         backfillMutex.withLock {
-                            if (pendingRecoveryWindows.isNotEmpty() && failures < 3) {
-                                drained = true
-                            } else {
-                                backfillInFlight.set(false)
-                            }
+                            drained = pendingRecoveryWindows.isNotEmpty()
+                            if (!drained) backfillInFlight.set(false)
                         }
                         if (!drained) return@launch
+                        delay(RETIRE_RETRY_BACKOFF_MS)
                     }
                 }
             } catch (e: Exception) {
@@ -749,33 +746,45 @@ class TrackerService : Service() {
     private suspend fun runRecovery() {
         while (true) {
             promoteDebt()
-            recoverPendingWindow()
+            val handled = recoverPendingWindow()
             var retire = false
-            var retryLater = false
+            // A pass that could not run (UsageStats access unavailable)
+            // retries after a backoff; the pending row is kept deliberately.
+            var retryLater = !handled
             backfillMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
+                val row = dao.get()
                 val next = pendingRecoveryWindows.removeFirstOrNull()
                 when {
                     next != null ->
                         dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
                     // No queued window — but a late registrar may have
-                    // published a new pending row while we were finishing the
+                    // published a NEW pending row while we were finishing the
                     // previous one (registration is serialized with this
-                    // check): process it instead of retiring.
-                    dao.get()?.endMs?.takeIf { it > 0L } != null -> Unit
+                    // check): process it instead of retiring. The just-
+                    // finished row does NOT count as new work: it still has
+                    // endMs > 0 but no remaining work (progress == end) —
+                    // treating it as work would hot-loop here forever.
+                    row != null && row.endMs > 0L && row.progressMs < row.endMs -> Unit
                     else -> {
-                        // Retire only if the detection debt can be cleared
-                        // SYNCHRONOUSLY: a debt that survives on disk while
-                        // the row is gone would resurrect an already-
-                        // recovered window on the next restart. If the clear
-                        // cannot be persisted, keep the row as the retry
-                        // marker and back off.
-                        if (clearPendingDebt()) {
-                            dao.clear()
-                            backfillInFlight.set(false)
-                            retire = true
-                        } else {
-                            retryLater = true
+                        // Nothing owed. Retire — but only once the live tick
+                        // cursor has caught up with the recovered frontier:
+                        // clearing earlier would let a restart with a stale
+                        // cursor (e.g. the process dying before the next
+                        // successful commitTick) re-register and replay this
+                        // window. Until then the completed row stays as the
+                        // recovered-through marker and retirement retries.
+                        val recoveredEnd = row?.endMs ?: 0L
+                        val frontier = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                            .getLong(KEY_TICK_CURSOR_MS, 0L)
+                        when {
+                            frontier < recoveredEnd -> retryLater = true
+                            !clearPendingDebt() -> retryLater = true
+                            else -> {
+                                dao.clear()
+                                backfillInFlight.set(false)
+                                retire = true
+                            }
                         }
                     }
                 }
@@ -800,11 +809,15 @@ class TrackerService : Service() {
      * slices and no double-counted ones — recovery progress is always
      * tied to successfully written counters. (The mutex keeps the
      * transaction from straddling the sync path's markSynced writes.)
+     *
+     * Returns true when the pass needs no retry (window processed, or no
+     * work) and false when it must be retried later (UsageStats access
+     * currently unavailable — the pending row is deliberately kept).
      */
-    private suspend fun recoverPendingWindow() {
+    private suspend fun recoverPendingWindow(): Boolean {
         val db = AppDatabase.getInstance(this)
-        val state = db.backfillStateDao().get() ?: return
-        if (state.endMs <= 0L || state.endMs <= state.progressMs) return
+        val state = db.backfillStateDao().get() ?: return true
+        if (state.endMs <= 0L || state.endMs <= state.progressMs) return true
         // The window was threshold-vetted when it was registered; a retry
         // must replay every remaining progressMs < endMs — including a
         // short tail left behind by already-committed chunks, which the
@@ -814,6 +827,16 @@ class TrackerService : Service() {
             maxOf(state.progressMs, state.endMs - UsageBackfill.MAX_WINDOW_MS),
             state.endMs
         )
+
+        // Without the PACKAGE_USAGE_STATS app-op, queryEvents() silently
+        // returns empty data — treating that as a successful recovery would
+        // advance the frontier over an unrecovered window and permanently
+        // discard it. Keep the row pending; it retries on the next pass,
+        // stall, or restart, and recovers once access is granted again.
+        if (!hasUsageStatsAccess()) {
+            Log.w(TAG, "usage-stats access unavailable; recovery deferred")
+            return false
+        }
 
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
@@ -883,6 +906,36 @@ class TrackerService : Service() {
         }
         val gapSeconds = (window.endMs - window.startMs) / 1000
         Log.i(TAG, "Backfilled ${backfilledSeconds}s over a ${gapSeconds}s gap")
+        return true
+    }
+
+    /**
+     * Whether the system will actually serve UsageStats queries. Without
+     * the PACKAGE_USAGE_STATS app-op, queryEvents() silently returns empty
+     * data, which must never be mistaken for "nothing to recover" — the
+     * caller keeps the pending row and retries until access is granted.
+     */
+    private fun hasUsageStatsAccess(): Boolean = try {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        }
+        mode == AppOpsManager.MODE_ALLOWED
+    } catch (e: Exception) {
+        // Cannot tell (OEM quirk) — assume access so recovery behaves as
+        // before instead of deferring forever.
+        true
     }
 
     private suspend fun incrementCounter(
