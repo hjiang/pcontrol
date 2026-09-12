@@ -126,4 +126,33 @@ class DomainParserTest {
     fun `single colon pseudo ip returns null`() {
         assertNull(DomainParser.parse("cnn:breaking"))
     }
+
+    // --- colon/dot garbage without whitespace (Copilot review follow-up) ---
+
+    @Test
+    fun `multi colon title returns null`() {
+        assertNull(DomainParser.parse("cnn:breaking:news"))
+    }
+
+    @Test
+    fun `single colon with dot title returns null`() {
+        assertNull(DomainParser.parse("CNN:Breaking.news"))
+    }
+
+    @Test
+    fun `unterminated bracket is not an ip`() {
+        assertNull(DomainParser.parse("[::1"))
+    }
+
+    // --- IPv6 must keep working (validator must not be over-tight) ---
+
+    @Test
+    fun `multi group ipv6 still parses`() {
+        assertEquals("2001:db8::1", DomainParser.parse("http://[2001:db8::1]/"))
+    }
+
+    @Test
+    fun `link local ipv6 still parses`() {
+        assertEquals("fe80::1", DomainParser.parse("http://[fe80::1]/"))
+    }
 }

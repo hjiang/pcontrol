@@ -111,10 +111,16 @@ object DomainParser {
             val maybeHost = clean.substring(0, hostEnd)
                 .removeSurrounding("[", "]")
             // Reject title-like text: a real host cannot contain whitespace.
-            // Without this, a page title like "CNN: Breaking news" would be
-            // accepted as a host and parsed into a garbage domain.
+            // A colon is only legitimate here inside a syntactically valid IPv6
+            // literal — a port is parsed by URI, never this fallback — so any
+            // other colon-bearing or dot-bearing candidate is title-like
+            // garbage and must be rejected.
             val hasWhitespace = maybeHost.any { it.isWhitespace() }
-            if (!hasWhitespace && (maybeHost.contains('.') || maybeHost.contains(':'))) {
+            if (hasWhitespace) {
+                null
+            } else if (maybeHost.contains(':')) {
+                if (isValidIpv6(maybeHost)) maybeHost.lowercase() else null
+            } else if (maybeHost.contains('.')) {
                 maybeHost.lowercase()
             } else {
                 null
@@ -132,9 +138,45 @@ object DomainParser {
                 return true
             }
         }
-        // Try IPv6 (at least two colons; a single colon is not an IPv6
-        // address — title-like text such as "cnn:breaking" must not qualify)
-        if (h.count { it == ':' } >= 2) return true
-        return false
+        // Try IPv6: must be a syntactically valid literal, not merely contain
+        // two colons (title-like text such as "cnn:breaking:news" would pass a
+        // bare colon count and become a bogus web subject).
+        return isValidIpv6(h)
+    }
+
+    /**
+     * Minimal syntactic IPv6 validation: one to eight groups of 1-4 hex digits
+     * separated by single colons, with at most one "::" compression. Title-like
+     * text ("cnn:breaking:news", "CNN:Breaking.news", unterminated brackets)
+     * never matches, while real literals like "::1", "fe80::1" and
+     * "2001:db8::1" do.
+     */
+    private fun isValidIpv6(host: String): Boolean {
+        val h = host.removeSurrounding("[", "]")
+        if (h.isEmpty() || h.any { it.isWhitespace() }) return false
+
+        val doubleColon = h.contains("::")
+        if (doubleColon && h.count { it == ':' } < 2) return false
+        if (!doubleColon && h.count { it == ':' } != 7) return false
+
+        fun isHexGroup(g: String): Boolean =
+            g.length in 1..4 && g.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+
+        if (doubleColon) {
+            // The "::" compression must account for exactly two colons, so no
+            // empty single-colon groups (e.g. ":::") can slip through.
+            val left = h.substringBefore("::")
+            val right = h.substringAfter("::")
+            val compressed =
+                h.count { it == ':' } - left.count { it == ':' } - right.count { it == ':' }
+            if (compressed != 2) return false
+            val leftGroups = if (left.isEmpty()) emptyList() else left.split(':')
+            val rightGroups = if (right.isEmpty()) emptyList() else right.split(':')
+            if (leftGroups.any { !isHexGroup(it) } || rightGroups.any { !isHexGroup(it) }) return false
+            return leftGroups.size + rightGroups.size < 8
+        }
+
+        val groups = h.split(':')
+        return groups.size == 8 && groups.all { isHexGroup(it) }
     }
 }
