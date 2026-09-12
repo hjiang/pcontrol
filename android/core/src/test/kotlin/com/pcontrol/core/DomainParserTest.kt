@@ -155,4 +155,26 @@ class DomainParserTest {
     fun `link local ipv6 still parses`() {
         assertEquals("fe80::1", DomainParser.parse("http://[fe80::1]/"))
     }
+
+    // --- Copilot review round on PR #77 ---
+
+    @Test
+    fun `ipv4 embedded ipv6 tail parses`() {
+        assertEquals("::ffff:192.0.2.128", DomainParser.parse("http://[::ffff:192.0.2.128]/"))
+    }
+
+    @Test
+    fun `nested brackets are not an ip`() {
+        assertNull(DomainParser.parse("[[::1]]"))
+    }
+
+    @Test
+    fun `non ascii digits are not hex`() {
+        assertNull(DomainParser.parse("http://[١::1]/"))
+    }
+
+    @Test
+    fun `non ascii digits are not a full form ipv6`() {
+        assertNull(DomainParser.parse("http://[٠:٠:٠:٠:٠:٠:٠:٠]/"))
+    }
 }
