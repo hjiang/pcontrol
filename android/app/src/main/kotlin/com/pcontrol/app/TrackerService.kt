@@ -1125,12 +1125,17 @@ class TrackerService : Service() {
                     // [anchorLock] — the same monitor commitTick's cursor
                     // commit runs under — so a published window can never
                     // begin below a frontier live counting has passed.
+                    // Claimed-through proof = the active row's [progressMs,
+                    // endMs] (being recovered exactly once) and the queued
+                    // windows' ranges (durably journaled + queued). The LIVE
+                    // CURSOR is deliberately NOT claimed-through proof here:
+                    // after a detection advances the query anchor past its
+                    // staged debt, live ticks keep pushing the cursor forward
+                    // without ever sampling the debt's prefix, so clamping a
+                    // debt start to the cursor would erase an unpromoted
+                    // outage (see the owed clamp below).
                     val claimedThroughMs = maxOf(
                         row?.endMs ?: 0L,
-                        synchronized(anchorLock) {
-                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                                .getLong(KEY_TICK_CURSOR_MS, 0L)
-                        },
                         synchronized(queueLock) {
                             // Max over ALL queued ends (the queue is not
                             // guaranteed chronologically ordered — see
@@ -1187,18 +1192,45 @@ class TrackerService : Service() {
                                 } else {
                                     window
                                 }
-                                // Clamp the merged span against
-                                // [claimedThroughMs] (which includes the live
-                                // cursor): the staged debt may predate a tick
-                                // commit that landed after the detection
-                                // snapshot. merged.end >= window.end >
-                                // claimedThroughMs, so the clamped span is
-                                // never empty here.
-                                val owed = UsageBackfill.Window(
-                                    maxOf(merged.startMs, claimedThroughMs),
-                                    merged.endMs
-                                )
-                                if (writeDebt(owed)) {
+                                // Clamp the merged span ONLY against ranges
+                                // already claimed for recovery — the active
+                                // row's [progressMs, endMs] and overlapping
+                                // queued windows (both are recovered/claimed
+                                // exactly once). The LIVE CURSOR is excluded
+                                // on purpose: the detection advanced the query
+                                // anchor past the staged debt, so live ticks
+                                // push the cursor forward WITHOUT sampling the
+                                // debt's prefix — clamping to the cursor would
+                                // erase the unpromoted debt's start and
+                                // permanently lose the original outage. A
+                                // disjoint queued window (starting at/after
+                                // the span's end) must not subsume it either.
+                                var claimedStart = merged.startMs
+                                if (row != null && row.endMs > claimedStart) {
+                                    claimedStart = row.endMs
+                                }
+                                for (queued in pendingRecoveryWindows) {
+                                    if (queued.startMs < merged.endMs &&
+                                        queued.endMs > claimedStart
+                                    ) {
+                                        claimedStart = queued.endMs
+                                    }
+                                }
+                                val owed = if (claimedStart >= merged.endMs) {
+                                    // Fully covered by claimed ranges: keep
+                                    // the debt record as-is — promoteDebt
+                                    // resolves it against the covering state
+                                    // (the active-row branch drops it as
+                                    // covered; otherwise recovery no-ops over
+                                    // the covered range) without double
+                                    // counting.
+                                    null
+                                } else {
+                                    UsageBackfill.Window(claimedStart, merged.endMs)
+                                }
+                                if (owed == null) {
+                                    current
+                                } else if (writeDebt(owed)) {
                                     owed
                                 } else {
                                     // The durable record could not be
@@ -1697,6 +1729,13 @@ class TrackerService : Service() {
             backfillMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
                 val row = dao.get()
+                // Treat a zeroed row (endMs == 0 — clear() keeps the
+                // singleton with zeroes rather than deleting it) as ABSENT
+                // when evaluating/claiming the queue: otherwise a window
+                // queued behind a retirement could never be claimed
+                // (next.startMs <= endMs == 0 is false) and the
+                // retire/continue loop would spin without recovering it.
+                val activeRow = row?.takeIf { it.endMs > 0L }
                 // Peek the queue head and match the queue arm ONLY when the
                 // head is claimable (no row, or overlapping/contiguous with
                 // the active row). Matching on queue-non-empty alone would
@@ -1724,7 +1763,7 @@ class TrackerService : Service() {
                     // idempotent via the covered-check in the claim body, and
                     // a failed removal commit keeps the window queued for the
                     // next pass's retry.
-                    next != null && (row == null || next.startMs <= row.endMs) -> {
+                    next != null && (activeRow == null || next.startMs <= activeRow.endMs) -> {
                         // Claim the head only when it belongs with the ACTIVE
                         // row (no row, or overlapping/contiguous with it). A
                         // DISJOINT head (starting after the row's end) is left
@@ -1737,7 +1776,7 @@ class TrackerService : Service() {
                         // (cursor-gated); after the clear, the next loop pass
                         // claims the queued window as a fresh row with its
                         // own start as the progress frontier.
-                        if (next != null && (row == null || next.startMs <= row.endMs)) {
+                        if (next != null && (activeRow == null || next.startMs <= activeRow.endMs)) {
                             // ORDER: durable Room install FIRST, then the
                             // journal removal (commit()), then the in-memory
                             // dequeue. Removing the journal entry before the
@@ -1748,22 +1787,22 @@ class TrackerService : Service() {
                             // re-ingestion is idempotent via the covered-check
                             // below, and a failed removal commit keeps the
                             // window queued for the next pass's retry.
-                            if (row == null) {
+                            if (activeRow == null) {
                                 dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
                             } else {
                                 // Overlapping or contiguous: EXTEND the active
                                 // row — preserving progressMs keeps the row's
                                 // unprocessed prefix owed, and the claimable
                                 // check above guarantees next.startMs <=
-                                // row.endMs, so the raise cannot swallow any
-                                // live-counted gap. A fully covered entry
+                                // activeRow.endMs, so the raise cannot swallow
+                                // any live-counted gap. A fully covered entry
                                 // (endMs <= progressMs) is an unchanged replace
                                 // here and is simply removed from the queue.
                                 dao.set(
                                     BackfillStateEntity(
-                                        row.id,
-                                        row.progressMs,
-                                        maxOf(row.endMs, next.endMs)
+                                        activeRow.id,
+                                        activeRow.progressMs,
+                                        maxOf(activeRow.endMs, next.endMs)
                                     )
                                 )
                             }
@@ -1796,7 +1835,7 @@ class TrackerService : Service() {
                     // finished row does NOT count as new work: it still has
                     // endMs > 0 but no remaining work (progress == end) —
                     // treating it as work would hot-loop here forever.
-                    row != null && row.endMs > 0L && row.progressMs < row.endMs -> Unit
+                    activeRow != null && activeRow.progressMs < activeRow.endMs -> Unit
                     else -> {
                         // Nothing owed by the row. Retire — but only once the
                         // live tick cursor has caught up with the recovered
@@ -1926,7 +1965,6 @@ class TrackerService : Service() {
                             // stale cursor re-plan the merged window.
                             if (pinned) {
                                 dao.clear()
-                                backfillInFlight.set(false)
                                 retire = true
                             } else {
                                 Log.w(TAG, "cursor pin commit failed; retire retried")
@@ -1945,6 +1983,13 @@ class TrackerService : Service() {
                     // left. Each remaining cycle performs real Room work
                     // (claim + replay), so this converges instead of spinning.
                     if (synchronized(queueLock) { pendingRecoveryWindows.isEmpty() }) {
+                        // Release the single-flight guard ONLY once the queue
+                        // is fully drained: with windows left queued (a
+                        // disjoint head left queued above), the next pass
+                        // claims each as a fresh row under the SAME guard —
+                        // releasing now would let a second worker start
+                        // concurrently.
+                        backfillInFlight.set(false)
                         return
                     }
                 }
