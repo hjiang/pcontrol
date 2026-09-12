@@ -306,6 +306,17 @@ class TrackerService : Service() {
     private val syncInFlight = AtomicBoolean(false)
     private val updateCheckInFlight = AtomicBoolean(false)
     private val backfillInFlight = AtomicBoolean(false)
+
+    // Single-flight guard for the worker's durable journal flush: the retry
+    // loop below can spin for a long time under persistent storage failure,
+    // and it runs BEFORE the recovery single-flight CAS — without its own
+    // guard, every stall detection would stack ANOTHER unbounded retrying
+    // coroutine. At most one flusher retries; concurrent workers skip the
+    // flush and proceed (the active flusher is upgrading the same entries,
+    // and any later successful journalRemove commit() implies all prior
+    // apply()ed appends reached disk — SharedPreferences commit writes the
+    // full current memory state and waits on queued writes).
+    private val journalFlushInFlight = AtomicBoolean(false)
     private var ticksWithoutDomain = 0
 
     // Browser foreground session tracking
@@ -985,12 +996,26 @@ class TrackerService : Service() {
                 // which removes journal entries: a removal committed while
                 // the append it covers never reached disk, followed by a
                 // process death before the claim's durable Room install,
-                // would lose the gap. Bounded 2 s retry on the worker (never
-                // the tick); a persistently failing disk keeps retrying
-                // instead of silently proceeding with an at-risk journal.
-                while (!journalPersist()) {
-                    Log.w(TAG, "queue journal flush failed; retrying")
-                    delay(REGISTRATION_RETRY_BACKOFF_MS)
+                // would lose the gap. The retry runs under its own
+                // single-flight guard ([journalFlushInFlight]): this loop can
+                // spin for a long time under a persistently failing disk, and
+                // it precedes the recovery single-flight CAS, so an unguarded
+                // loop would let every stall detection stack another
+                // unbounded retrying coroutine. A worker that finds the flag
+                // held skips the flush and proceeds — the active flusher is
+                // upgrading the same entries, and any later successful
+                // journalRemove commit() implies all prior apply()ed appends
+                // reached disk, so the claim can never remove an entry that
+                // was never durable.
+                if (journalFlushInFlight.compareAndSet(false, true)) {
+                    try {
+                        while (!journalPersist()) {
+                            Log.w(TAG, "queue journal flush failed; retrying")
+                            delay(REGISTRATION_RETRY_BACKOFF_MS)
+                        }
+                    } finally {
+                        journalFlushInFlight.set(false)
+                    }
                 }
                 backfillMutex.withLock {
                     val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
@@ -1245,16 +1270,30 @@ class TrackerService : Service() {
             if (current == null || current != debt) true else clearPendingDebt()
         }
 
-    /** Appends [window] to the durable disjoint-gap journal (apply() —
-     *  non-blocking on the tick loop). See the key docs: the in-memory
-     *  queue alone would lose a queued disjoint gap if the process died
-     *  before the queue drained, because the advancing cursor prevents
-     *  any later detection from re-planning that range. Appending (never
-     *  overwriting) keeps every not-yet-installed range; entries are
-     *  removed only by [journalRemove] after their durable Room install.
-     *  Callers hold [queueLock] so concurrent read/modify/writes of the
-     *  journal string serialize. */
-    private fun journalAppend(window: UsageBackfill.Window) {
+    /** Appends [window] to the durable disjoint-gap journal. See the key
+     *  docs: the in-memory queue alone would lose a queued disjoint gap if
+     *  the process died before the queue drained, because the advancing
+     *  cursor prevents any later detection from re-planning that range.
+     *  Appending (never overwriting) keeps every not-yet-installed range;
+     *  entries are removed only by [journalRemove] after their durable
+     *  Room install. Callers hold [queueLock] so concurrent
+     *  read/modify/writes of the journal string serialize.
+     *
+     *  With [durable] = false (tick-side detection path) the append uses
+     *  apply() — non-blocking on the 10-second loop; the recovery worker
+     *  upgrades it via [journalPersist]. With [durable] = true (worker
+     *  paths that CLEAR a durable record right after queueing — see
+     *  [promoteDebt]) the append commits synchronously and the result is
+     *  returned so the caller can refuse to clear the record until the
+     *  entry is on disk. Returns whether the entry is safely journaled
+     *  (true for dedupe hits and apply() appends: apply()ed values live in
+     *  the prefs memory state, and a later successful commit writes that
+     *  full state and waits on queued writes, so a durable removal always
+     *  implies its append reached disk). */
+    private fun journalAppend(
+        window: UsageBackfill.Window,
+        durable: Boolean = false
+    ): Boolean {
         synchronized(queueLock) {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             val existing = prefs.getString(KEY_BF_QUEUE_JOURNAL, null)
@@ -1263,13 +1302,17 @@ class TrackerService : Service() {
             // prolonged Room failure) re-appends the SAME disjoint window —
             // skipping identical entries keeps the journal bounded. Distinct
             // ranges still append (they are genuinely separate gaps).
-            if (existing?.split('|')?.any { it == entry } == true) return
-            prefs.edit()
+            if (existing?.split('|')?.any { it == entry } == true) return true
+            val editor = prefs.edit()
                 .putString(
                     KEY_BF_QUEUE_JOURNAL,
                     if (existing.isNullOrEmpty()) entry else "$existing|$entry"
                 )
-                .apply()
+            if (!durable) {
+                editor.apply()
+                return true
+            }
+            return editor.commit()
         }
     }
 
@@ -1351,24 +1394,34 @@ class TrackerService : Service() {
      *  of it — two detections with a stale frontier would otherwise enqueue
      *  overlapping ranges — nor (for the detector path) the staged debt.
      *  Fully-subsumed requests are dropped. Safe from the tick coroutine:
-     *  the queue accesses take [queueLock] (never held across suspension). */
-    private fun enqueueClamped(window: UsageBackfill.Window?, owedThroughMs: Long) {
+     *  the queue accesses take [queueLock] (never held across suspension).
+     *  With [durable] = true the journal write commits synchronously and
+     *  the return value reports whether the queued window is durably
+     *  journaled — a worker caller that is about to CLEAR the durable
+     *  record this window came from (see [promoteDebt]) must not proceed
+     *  on false. Returns true whenever nothing needed queueing. */
+    private fun enqueueClamped(
+        window: UsageBackfill.Window?,
+        owedThroughMs: Long,
+        durable: Boolean = false
+    ): Boolean {
         synchronized(queueLock) {
-            var w = window ?: return
+            var w = window ?: return true
             var owed = owedThroughMs
             pendingRecoveryWindows.lastOrNull()?.let { owed = maxOf(owed, it.endMs) }
             if (owed > w.startMs) {
                 w = UsageBackfill.Window(owed, maxOf(w.endMs, owed))
             }
-            if (w.endMs <= w.startMs) return
+            if (w.endMs <= w.startMs) return true
             // Journal the ACTUAL (post-clamp) window, not the caller's
             // request: journalRemove deletes exact start:end strings, so a
             // journaled pre-clamp range whose clamped copy was processed and
             // retired would survive as a stale entry and replay on restart
             // (double-count). journalAppend dedups exact entries, so
             // re-enqueueing an already-journaled window is a no-op.
-            journalAppend(w)
+            if (!journalAppend(w, durable)) return false
             pendingRecoveryWindows.addLast(w)
+            return true
         }
     }
 
@@ -1428,11 +1481,23 @@ class TrackerService : Service() {
                         // in-memory queue alone would lose it to a crash
                         // between the clear and the Room claim, and the live
                         // cursor may already be past it, so no later detection
-                        // could re-plan it. The claim step removes the journal
-                        // entry only after the durable Room install (and drops
-                        // a copy the row already covers), so the journal and
+                        // could re-plan it. Worker-side, the journal write is
+                        // a synchronous commit() — an apply() here would let
+                        // a process death between this enqueue and the next
+                        // journalPersist lose the tail from BOTH prefs and
+                        // the (already-advancing) cursor while the debt clear
+                        // below removed its only durable record. On a failed
+                        // commit the debt is kept untouched and the whole
+                        // promotion retries on the next pass: the clear can
+                        // never drop a record whose replacement is not yet
+                        // on disk. The claim step removes the journal entry
+                        // only after the durable Room install (and drops a
+                        // copy the row already covers), so the journal and
                         // the queue can never double-replay this range.
-                        enqueueClamped(tail, row.endMs)
+                        if (!enqueueClamped(tail, row.endMs, durable = true)) {
+                            Log.w(TAG, "tail journal commit failed; promotion retried")
+                            return
+                        }
                     }
                     // Conditional: the Room write above suspended, and a
                     // detector may have staged a NEWER debt meanwhile —
