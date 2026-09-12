@@ -109,6 +109,19 @@ class TrackerService : Service() {
      *  [lastUsageEventQueryTime] between the tick coroutine and the
      *  recovery worker's retry re-entry. Non-suspending, ns-scale. */
     private val anchorLock = Any()
+
+    /** Monotonic anchor update under [anchorLock]: the live-query anchor
+     *  only ever moves forward, whichever coroutine writes it (the tick,
+     *  a detection, the recovery worker's retry re-entry, or the
+     *  [startTicks] seed — which can re-enter via onStartCommand while the
+     *  previous tick job is still finishing or a worker is running). A
+     *  plain assignment here would let one writer rewind another's newer
+     *  value, making the next tick re-query an already-accounted range. */
+    private fun advanceAnchorTo(timeMs: Long) {
+        synchronized(anchorLock) {
+            lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: timeMs, timeMs)
+        }
+    }
     private var currentForegroundPkg: String? = null
 
     // Serializes the backfill bookkeeping — pending-row registration and
@@ -121,8 +134,17 @@ class TrackerService : Service() {
 
     // Guards the detection-debt preference operations (stage/merge, read,
     // clear) so a detector's staging is atomic against the worker's
-    // promotion and clearing. All operations under it are non-suspending
-    // preference accesses, so the tick never blocks on storage here.
+    // promotion and clearing. The worker's writeDebt/clearPendingDebt use
+    // commit() (blocking disk I/O) under this lock by DESIGN: the commit
+    // must be atomic with the read it was computed from — a
+    // revalidate-after-commit protocol would miss a detector write that
+    // lands between the read and the commit, reintroducing the stale-
+    // overwrite data-loss bug. The lock is only contended on the RARE
+    // detection path (service start / ≥2-minute stall staging, which is
+    // fire-and-forget work on its own coroutine — the 10-second
+    // attribution path never takes it: commitTick uses [anchorLock]); a
+    // concurrent detection therefore waits at most one flash commit
+    // (milliseconds), never on Room I/O (which stays outside the lock).
     private val debtLock = Any()
 
     // Gap windows detected while a recovery job was already running (the
@@ -230,13 +252,19 @@ class TrackerService : Service() {
             // seeded anchor sits in the future, the guard keeps live
             // queries paused until the clock catches up, and the first tick
             // cannot bootstrap [now-60s, now] over wall-clock the cursor
-            // already covers. (Fresh install: cursor 0 → null → unchanged
+            // already covers. (Fresh install: cursor 0 → unchanged
             // 60-second bootstrap; normal restart: the first query replays
             // transitions since the last commit, ending on the correct
             // current foreground.)
-            lastUsageEventQueryTime = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            //
+            // The seed goes through the monotonic helper under [anchorLock]:
+            // onStartCommand can re-enter while the previous tick job is
+            // still finishing its last commitTick or while a recovery worker
+            // is running, and a plain assignment would rewind the in-memory
+            // anchor to the older persisted value.
+            val persistedCursor = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getLong(KEY_TICK_CURSOR_MS, 0L)
-                .takeIf { it > 0L }
+            if (persistedCursor > 0L) advanceAnchorTo(persistedCursor)
             lastTickAtMs = 0L
 
             // The process may have just been resurrected after hours or days
@@ -244,6 +272,41 @@ class TrackerService : Service() {
             // system UsageStats recorded while we were gone — on its own
             // coroutine: a multi-day replay must never stall the tick loop.
             launchBackfill(System.currentTimeMillis())
+
+            // Seed the current-foreground STATE for the first live ticks.
+            // The anchor advance keeps the first tick's query disjoint from
+            // the recovery window, so the transitions inside the recovered
+            // range are not replayed into the foreground state machine;
+            // without this seed, a restart whose accessibility probe is
+            // unavailable and that is not followed by a new transition would
+            // record no live usage until the next app switch. STATE-ONLY:
+            // nothing is credited from this query (the tick credit is the
+            // flat per-tick sample), so its overlap with the recovered range
+            // is the same documented ≤1-tick residual as the startup-race
+            // coordination. One bounded query per service start.
+            if (currentForegroundPkg == null) {
+                try {
+                    lastUsageEventQueryTime?.let { anchor ->
+                        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                        val seedEvents = mutableListOf<AppEvent>()
+                        val ev = android.app.usage.UsageEvents.Event()
+                        val query = usm.queryEvents(maxOf(0L, anchor - 300_000L), anchor)
+                        while (query.hasNextEvent()) {
+                            query.getNextEvent(ev)
+                            val pkg = ev.packageName ?: continue
+                            when (ev.eventType) {
+                                AppEvent.ACTIVITY_RESUMED,
+                                AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
+                            }
+                        }
+                        currentForegroundPkg = AppUsagePoller
+                            .updateForegroundPackage(null, seedEvents)
+                            ?.takeUnless { it == packageName }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "foreground state seed failed", e)
+                }
+            }
 
             val updateState = UpdateState(this@TrackerService)
 
@@ -587,22 +650,27 @@ class TrackerService : Service() {
      * manual clock change) can never rewind the frontier over
      * already-counted usage — live queries idle (the inverted-window guard
      * in [onTick] bootstraps a fresh window) until the clock catches up.
-     * This method is the cursor's only writer (the tick coroutine), so no
-     * lock is needed here; the backfill bookkeeping has its own mutex that
-     * this path never touches, keeping database I/O off the 10-second loop.
+     * Both updates run under [anchorLock]: commitTick is the tick
+     * coroutine's writer, but onStartCommand can start a replacement tick
+     * job while the cancelled one is still finishing its last commit, and
+     * two unsynchronized read/modify/apply sequences could then apply out
+     * of order, letting the OLDER endTime become the persisted frontier
+     * (replay/duplicate backfill after a restart). apply() only updates
+     * the in-memory map synchronously and queues the disk write, so the
+     * monitor is held for microseconds.
      */
     private suspend fun commitTick(foregroundPkg: String?, endTime: Long) {
         currentForegroundPkg = foregroundPkg
         synchronized(anchorLock) {
             lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: endTime, endTime)
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            prefs.edit()
+                .putLong(
+                    KEY_TICK_CURSOR_MS,
+                    maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), endTime)
+                )
+                .apply()
         }
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        prefs.edit()
-            .putLong(
-                KEY_TICK_CURSOR_MS,
-                maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), endTime)
-            )
-            .apply()
     }
 
     /**
@@ -675,9 +743,7 @@ class TrackerService : Service() {
             // and this function re-enters from the worker's retry path, so
             // the monotonic max runs under [anchorLock] — the
             // read/modify/write must not interleave and rewind the anchor.
-            synchronized(anchorLock) {
-                lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: nowMs, nowMs)
-            }
+            advanceAnchorTo(nowMs)
         }
         scope.launch {
             var ownsGuard = false
@@ -746,10 +812,19 @@ class TrackerService : Service() {
                     // always implies debt != null here (the detection side
                     // stages the debt before this coroutine runs), so the
                     // debt check subsumes it.
+                    // A COMPLETED row whose end is ahead of the persisted
+                    // cursor still counts as work: it is the recovered-
+                    // through marker, and a worker must retire it once the
+                    // live cursor catches up (otherwise a restart leaves the
+                    // marker stranded and live queries resume from inside
+                    // the recovered window's documentation trail forever).
                     val row = dao.get()
+                    val cursor = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getLong(KEY_TICK_CURSOR_MS, 0L)
                     val hasDurableWork = debt != null ||
                         synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                        (row != null && row.endMs > 0L && row.progressMs < row.endMs)
+                        (row != null && row.endMs > 0L &&
+                            (row.progressMs < row.endMs || cursor < row.endMs))
                     if (hasDurableWork) {
                         ownsGuard = backfillInFlight.compareAndSet(false, true)
                     }
@@ -1079,15 +1154,22 @@ class TrackerService : Service() {
                                     ),
                                     recoveredEnd
                                 )
-                                // A failed clear keeps the completed row
-                                // (retryLater): retiring with the debt still
-                                // persisted would let a restart re-promote the
-                                // FULL debt range — re-counting the part the
-                                // row already recovered. The next pass retries
-                                // the clear (the re-queued tail clamps to a
-                                // no-op once already recovered, so nothing is
-                                // replayed twice in the meantime).
-                                if (!clearPendingDebt()) retryLater = true
+                                // The queued tail needs ANOTHER pass of THIS
+                                // worker: retiring now would leave it in the
+                                // in-memory queue with no runner, and a
+                                // continuously healthy service may never
+                                // detect again. A failed clear additionally
+                                // keeps the completed row as the retry marker
+                                // (retiring with the debt still persisted
+                                // would let a restart re-promote the FULL
+                                // debt range and re-count the part the row
+                                // already recovered; the re-queued tail
+                                // clamps to a no-op once already recovered,
+                                // so nothing replays twice in the meantime).
+                                retryLater = true
+                                if (!clearPendingDebt()) {
+                                    Log.w(TAG, "detection debt clear not persisted; retire retried")
+                                }
                             } else {
                                 // No debt, or one fully covered by the
                                 // recovered frontier (clearable: the row
@@ -1204,6 +1286,18 @@ class TrackerService : Service() {
                 dao.advanceProgress(chunk.window.endMs)
                 continue
             }
+            // The counter mutex is taken PER CHUNK (acquired and released
+            // once per ~1 h slice set inside the loop below), so a tick
+            // arriving mid-recovery waits at most ONE chunk's transaction —
+            // a handful of read+upsert row pairs, tens of milliseconds
+            // against the 10-second tick interval — not the whole window.
+            // Holding it across the transaction is required: the chunk's
+            // counter merges and its advanceProgress must commit atomically
+            // (crash ⇒ both roll back ⇒ no lost/double-counted slices), and
+            // the same mutex serializes against the sync path's markSynced
+            // writes (a merge straddling markSynced would resend already-
+            // uploaded seconds). Decoupling them would reintroduce that
+            // lost-update class.
             usageCounterMutex.withLock {
                 db.withTransaction {
                     for ((slice, label) in labelled) {
