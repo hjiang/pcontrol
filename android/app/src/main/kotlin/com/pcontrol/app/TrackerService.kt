@@ -470,14 +470,27 @@ class TrackerService : Service() {
             // service stays alive but performs no tracking and no
             // recovery. Log and continue instead; the backfill worker and
             // the per-tick handlers retry the database on their own.
-            try {
-                val markerRow = AppDatabase.getInstance(this@TrackerService)
-                    .backfillStateDao().get()
-                if (markerRow != null && markerRow.endMs > 0L) {
-                    advanceAnchorTo(maxOf(markerRow.progressMs, markerRow.endMs))
+            // Coordinate the anchor with the recovered-through marker — OFF
+            // the tick coroutine: opening the Room singleton here can run the
+            // migration and SQLite I/O, delaying the first heartbeat against
+            // the repo convention that Room side work stays off the 10-second
+            // loop. The advance is monotonic, so a live tick that queries
+            // before this lands simply seeds from the persisted cursor; the
+            // marker still applies to every later query, and the recovery
+            // worker's claimedThrough clamp keeps its replay disjoint from
+            // live attribution regardless of read timing. A failure is
+            // logged and skipped — the backfill worker retries the database
+            // on its own schedule.
+            scope.launch {
+                try {
+                    val markerRow = AppDatabase.getInstance(this@TrackerService)
+                        .backfillStateDao().get()
+                    if (markerRow != null && markerRow.endMs > 0L) {
+                        advanceAnchorTo(maxOf(markerRow.progressMs, markerRow.endMs))
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "startup recovery-marker read failed; continuing", e)
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "startup recovery-marker read failed; continuing", e)
             }
             // Re-ingest a durably journaled disjoint gap (see the key docs):
             // the journal exists precisely for this restart path — the
@@ -1684,6 +1697,20 @@ class TrackerService : Service() {
             backfillMutex.withLock {
                 val dao = AppDatabase.getInstance(this).backfillStateDao()
                 val row = dao.get()
+                // Peek the queue head and match the queue arm ONLY when the
+                // head is claimable (no row, or overlapping/contiguous with
+                // the active row). Matching on queue-non-empty alone would
+                // let a DISJOINT head (starting after the row's end) fall
+                // through with neither `retryLater` nor `retire` set — an
+                // immediate infinite repeat that livelocks the worker, blocks
+                // the active row's retirement forever, and starves the queued
+                // window. A disjoint head instead waits while the row keeps
+                // recovering (the row-owes arm below) or retires (the else
+                // arm, cursor-gated); after the clear the next pass claims it
+                // as a fresh row with its own progress frontier.
+                val next = synchronized(queueLock) {
+                    pendingRecoveryWindows.firstOrNull()
+                }
                 when {
                     // The pass could not run (UsageStats access currently
                     // unavailable): leave the active row AND the queue exactly
@@ -1691,15 +1718,13 @@ class TrackerService : Service() {
                     // active row's unrecovered remainder and lose it. Retry
                     // after a backoff.
                     !handled -> Unit
-                    synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } -> {
-                        // Peek first and remove only after the durable write
-                        // succeeded: a transient Room failure then leaves the
-                        // window queued for the retry instead of losing it.
-                        // Queue accesses take [queueLock], never held across
-                        // the suspending Room call.
-                        val next = synchronized(queueLock) {
-                            pendingRecoveryWindows.firstOrNull()
-                        }
+                    // Claim the head only when it belongs with the ACTIVE row
+                    // (no row, or overlapping/contiguous with it). A stale
+                    // journal entry is harmless here: re-ingestion is
+                    // idempotent via the covered-check in the claim body, and
+                    // a failed removal commit keeps the window queued for the
+                    // next pass's retry.
+                    next != null && (row == null || next.startMs <= row.endMs) -> {
                         // Claim the head only when it belongs with the ACTIVE
                         // row (no row, or overlapping/contiguous with it). A
                         // DISJOINT head (starting after the row's end) is left
