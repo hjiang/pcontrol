@@ -37,6 +37,11 @@ object UsageBackfill {
      * was foreground when tracking stopped seeds the replay (the leading
      * interval [window.startMs, first in-window transition) is otherwise
      * unattributable). Phantom attribution is bounded by the silence cap.
+     *
+     * This is the BASE bound: the recovery replay extends its seed lookback
+     * to cover the full requested window span when that is larger, so the
+     * foreground state at the window start is reconstructable for any
+     * window [plan] can produce (see TrackerService.recoverPendingWindow).
      */
     const val SEED_LOOKBACK_MS: Long = 6 * 60 * 60_000L
 

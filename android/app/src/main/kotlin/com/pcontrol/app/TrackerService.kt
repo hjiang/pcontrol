@@ -947,35 +947,59 @@ class TrackerService : Service() {
         val window = planWindow(frontierMs, nowMs, minStartMs)
         if (window != null) {
             synchronized(debtLock) {
-                val staged = pendingDebt()
-                when {
-                    // Merge an overlapping staged debt (only possible when no
-                    // live tick has committed since it was staged — the
-                    // frontier would sit past its end otherwise — so the
-                    // merged span is entirely uncounted).
-                    staged != null &&
-                        window.startMs < staged.endMs && window.endMs > staged.startMs ->
-                        stageDebt(
-                            mergedWindow(
-                                UsageBackfill.Window(staged.startMs, staged.endMs),
-                                window
-                            )
+                // REVALIDATE against the live cursor inside the staging
+                // critical section: this function re-enters from the worker's
+                // retry path, which runs CONCURRENTLY with live ticks — a
+                // tick committing between the snapshot above and this
+                // staging would otherwise leave the recovery window
+                // beginning at the stale frontier, replaying (double-
+                // counting) the stretch the tick already counted.
+                // commitTick holds [anchorLock] across its own cursor
+                // read/modify/apply, so the re-read cannot tear; the window
+                // start moves up to the latest committed frontier and a
+                // fully-counted window stages nothing.
+                val liveFrontier = synchronized(anchorLock) {
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getLong(KEY_TICK_CURSOR_MS, 0L)
+                }
+                val effective = window.takeIf { liveFrontier < it.endMs }
+                    ?.let {
+                        UsageBackfill.Window(
+                            maxOf(window.startMs, liveFrontier),
+                            window.endMs
                         )
-                    // DISJOINT staged debt: keep it — the debt record is a
-                    // singleton, and staging over it would discard a gap the
-                    // worker has not promoted yet (a second detection can
-                    // outrun promotion when Room is slow or failing). The new
-                    // gap rides the in-memory queue AND the durable journal:
-                    // the journal matters because once later ticks advance
-                    // the cursor past the queued range, no later detection
-                    // can re-plan it — without the journal a process death
-                    // before the queue drained would lose the gap
-                    // permanently.
-                    staged != null -> synchronized(queueLock) {
-                        enqueueClamped(window, staged.endMs)
                     }
-                    // Nothing staged: the debt slot is free.
-                    else -> stageDebt(window)
+                if (effective != null) {
+                    val staged = pendingDebt()
+                    when {
+                        // Merge an overlapping staged debt (only possible when no
+                        // live tick has committed since it was staged — the
+                        // frontier would sit past its end otherwise — so the
+                        // merged span is entirely uncounted).
+                        staged != null &&
+                            effective.startMs < staged.endMs && effective.endMs > staged.startMs ->
+                            stageDebt(
+                                mergedWindow(
+                                    UsageBackfill.Window(staged.startMs, staged.endMs),
+                                    effective
+                                )
+                            )
+                        // DISJOINT staged debt: keep it — the debt record is a
+                        // singleton, and staging over it would discard a gap the
+                        // worker has not promoted yet (a second detection can
+                        // outrun promotion when Room is slow or failing). The new
+                        // gap rides the in-memory queue AND the durable journal:
+                        // the journal matters because once later ticks advance
+                        // the cursor past the queued range, no later detection
+                        // can re-plan it — without the journal a process death
+                        // before the queue drained would lose the gap
+                        // permanently.
+                        staged != null -> synchronized(queueLock) {
+                            enqueueClamped(effective, staged.endMs)
+                        }
+                        // Nothing staged: the debt slot is free.
+                        else -> stageDebt(effective)
+                    }
                 }
             }
             // Coordinate the first live query with the recovery end. The
@@ -1031,8 +1055,20 @@ class TrackerService : Service() {
                     // would then have to unwind. A fully-claimed window
                     // publishes nothing.
                     val row = dao.get()
+                    // The LIVE cursor is a claimed-through mark too: this
+                    // worker can run concurrently with live ticks (the retry
+                    // re-entry path), and the detection-side frontier
+                    // snapshot may be stale by the time the worker publishes.
+                    // The clamps below therefore always take the cursor under
+                    // [anchorLock] — the same monitor commitTick's cursor
+                    // commit runs under — so a published window can never
+                    // begin below a frontier live counting has passed.
                     val claimedThroughMs = maxOf(
                         row?.endMs ?: 0L,
+                        synchronized(anchorLock) {
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .getLong(KEY_TICK_CURSOR_MS, 0L)
+                        },
                         synchronized(queueLock) {
                             pendingRecoveryWindows.lastOrNull()?.endMs ?: 0L
                         }
@@ -1076,7 +1112,7 @@ class TrackerService : Service() {
                             // tick has committed in between, so it is
                             // entirely uncounted.
                             else -> {
-                                val owed = if (current != null) {
+                                val merged = if (current != null) {
                                     mergedWindow(
                                         UsageBackfill.Window(current.startMs, current.endMs),
                                         window
@@ -1084,6 +1120,17 @@ class TrackerService : Service() {
                                 } else {
                                     window
                                 }
+                                // Clamp the merged span against
+                                // [claimedThroughMs] (which includes the live
+                                // cursor): the staged debt may predate a tick
+                                // commit that landed after the detection
+                                // snapshot. merged.end >= window.end >
+                                // claimedThroughMs, so the clamped span is
+                                // never empty here.
+                                val owed = UsageBackfill.Window(
+                                    maxOf(merged.startMs, claimedThroughMs),
+                                    merged.endMs
+                                )
                                 if (writeDebt(owed)) {
                                     owed
                                 } else {
@@ -1098,7 +1145,28 @@ class TrackerService : Service() {
                                 }
                             }
                         } else {
-                            current
+                            // No planned window. The staged debt can still be
+                            // stale — fully live-counted since it was staged
+                            // (the cursor only advances over counted or
+                            // separately-staged stretches) — so drop it
+                            // instead of letting [promoteDebt] install it as
+                            // a replay of already-counted time. Atomic under
+                            // [debtLock]: a detector staging concurrently
+                            // wins via the unchanged-check.
+                            if (current != null) {
+                                val liveCursorMs = synchronized(anchorLock) {
+                                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                        .getLong(KEY_TICK_CURSOR_MS, 0L)
+                                }
+                                if (current.endMs <= liveCursorMs) {
+                                    clearPendingDebtIfUnchanged(current)
+                                    null
+                                } else {
+                                    current
+                                }
+                            } else {
+                                null
+                            }
                         }
                     }
                     // Start/retain the worker based on ACTUAL persisted or
@@ -1629,8 +1697,15 @@ class TrackerService : Service() {
                         // it can never be read and then wiped by a separate,
                         // later clear.
                         val recoveredEnd = row?.endMs ?: 0L
-                        val frontier = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                            .getLong(KEY_TICK_CURSOR_MS, 0L)
+                        // Consistent read under [anchorLock] — the writer's
+                        // monitor. A stale read here is only ever conservative
+                        // (retire retried), but taking the same lock as
+                        // commitTick keeps this second reader in step with the
+                        // durable cursor protocol.
+                        val frontier = synchronized(anchorLock) {
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .getLong(KEY_TICK_CURSOR_MS, 0L)
+                        }
                         val extending = synchronized(debtLock) { pendingDebt() }
                             ?.takeIf { it.endMs > recoveredEnd }
                         if (extending != null) {
@@ -1805,12 +1880,25 @@ class TrackerService : Service() {
 
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        // Recompute from before the progress frontier (with the usual seed
-        // lookback) so the silence-cap clock keeps its true interval starts:
-        // an eventless interval whose allowance was consumed by already-
-        // committed chunks must not receive a fresh one after a retry. Only
-        // time at/after the durable progress frontier is counted.
-        val replayFrom = maxOf(0L, window.startMs - UsageBackfill.SEED_LOOKBACK_MS)
+        // Recompute from before the progress frontier so the silence-cap
+        // clock keeps its true interval starts: an eventless interval whose
+        // allowance was consumed by already-committed chunks must not
+        // receive a fresh one after a retry. Only time at/after the durable
+        // progress frontier is counted. The seed lookback must also cover
+        // the REQUESTED WINDOW: a plan window can span MAX_WINDOW (7 days),
+        // and a fixed 6-hour lookback would miss a foreground state that
+        // predates it — an app resumed earlier and still foreground at the
+        // window start would replay with foreground = null. The lookback
+        // therefore covers the window span whenever that is larger; the
+        // wider query runs only on the recovery worker and only for
+        // multi-day windows (short recoveries keep the 6-hour bound).
+        val replayFrom = maxOf(
+            0L,
+            window.startMs - maxOf(
+                UsageBackfill.SEED_LOOKBACK_MS,
+                window.endMs - window.startMs
+            )
+        )
         val usageEvents = usageStatsManager.queryEvents(
             maxOf(0L, replayFrom),
             window.endMs
