@@ -64,4 +64,29 @@ class WebBlockStrikesTest {
         assertFalse(strikes.shouldFallback("youtube.com", "2026-07-03"))
         assertFalse(strikes.shouldFallback("tiktok.com", "2026-07-03"))
     }
+
+    // --- shouldReset: the URL-bar subject-change guard ---
+    // A null URL-bar read (e.g. a settled page title on the Xiaomi browser)
+    // must never reset the cached real domain's strikes, or the 2-strikes
+    // fallback can never engage on that device.
+
+    @Test
+    fun `null new domain never resets old domain strikes`() {
+        assertFalse(WebBlockStrikes.shouldReset(oldDomain = "github.com", newDomain = null))
+    }
+
+    @Test
+    fun `same domain does not reset`() {
+        assertFalse(WebBlockStrikes.shouldReset(oldDomain = "github.com", newDomain = "github.com"))
+    }
+
+    @Test
+    fun `different real domain resets old subject`() {
+        assertTrue(WebBlockStrikes.shouldReset(oldDomain = "github.com", newDomain = "youtube.com"))
+    }
+
+    @Test
+    fun `first real domain capture resets stale subject`() {
+        assertTrue(WebBlockStrikes.shouldReset(oldDomain = null, newDomain = "youtube.com"))
+    }
 }

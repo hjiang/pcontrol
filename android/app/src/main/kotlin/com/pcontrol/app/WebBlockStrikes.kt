@@ -61,4 +61,16 @@ class WebBlockStrikes {
     fun resetAll() {
         strikes.clear()
     }
+
+    companion object {
+        /**
+         * Whether the old subject's strikes must be reset on a URL-bar
+         * transition. Strikes reset only when the subject genuinely changes to
+         * a different real domain. A null URL-bar read (a settled page title
+         * on the Xiaomi browser, or mid-typing) must NOT reset the cached
+         * domain's strikes, or the 2-strikes fallback can never engage.
+         */
+        fun shouldReset(oldDomain: String?, newDomain: String?): Boolean =
+            newDomain != null && newDomain != oldDomain
+    }
 }

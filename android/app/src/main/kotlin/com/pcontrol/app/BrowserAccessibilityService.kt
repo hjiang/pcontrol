@@ -452,7 +452,11 @@ class BrowserAccessibilityService : AccessibilityService() {
         val domain = nodes.first().text?.toString()?.let(DomainParser::parse)
         nodes.forEach { it.recycle() }
         val oldDomain = domainCache.get(pkg)
-        if (domain != oldDomain) {
+        // Reset the old domain's strikes only on a genuine subject change to a
+        // different real domain. A null read (settled title on the Xiaomi
+        // browser, or mid-typing) must not reset the cached domain's strikes,
+        // or the 2-strikes fallback could never engage on that device.
+        if (WebBlockStrikes.shouldReset(oldDomain, domain)) {
             oldDomain?.let(Enforcer.webBlockStrikes::reset)
         }
         domainCache.update(pkg, domain)

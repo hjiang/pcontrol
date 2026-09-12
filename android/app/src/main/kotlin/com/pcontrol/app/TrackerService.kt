@@ -21,7 +21,6 @@ import com.pcontrol.app.update.UpdateState
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
 import com.pcontrol.core.BrowserContext
-import com.pcontrol.core.DomainParser
 import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
 import com.pcontrol.core.UsageDay
