@@ -109,4 +109,21 @@ class DomainParserTest {
     fun `url without dot in host`() {
         assertNull(DomainParser.parse("http://localhost/path"))
     }
+
+    // --- title-like text must never be accepted as a domain ---
+
+    @Test
+    fun `title with colon and whitespace returns null`() {
+        assertNull(DomainParser.parse("CNN: Breaking news"))
+    }
+
+    @Test
+    fun `title with dots and whitespace returns null`() {
+        assertNull(DomainParser.parse("Amazon.com. Spend less. Smile more."))
+    }
+
+    @Test
+    fun `single colon pseudo ip returns null`() {
+        assertNull(DomainParser.parse("cnn:breaking"))
+    }
 }

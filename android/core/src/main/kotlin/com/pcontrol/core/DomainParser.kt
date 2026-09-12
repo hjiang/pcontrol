@@ -110,7 +110,15 @@ object DomainParser {
             }
             val maybeHost = clean.substring(0, hostEnd)
                 .removeSurrounding("[", "]")
-            if (maybeHost.contains('.') || maybeHost.contains(':')) maybeHost.lowercase() else null
+            // Reject title-like text: a real host cannot contain whitespace.
+            // Without this, a page title like "CNN: Breaking news" would be
+            // accepted as a host and parsed into a garbage domain.
+            val hasWhitespace = maybeHost.any { it.isWhitespace() }
+            if (!hasWhitespace && (maybeHost.contains('.') || maybeHost.contains(':'))) {
+                maybeHost.lowercase()
+            } else {
+                null
+            }
         }
     }
 
@@ -124,8 +132,9 @@ object DomainParser {
                 return true
             }
         }
-        // Try IPv6 (contains colon)
-        if (h.contains(':')) return true
+        // Try IPv6 (at least two colons; a single colon is not an IPv6
+        // address — title-like text such as "cnn:breaking" must not qualify)
+        if (h.count { it == ':' } >= 2) return true
         return false
     }
 }
