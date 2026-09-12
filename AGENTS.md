@@ -102,6 +102,14 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - **`TrackerService.onSync()` early-returns when there are no unsynced
   events.** Anything that must reach the server even while the phone is
   idle (heartbeats, status fields) has to account for this.
+- **An app update kills the process and only `PackageReplacedReceiver`
+  restarts `TrackerService`.** `MY_PACKAGE_REPLACED` (declared
+  `exported="false"` — the system delivers this protected broadcast only
+  to the replaced app, and it is exempt from the Android 12+ FGS
+  background-start limits) is the sole restart path after `adb install
+  -r` or an auto-update. Without it, `BrowserAccessibilityService`
+  re-binds on its own and masks a silent usage-tracking gap until the
+  app is opened or the device reboots.
 - Timestamps are stored as RFC 3339 UTC strings; day keys are
   `"YYYY-MM-DD"` in **device-local** time — the server trusts the `day`
   field on events and never recomputes it.
