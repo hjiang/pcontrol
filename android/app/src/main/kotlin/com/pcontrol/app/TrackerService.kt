@@ -122,6 +122,49 @@ class TrackerService : Service() {
             lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: timeMs, timeMs)
         }
     }
+
+    /** STATE-ONLY foreground seed, run after the anchor has been advanced
+     *  past a recovered/observed gap (service start, detected stall): the
+     *  anchor advance keeps the live query disjoint from the recovered
+     *  range, so its transitions are not replayed into the foreground state
+     *  machine — without this seed, a probe-less restart or a post-freeze
+     *  app switch would leave attribution on a stale/null app until the
+     *  next transition. Nothing is credited from this query (the tick
+     *  credit is the flat per-tick sample), so its overlap with the
+     *  recovered range is the same documented ≤1-tick residual as the
+     *  startup-race coordination. One bounded query per detection. */
+    private fun launchForegroundStateSeed() {
+        try {
+            lastUsageEventQueryTime?.let { anchor ->
+                val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                val seedEvents = mutableListOf<AppEvent>()
+                val ev = android.app.usage.UsageEvents.Event()
+                // Look back a full SEED_LOOKBACK (the same bound the recovery
+                // replay uses for its seed): the app that was foreground
+                // across a long outage can have been resumed long before the
+                // anchor, and a short lookback would leave the state
+                // uninitialized (no live attribution until the next
+                // transition) when the accessibility probe is unavailable.
+                val query = usm.queryEvents(
+                    maxOf(0L, anchor - UsageBackfill.SEED_LOOKBACK_MS),
+                    anchor
+                )
+                while (query.hasNextEvent()) {
+                    query.getNextEvent(ev)
+                    val pkg = ev.packageName ?: continue
+                    when (ev.eventType) {
+                        AppEvent.ACTIVITY_RESUMED,
+                        AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
+                    }
+                }
+                currentForegroundPkg = AppUsagePoller
+                    .updateForegroundPackage(null, seedEvents)
+                    ?.takeUnless { it == packageName }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "foreground state seed failed", e)
+        }
+    }
     private var currentForegroundPkg: String? = null
 
     // Serializes the backfill bookkeeping — pending-row registration and
@@ -274,49 +317,7 @@ class TrackerService : Service() {
             launchBackfill(System.currentTimeMillis())
 
             // Seed the current-foreground STATE for the first live ticks.
-            // The anchor advance keeps the first tick's query disjoint from
-            // the recovery window, so the transitions inside the recovered
-            // range are not replayed into the foreground state machine;
-            // without this seed, a restart whose accessibility probe is
-            // unavailable and that is not followed by a new transition would
-            // record no live usage until the next app switch. STATE-ONLY:
-            // nothing is credited from this query (the tick credit is the
-            // flat per-tick sample), so its overlap with the recovered range
-            // is the same documented ≤1-tick residual as the startup-race
-            // coordination. One bounded query per service start.
-            if (currentForegroundPkg == null) {
-                try {
-                    lastUsageEventQueryTime?.let { anchor ->
-                        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-                        val seedEvents = mutableListOf<AppEvent>()
-                        val ev = android.app.usage.UsageEvents.Event()
-                        // Look back a full SEED_LOOKBACK (the same bound the
-                        // recovery replay uses for its seed): the app that
-                        // was foreground across a multi-day outage can have
-                        // been resumed long before the anchor, and a short
-                        // lookback would leave the state uninitialized (no
-                        // live attribution until the next transition) when
-                        // the accessibility probe is unavailable.
-                        val query = usm.queryEvents(
-                            maxOf(0L, anchor - UsageBackfill.SEED_LOOKBACK_MS),
-                            anchor
-                        )
-                        while (query.hasNextEvent()) {
-                            query.getNextEvent(ev)
-                            val pkg = ev.packageName ?: continue
-                            when (ev.eventType) {
-                                AppEvent.ACTIVITY_RESUMED,
-                                AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
-                            }
-                        }
-                        currentForegroundPkg = AppUsagePoller
-                            .updateForegroundPackage(null, seedEvents)
-                            ?.takeUnless { it == packageName }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "foreground state seed failed", e)
-                }
-            }
+            launchForegroundStateSeed()
 
             val updateState = UpdateState(this@TrackerService)
 
@@ -334,6 +335,13 @@ class TrackerService : Service() {
                     // replayed. Launched off-loop like sync/update checks so
                     // ticks resume immediately.
                     launchBackfill(System.currentTimeMillis(), lastUsageEventQueryTime ?: 0L)
+                    // The anchor advance makes the next tick's query skip the
+                    // freeze's transitions — reseed the foreground state from
+                    // them (state-only, nothing credited): the user may have
+                    // switched apps during the freeze, and with the
+                    // accessibility probe unavailable the stale pre-stall app
+                    // would otherwise be charged until the next transition.
+                    launchForegroundStateSeed()
                 }
                 try {
                     onTick()
@@ -572,25 +580,36 @@ class TrackerService : Service() {
         val zone = ZoneId.systemDefault()
         val day = UsageDay.currentKey(zone)
 
-        // Record app usage
+        // Record app + web usage ATOMICALLY: the app merge runs before the
+        // separate web merge and commitTick, so an exception in the web
+        // merge (or any later tick step) would leave the app's 10 s durably
+        // written while the cursor stays at the previous frontier — and a
+        // recovery replay of that interval would attribute the already-
+        // written seconds a second time. One transaction under the counter
+        // mutex makes the tick's writes all-or-nothing against recovery
+        // (the residual — transaction committed, cursor apply lost on
+        // sudden death — is the documented single-tick apply() class).
         val db = AppDatabase.getInstance(this)
         val label = blockingCoordinator.resolveLabel(foregroundPkg)
-
-        incrementCounter(db, day, "app", foregroundPkg, label)
-
+        val isKnownBrowser = BrowserRegistry.isKnownBrowser(foregroundPkg)
         // Record and evaluate web usage if in a known browser with a readable domain
-        var currentDomain: String? = null
-        if (BrowserRegistry.isKnownBrowser(foregroundPkg)) {
-            currentDomain = BrowserAccessibilityService.domainCache.get(foregroundPkg)
-
-            if (currentDomain != null) {
-                incrementCounter(db, day, "web", currentDomain, currentDomain)
-                ticksWithoutDomain = 0
-            } else {
-                ticksWithoutDomain++
-            }
+        val currentDomain: String? = if (isKnownBrowser) {
+            BrowserAccessibilityService.domainCache.get(foregroundPkg)
         } else {
-            ticksWithoutDomain = 0
+            null
+        }
+        usageCounterMutex.withLock {
+            db.withTransaction {
+                mergeCounterLocked(db, day, "app", foregroundPkg, label, increment = 10)
+                if (currentDomain != null) {
+                    mergeCounterLocked(db, day, "web", currentDomain, currentDomain, increment = 10)
+                }
+            }
+        }
+        when {
+            currentDomain != null -> ticksWithoutDomain = 0
+            isKnownBrowser -> ticksWithoutDomain++
+            else -> ticksWithoutDomain = 0
         }
 
         // Counters are durable at this point. Commit the cursor before
@@ -681,6 +700,22 @@ class TrackerService : Service() {
      * monitor is held for microseconds.
      */
     private suspend fun commitTick(foregroundPkg: String?, endTime: Long) {
+        // OVERLONG-TICK GUARD: a successful tick can itself block for minutes
+        // (hung queryEvents binder call, Room stall, slow enforcement). This
+        // commit would then jump the live cursor over the blocked interval
+        // while crediting only a flat 10 s, and the next iteration's stall
+        // check would see the cursor already past it — permanently skipping
+        // the blocked usage. Stage the skipped stretch as a recovery window
+        // BEFORE the commit covers it; this tick's flat 10 s credit then
+        // covers only its own tail. No-op on the healthy cadence (endTime −
+        // cursor ≈ 10 s << MIN_GAP) and after a rollback (endTime < cursor).
+        val committedCursor = synchronized(anchorLock) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getLong(KEY_TICK_CURSOR_MS, 0L)
+        }
+        if (committedCursor > 0L && endTime - committedCursor >= UsageBackfill.MIN_GAP_MS) {
+            launchBackfill(endTime - TICK_INTERVAL_MS)
+        }
         currentForegroundPkg = foregroundPkg
         synchronized(anchorLock) {
             lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: endTime, endTime)
@@ -1203,7 +1238,15 @@ class TrackerService : Service() {
                             dao.set(
                                 BackfillStateEntity(
                                     id = row?.id ?: 0,
-                                    progressMs = recoveredEnd,
+                                    // A debt staged after promoteDebt read the
+                                    // completed row can start LATER than
+                                    // recoveredEnd (a disjoint outage: ticks
+                                    // were live-counting while recovery ran).
+                                    // Starting the window at recoveredEnd
+                                    // would replay the already-live-counted
+                                    // stretch up to the debt's start — start it
+                                    // at the later of the two instead.
+                                    progressMs = maxOf(recoveredEnd, extending.startMs),
                                     endMs = extending.endMs
                                 )
                             )
@@ -1403,16 +1446,6 @@ class TrackerService : Service() {
     } catch (t: Throwable) {
         Log.w(TAG, "usage-stats access could not be confirmed; recovery deferred", t)
         false
-    }
-
-    private suspend fun incrementCounter(
-        db: AppDatabase,
-        day: String,
-        kind: String,
-        subject: String,
-        label: String
-    ) {
-        mergeCounter(db, day, kind, subject, label, increment = 10)  // 10-second tick
     }
 
     /** Read-merge-upsert for one (day, kind, subject) counter row. */
