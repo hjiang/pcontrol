@@ -290,7 +290,17 @@ class TrackerService : Service() {
                         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
                         val seedEvents = mutableListOf<AppEvent>()
                         val ev = android.app.usage.UsageEvents.Event()
-                        val query = usm.queryEvents(maxOf(0L, anchor - 300_000L), anchor)
+                        // Look back a full SEED_LOOKBACK (the same bound the
+                        // recovery replay uses for its seed): the app that
+                        // was foreground across a multi-day outage can have
+                        // been resumed long before the anchor, and a short
+                        // lookback would leave the state uninitialized (no
+                        // live attribution until the next transition) when
+                        // the accessibility probe is unavailable.
+                        val query = usm.queryEvents(
+                            maxOf(0L, anchor - UsageBackfill.SEED_LOOKBACK_MS),
+                            anchor
+                        )
                         while (query.hasNextEvent()) {
                             query.getNextEvent(ev)
                             val pkg = ev.packageName ?: continue
@@ -325,10 +335,21 @@ class TrackerService : Service() {
                     // ticks resume immediately.
                     launchBackfill(System.currentTimeMillis(), lastUsageEventQueryTime ?: 0L)
                 }
-                lastTickAtMs = tickStartElapsed
-
                 try {
                     onTick()
+                    // Refresh the heartbeat ONLY after a successful tick:
+                    // refreshing it unconditionally would hide persistent
+                    // failures (a throwing queryEvents/usage-processing
+                    // path could run for hours without the stall detector
+                    // ever firing), and the first successful tick would
+                    // then commit its current end time — jumping the live
+                    // cursor over the whole failed period with nothing
+                    // staged for recovery. With the heartbeat gated on
+                    // success, failures age into a stall (≥ MIN_GAP) and
+                    // the failed period is recovered from the last
+                    // committed cursor. Sub-MIN_GAP single-failure loss is
+                    // below the recovery threshold by design.
+                    lastTickAtMs = tickStartElapsed
                 } catch (e: Exception) {
                     Log.w(TAG, "onTick exception", e)
                 }
@@ -703,9 +724,14 @@ class TrackerService : Service() {
         // loop. The recovery covers (frontier, now]; advancing the live
         // event-query anchor to `now` keeps the first live tick's query
         // disjoint from the recovery window (bootstrapping 60 s back would
-        // double-count those transitions after a restart).
-        val frontierMs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getLong(KEY_TICK_CURSOR_MS, 0L)
+        // double-count those transitions after a restart). The snapshot is
+        // taken under [anchorLock] — the same monitor commitTick's
+        // read/modify/apply runs under — so a worker-retry snapshot can
+        // never tear against a concurrently committing tick.
+        val frontierMs = synchronized(anchorLock) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getLong(KEY_TICK_CURSOR_MS, 0L)
+        }
         val window = planWindow(frontierMs, nowMs, minStartMs)
         if (window != null) {
             synchronized(debtLock) {
@@ -1103,12 +1129,26 @@ class TrackerService : Service() {
                             pendingRecoveryWindows.firstOrNull()
                         }
                         if (next != null) {
-                            dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
-                            synchronized(queueLock) {
-                                // Same single-worker pass; a detector can only
-                                // add, so the head we peeked is still the head.
-                                if (pendingRecoveryWindows.firstOrNull() == next) {
-                                    pendingRecoveryWindows.removeFirstOrNull()
+                            if (row != null && row.progressMs >= next.endMs) {
+                                // The durable row already covers this queued
+                                // copy (e.g. promoteDebt re-installed the same
+                                // range from a failed-clear debt while it sat
+                                // queued): drop it instead of re-installing —
+                                // dao.set would reset progress and replay
+                                // already-recovered slices.
+                                synchronized(queueLock) {
+                                    if (pendingRecoveryWindows.firstOrNull() == next) {
+                                        pendingRecoveryWindows.removeFirstOrNull()
+                                    }
+                                }
+                            } else {
+                                dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                                synchronized(queueLock) {
+                                    // Same single-worker pass; a detector can only
+                                    // add, so the head we peeked is still the head.
+                                    if (pendingRecoveryWindows.firstOrNull() == next) {
+                                        pendingRecoveryWindows.removeFirstOrNull()
+                                    }
                                 }
                             }
                         }
@@ -1130,52 +1170,53 @@ class TrackerService : Service() {
                         // not extend beyond it: a debt staged for a newer gap
                         // is converted into the next claimed window instead
                         // of being wiped at retirement. The debt's read, tail
-                        // conversion, and clear are ONE debtLock critical
-                        // section: a gap the detector stages concurrently is
-                        // either fully observed (queued, then cleared) or
-                        // staged after the clear (it survives as the next
-                        // pass's debt) — it can never be read and then wiped
-                        // by a separate, later clear.
+                        // conversion, and clear stay atomic against the
+                        // detector's staging via [debtLock] + the conditional
+                        // clear ([clearPendingDebtIfUnchanged]): a gap the
+                        // detector stages concurrently is either fully
+                        // observed (converted, then cleared) or staged after
+                        // the clear (it survives as the next pass's debt) —
+                        // it can never be read and then wiped by a separate,
+                        // later clear.
                         val recoveredEnd = row?.endMs ?: 0L
                         val frontier = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                             .getLong(KEY_TICK_CURSOR_MS, 0L)
-                        synchronized(debtLock) {
-                            val debt = pendingDebt()
-                            if (debt != null && debt.endMs > recoveredEnd) {
-                                // Route through the clamping helper so the
-                                // queued-windows-stay-disjoint invariant is
-                                // structural: the queue is empty in this
-                                // branch (checked in this same critical
-                                // section), so the clamp is a no-op today —
-                                // but it guards any future mutation.
-                                enqueueClamped(
-                                    UsageBackfill.Window(
-                                        maxOf(debt.startMs, recoveredEnd), debt.endMs
-                                    ),
-                                    recoveredEnd
+                        val extending = synchronized(debtLock) { pendingDebt() }
+                            ?.takeIf { it.endMs > recoveredEnd }
+                        if (extending != null) {
+                            // Publish the extension DURABLY through the row:
+                            // progress STAYS at the recovered frontier
+                            // (everything through recoveredEnd remains
+                            // recovered-through — the restart protection the
+                            // completed row provided), and only endMs extends
+                            // to the debt's end, so (recoveredEnd, debt.end]
+                            // becomes remaining work. Unlike an in-memory
+                            // queue entry, this survives a crash between this
+                            // set and the next pass; the next
+                            // recoverPendingWindow replays exactly the tail.
+                            // The suspension deliberately runs OUTSIDE
+                            // [debtLock] (a monitor cannot span a suspension
+                            // point); the clear below is conditional on the
+                            // debt still matching the snapshot, so a newer
+                            // record staged during the Room write survives
+                            // and is handled by the next pass.
+                            dao.set(
+                                BackfillStateEntity(
+                                    id = row?.id ?: 0,
+                                    progressMs = recoveredEnd,
+                                    endMs = extending.endMs
                                 )
-                                // The queued tail needs ANOTHER pass of THIS
-                                // worker: retiring now would leave it in the
-                                // in-memory queue with no runner, and a
-                                // continuously healthy service may never
-                                // detect again. A failed clear additionally
-                                // keeps the completed row as the retry marker
-                                // (retiring with the debt still persisted
-                                // would let a restart re-promote the FULL
-                                // debt range and re-count the part the row
-                                // already recovered; the re-queued tail
-                                // clamps to a no-op once already recovered,
-                                // so nothing replays twice in the meantime).
-                                retryLater = true
-                                if (!clearPendingDebt()) {
-                                    Log.w(TAG, "detection debt clear not persisted; retire retried")
-                                }
-                            } else {
-                                // No debt, or one fully covered by the
-                                // recovered frontier (clearable: the row
-                                // stays as the recovered-through marker
-                                // until the live cursor catches up, so a
-                                // restart cannot replay it).
+                            )
+                            retryLater = true
+                            if (!clearPendingDebtIfUnchanged(extending)) {
+                                Log.w(TAG, "detection debt clear not persisted; retire retried")
+                            }
+                        } else {
+                            // No debt, or one fully covered by the recovered
+                            // frontier (clearable: the row stays as the
+                            // recovered-through marker until the live cursor
+                            // catches up, so a restart cannot replay it).
+                            synchronized(debtLock) {
                                 retryLater =
                                     frontier < recoveredEnd || !clearPendingDebt()
                             }
