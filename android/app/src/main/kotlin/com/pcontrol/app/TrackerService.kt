@@ -259,19 +259,15 @@ class TrackerService : Service() {
                 lastLoggedAttributionSkip = skipState
                 Log.i(TAG, "Attribution skipped: $skipState")
             }
-            previousForegroundPkg?.let { pkg ->
-                if (BrowserRegistry.isKnownBrowser(pkg)) {
-                    BrowserAccessibilityService.domainCache.clear(pkg)
-                }
-            }
-            foregroundPkg?.let { pkg ->
-                if (BrowserRegistry.isKnownBrowser(pkg)) {
-                    BrowserAccessibilityService.domainCache.clear(pkg)
-                }
-            }
+            val skip = UsageAttribution.skipTransition(
+                previousForegroundPkg = previousForegroundPkg,
+                foregroundPkg = foregroundPkg,
+                isKnownBrowser = BrowserRegistry::isKnownBrowser,
+            )
+            skip.browsersToClear.forEach { BrowserAccessibilityService.domainCache.clear(it) }
             browserForegroundPkg = null
             ticksWithoutDomain = 0
-            currentForegroundPkg = foregroundPkg
+            currentForegroundPkg = skip.nextForegroundPkg
             lastUsageEventQueryTime = endTime
             return
         }
