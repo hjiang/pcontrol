@@ -40,7 +40,6 @@ import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -414,15 +413,20 @@ class TrackerService : Service() {
     }
 
     private fun startTicks() {
-        val oldJob = tickJob
+        // Idempotent: ONE long-lived tick loop per service instance. The
+        // previous design cancelled and recreated the job on every
+        // onStartCommand and waited for the old job via cancelAndJoin() — but
+        // onTick's blocking UsageStatsManager.queryEvents() binder call is
+        // not interruptible by cancellation, so a re-entry while it hung
+        // would wait FOREVER with no tick/recovery loop running at all.
+        // Re-entry is now a no-op: the running loop already covers
+        // attribution, and a single loop can never run twice concurrently —
+        // which is what the join originally guarded against (two loops
+        // reading the same anchor and each crediting a 10-second sample for
+        // the same interval). A crashed loop (isActive == false) is
+        // relaunched by the next onStartCommand.
+        if (tickJob?.isActive == true) return
         tickJob = scope.launch {
-            // Serialize ticks: onStartCommand can re-enter while the previous
-            // job's onTick is still mid-flight (cancellation is cooperative —
-            // a blocked queryEvents call does not abort), and two overlapping
-            // attribution loops could read the same anchor and each credit a
-            // 10-second sample for the same interval. Joining the cancelled
-            // job makes the replacement wait for it to unwind.
-            oldJob?.cancelAndJoin()
             // §9: sync immediately on service start, then every 60s.
             // 0 forces the first post-tick sync check to fire right away.
             lastSyncTime = 0L
@@ -875,6 +879,13 @@ class TrackerService : Service() {
      * replay overlap; apply() is async, so sudden process death can still
      * lose the newest write — the residual overlap is bounded by one tick.
      *
+     * The persistence is GATED when the tick credited nothing (no
+     * accessibility foreground) and UsageStats access is unconfirmed:
+     * committing the cursor over an uncredited stretch would make it
+     * permanently unrecoverable, so the cursor is held back instead and a
+     * later tick's overlong-gap guard converts the stretch into a recovery
+     * window (replayed once access returns).
+     *
      * The cursor is MONOTONIC: both the in-memory query anchor and the
      * persisted frontier only ever move forward (max of the previous value
      * and this tick's end), so a wall-clock rollback (NTP correction,
@@ -918,13 +929,29 @@ class TrackerService : Service() {
             // foreground selection.
             currentForegroundPkg = foregroundPkg
             lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: endTime, endTime)
-            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            prefs.edit()
-                .putLong(
-                    KEY_TICK_CURSOR_MS,
-                    maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), endTime)
-                )
-                .apply()
+            // CURSOR GATE: the persisted cursor is the "live counting passed
+            // here" marker. When this tick credited NOTHING (no foreground —
+            // the accessibility fallback was unavailable) AND UsageStats
+            // access is unconfirmed, holding the cursor back keeps the
+            // stretch recoverable: a later tick's overlong-gap guard above
+            // converts [cursor, now] into a recovery window, which
+            // [recoverPendingWindow] replays once access returns (it defers
+            // while the app-op is denied — see hasUsageStatsAccess).
+            // Advancing anyway (the old behavior) would skip the stretch
+            // permanently. When a foreground WAS credited (live sampling) or
+            // access is confirmed, advancing is correct and preserves the
+            // existing behavior — including screen-off stretches, which
+            // recovery deliberately does not re-attribute.
+            val cursorConfirmed = foregroundPkg != null || hasUsageStatsAccess()
+            if (cursorConfirmed) {
+                val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                prefs.edit()
+                    .putLong(
+                        KEY_TICK_CURSOR_MS,
+                        maxOf(prefs.getLong(KEY_TICK_CURSOR_MS, 0L), endTime)
+                    )
+                    .apply()
+            }
         }
     }
 
