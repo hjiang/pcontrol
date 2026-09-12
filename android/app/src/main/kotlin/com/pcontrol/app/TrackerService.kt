@@ -524,12 +524,17 @@ class TrackerService : Service() {
                 val tickStartElapsed = SystemClock.elapsedRealtime()
                 if (lastTickAtMs > 0 && tickStartElapsed - lastTickAtMs >= UsageBackfill.MIN_GAP_MS) {
                     // The loop stalled with the process alive (e.g. a HyperOS
-                    // Greeze freeze-thaw). The exact last attribution end is
-                    // still in memory (survives freezes, unlike a restart) —
-                    // pass it as the floor so nothing already counted is
-                    // replayed. Launched off-loop like sync/update checks so
-                    // ticks resume immediately.
-                    launchBackfill(System.currentTimeMillis(), lastUsageEventQueryTime ?: 0L)
+                    // Greeze freeze-thaw). Launched off-loop like sync/update
+                    // checks so ticks resume immediately. The floor is the
+                    // committed cursor, deliberately NOT the in-memory query
+                    // anchor: a tick that credited anything always commits the
+                    // cursor (commitTick's cursorConfirmed gate), so the cursor
+                    // already excludes everything counted, while the anchor can
+                    // sit AHEAD of it only when the cursor was held back (no
+                    // foreground known and UsageStats access unconfirmed —
+                    // nothing credited). Flooring at the anchor would skip
+                    // exactly that uncounted stretch and lose recoverable usage.
+                    launchBackfill(System.currentTimeMillis())
                     // The anchor advance makes the next tick's query skip the
                     // freeze's transitions — reseed the foreground state from
                     // them (state-only, nothing credited): the user may have
@@ -967,10 +972,13 @@ class TrackerService : Service() {
     }
 
     /**
-     * Requests recovery of the gap ending at [nowMs], starting at the live
-     * frontier (never before [minStartMs], which the freeze-thaw path sets
-     * to the in-memory last query end so nothing already counted is
-     * replayed). Fire-and-forget: the tick coroutine only snapshots the
+     * Requests recovery of the gap ending at [nowMs], starting at the
+     * committed live cursor — the frontier every credited tick has
+     * persisted, so nothing already counted is replayed. The in-memory
+     * query anchor is deliberately NOT used as a floor: it sits ahead of
+     * the cursor only when the cursor was held back, i.e. over a stretch
+     * where nothing was credited, so flooring there would skip recoverable
+     * usage. Fire-and-forget: the tick coroutine only snapshots the
      * frontier, stages the gap (apply() — non-blocking, immediately
      * visible), and coordinates the first live query with the recovery end;
      * every durable write (the debt's commit(), the Room registration, the
@@ -990,7 +998,7 @@ class TrackerService : Service() {
      * apply()); if the process dies inside it, the next detection re-plans
      * the gap from the live frontier.
      */
-    private fun launchBackfill(nowMs: Long, minStartMs: Long = 0L) {
+    private fun launchBackfill(nowMs: Long) {
         // Snapshot the frontier + coordinate the first live query with the
         // recovery end: both are in-memory operations, safe on the tick
         // loop. The recovery covers (frontier, now]; advancing the live
@@ -1004,7 +1012,7 @@ class TrackerService : Service() {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getLong(KEY_TICK_CURSOR_MS, 0L)
         }
-        val window = planWindow(frontierMs, nowMs, minStartMs)
+        val window = planWindow(frontierMs, nowMs)
         if (window != null) {
             synchronized(debtLock) {
                 // REVALIDATE against the live cursor inside the staging
@@ -1143,7 +1151,7 @@ class TrackerService : Service() {
                             pendingRecoveryWindows.maxOfOrNull { it.endMs } ?: 0L
                         }
                     )
-                    val window = planWindow(frontierMs, nowMs, minStartMs)
+                    val window = planWindow(frontierMs, nowMs)
                         ?.takeIf { it.endMs > maxOf(it.startMs, claimedThroughMs) }
                         ?.let {
                             UsageBackfill.Window(
@@ -1358,7 +1366,7 @@ class TrackerService : Service() {
                 if (ownsGuard) backfillInFlight.set(false)
                 if (retry) {
                     delay(REGISTRATION_RETRY_BACKOFF_MS)
-                    launchBackfill(nowMs, minStartMs)
+                    launchBackfill(nowMs)
                 }
             }
         }
@@ -1369,10 +1377,9 @@ class TrackerService : Service() {
      *  [frontierMs] is the live-cursor snapshot taken at detection time. */
     private fun planWindow(
         frontierMs: Long,
-        nowMs: Long,
-        minStartMs: Long
+        nowMs: Long
     ): UsageBackfill.Window? =
-        UsageBackfill.plan(maxOf(frontierMs, minStartMs), nowMs)
+        UsageBackfill.plan(frontierMs, nowMs)
 
     private data class PendingDebt(val startMs: Long, val endMs: Long)
 
