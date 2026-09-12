@@ -148,6 +148,13 @@ class TrackerService : Service() {
     @Volatile
     private var foregroundStateGen = 0L
 
+    /** Monotonic sequence of foreground-state seeds; only the latest seed
+     *  may assign its result (competing completions of earlier seeds are
+     *  discarded). Incremented on the tick coroutine at seed launch; read
+     *  under [anchorLock] at seed assignment. */
+    @Volatile
+    private var foregroundSeedSeq = 0L
+
     /** The end time of the most recent tick whose foreground selection was
      *  confirmed by the AUTHORITATIVE accessibility probe (raw result
      *  non-null, including self). The async state-seed must not overwrite an
@@ -180,7 +187,9 @@ class TrackerService : Service() {
         // accessibility probe (every commitTick, even without transitions).
         // The seed must additionally not overwrite an accessibility-confirmed
         // state that is newer than the seed's anchor.
-        val authoritativeAtStart = lastAuthoritativeForegroundAt
+        // Competing seeds: each launch supersedes earlier ones. Only the
+        // LATEST seed may assign its result.
+        val seqAtStart = ++foregroundSeedSeq
         scope.launch {
             try {
                 lastUsageEventQueryTime?.let { anchor ->
@@ -206,17 +215,23 @@ class TrackerService : Service() {
                         }
                     }
                     // Assign only if no live tick processed newer transitions
-                    // (generation unchanged) AND no accessibility-confirmed
-                    // foreground update landed after this seed's anchor —
-                    // otherwise the seed's anchor-time snapshot is stale and
-                    // would overwrite the newer live state; skip the
-                    // assignment entirely rather than nulling the field.
-                    if (foregroundStateGen == genAtStart &&
-                        lastAuthoritativeForegroundAt <= anchor
-                    ) {
-                        currentForegroundPkg = AppUsagePoller
-                            .updateForegroundPackage(null, seedEvents)
-                            ?.takeUnless { it == packageName }
+                    // (generation unchanged), no accessibility-confirmed
+                    // foreground update landed after this seed's anchor, and
+                    // this is still the latest seed. Otherwise this seed's
+                    // anchor-time snapshot is stale and would overwrite the
+                    // newer live state — skip the assignment entirely rather
+                    // than nulling the field.
+                    val seededPkg = AppUsagePoller
+                        .updateForegroundPackage(null, seedEvents)
+                        ?.takeUnless { it == packageName }
+                    synchronized(anchorLock) {
+                        if (foregroundStateGen == genAtStart &&
+                            lastAuthoritativeForegroundAt <= anchor &&
+                            foregroundSeedSeq == seqAtStart &&
+                            seededPkg != null
+                        ) {
+                            currentForegroundPkg = seededPkg
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -259,6 +274,11 @@ class TrackerService : Service() {
     // `backfillMutex` sections, and the tick-side detector enqueues into it
     // when a new gap is disjoint from the staged debt (the debt record is a
     // singleton, so overwriting it would discard the still-unpromoted gap).
+    // The worker's journalRemove holds this monitor across a blocking
+    // commit() by the same design trade-off documented at [debtLock]: the
+    // removal must be atomic with the read it was computed from, and the
+    // only tick-side acquisition is the rare detection path (never the
+    // 10-second attribution loop) — bounded by one flash commit.
     private val queueLock = Any()
     private val pendingRecoveryWindows = ArrayDeque<UsageBackfill.Window>()
 
@@ -806,8 +826,11 @@ class TrackerService : Service() {
         if (committedCursor > 0L && endTime - committedCursor >= UsageBackfill.MIN_GAP_MS) {
             launchBackfill(endTime)
         }
-        currentForegroundPkg = foregroundPkg
         synchronized(anchorLock) {
+            // Serialized with the async state-seed's check-and-assign (same
+            // monitor): a seed result can never overwrite this newer live
+            // foreground selection.
+            currentForegroundPkg = foregroundPkg
             lastUsageEventQueryTime = maxOf(lastUsageEventQueryTime ?: endTime, endTime)
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             prefs.edit()
@@ -983,13 +1006,15 @@ class TrackerService : Service() {
                     // live cursor catches up (otherwise a restart leaves the
                     // marker stranded and live queries resume from inside
                     // the recovered window's documentation trail forever).
+                    // ANY nonzero row counts — including a completed
+                    // (progress == end) marker row whose retirement is
+                    // still pending (e.g. a dao.clear retry after a failed
+                    // pass): a worker must stay alive to retire the marker
+                    // rather than leaving it stranded.
                     val row = dao.get()
-                    val cursor = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                        .getLong(KEY_TICK_CURSOR_MS, 0L)
                     val hasDurableWork = debt != null ||
                         synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                        (row != null && row.endMs > 0L &&
-                            (row.progressMs < row.endMs || cursor < row.endMs))
+                        (row != null && row.endMs > 0L)
                     if (hasDurableWork) {
                         ownsGuard = backfillInFlight.compareAndSet(false, true)
                     }
@@ -1043,7 +1068,7 @@ class TrackerService : Service() {
                         val row = dao.get()
                         val debt = synchronized(debtLock) { pendingDebt() }
                         retry = synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                            (row != null && row.endMs > 0L && row.progressMs < row.endMs) ||
+                            (row != null && row.endMs > 0L) ||
                             debt != null
                     }
                 } catch (e2: Exception) {
@@ -1143,6 +1168,11 @@ class TrackerService : Service() {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             val existing = prefs.getString(KEY_BF_QUEUE_JOURNAL, null)
             val entry = "${window.startMs}:${window.endMs}"
+            // Deduplicate: a retrying registration (2 s cadence during a
+            // prolonged Room failure) re-appends the SAME disjoint window —
+            // skipping identical entries keeps the journal bounded. Distinct
+            // ranges still append (they are genuinely separate gaps).
+            if (existing?.split('|')?.any { it == entry } == true) return
             prefs.edit()
                 .putString(
                     KEY_BF_QUEUE_JOURNAL,
@@ -1376,8 +1406,11 @@ class TrackerService : Service() {
                             // The row now durably covers `next` (either just
                             // installed, or the covered-check above held), so
                             // the journal entry can be durably removed; if the
-                            // commit fails, keep the window queued and retry
-                            // this whole path on the next pass.
+                            // commit fails, keep the window queued, retry this
+                            // whole path on the next pass, and signal
+                            // `retryLater` so the loop backs off instead of
+                            // spinning through Room on a persistent storage
+                            // failure.
                             if (journalRemove(listOf(next))) {
                                 synchronized(queueLock) {
                                     // Same single-worker pass; a detector can
@@ -1387,6 +1420,8 @@ class TrackerService : Service() {
                                         pendingRecoveryWindows.removeFirstOrNull()
                                     }
                                 }
+                            } else {
+                                retryLater = true
                             }
                         }
                     }
