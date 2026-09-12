@@ -192,15 +192,16 @@ class TrackerService : Service() {
         // accessibility probe (every commitTick, even without transitions).
         // The seed must additionally not overwrite an accessibility-confirmed
         // state that is newer than the seed's anchor.
-        // Competing seeds: each launch supersedes earlier ones. Only the
-        // LATEST seed may assign its result.
-        val seqAtStart = ++foregroundSeedSeq
-        // Single-flight: a seed already querying is not duplicated — during
-        // persistent tick failures the stall branch fires every 10 s and
-        // would otherwise stack unbounded concurrent 6-hour UsageStats
-        // queries. The result generation/seq guards keep whichever seed
-        // finishes authoritative.
+        // Single-flight FIRST: a seed already querying is not duplicated —
+        // during persistent tick failures the stall branch fires every 10 s
+        // and would otherwise stack unbounded concurrent 6-hour UsageStats
+        // queries. The sequence number is bumped only by an ACTUALLY
+        // LAUNCHED seed: bumping it before the CAS would let a rejected
+        // call invalidate the in-flight seed's result with no replacement
+        // query launched, dropping that state refresh entirely. The result
+        // generation/seq guards keep whichever seed finishes authoritative.
         if (!foregroundSeedInFlight.compareAndSet(false, true)) return
+        val seqAtStart = ++foregroundSeedSeq
         scope.launch {
             try {
                 lastUsageEventQueryTime?.let { anchor ->
@@ -425,10 +426,21 @@ class TrackerService : Service() {
             // the recovered window). Seeding the anchor from the marker
             // frontier as well prevents the first live queries from
             // re-counting transitions inside the already-merged window.
-            val markerRow = AppDatabase.getInstance(this@TrackerService)
-                .backfillStateDao().get()
-            if (markerRow != null && markerRow.endMs > 0L) {
-                advanceAnchorTo(maxOf(markerRow.progressMs, markerRow.endMs))
+            // A failure in this startup read must not kill the launch:
+            // this Room query runs BEFORE the tick loop's per-tick
+            // try/catch, so an exception here (database open/migration
+            // trouble) would terminate the whole tick coroutine — the
+            // service stays alive but performs no tracking and no
+            // recovery. Log and continue instead; the backfill worker and
+            // the per-tick handlers retry the database on their own.
+            try {
+                val markerRow = AppDatabase.getInstance(this@TrackerService)
+                    .backfillStateDao().get()
+                if (markerRow != null && markerRow.endMs > 0L) {
+                    advanceAnchorTo(maxOf(markerRow.progressMs, markerRow.endMs))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "startup recovery-marker read failed; continuing", e)
             }
             // Re-ingest a durably journaled disjoint gap (see the key docs):
             // the journal exists precisely for this restart path — the
@@ -963,15 +975,51 @@ class TrackerService : Service() {
             advanceAnchorTo(nowMs)
         }
         scope.launch {
-            // Upgrade any detection-side journalAppend apply() to a durable
-            // write as the worker's first action (the detector stays
-            // non-blocking on the tick; the worker may block on disk).
-            journalPersist()
             var ownsGuard = false
             try {
+                // Upgrade any detection-side journalAppend apply() to a durable
+                // write as the worker's first action (the detector stays
+                // non-blocking on the tick; the worker may block on disk).
+                // A failed flush leaves the queued windows' only durable copy
+                // as an async apply() — retry BEFORE proceeding to the claim,
+                // which removes journal entries: a removal committed while
+                // the append it covers never reached disk, followed by a
+                // process death before the claim's durable Room install,
+                // would lose the gap. Bounded 2 s retry on the worker (never
+                // the tick); a persistently failing disk keeps retrying
+                // instead of silently proceeding with an at-risk journal.
+                while (!journalPersist()) {
+                    Log.w(TAG, "queue journal flush failed; retrying")
+                    delay(REGISTRATION_RETRY_BACKOFF_MS)
+                }
                 backfillMutex.withLock {
                     val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
+                    // Everything at/below [claimedThroughMs] is already
+                    // claimed for recovery: the durable row (recovered or
+                    // being recovered exactly once) plus the disjoint
+                    // windows queued ahead of it. Clamp the planned window
+                    // against that mark BEFORE any publication — after a
+                    // restart with a stale cursor the planned window can
+                    // overlap the re-ingested journal ranges (or an active
+                    // row), and publishing that overlap as the debt would
+                    // install a row covering queued work that the claim step
+                    // would then have to unwind. A fully-claimed window
+                    // publishes nothing.
+                    val row = dao.get()
+                    val claimedThroughMs = maxOf(
+                        row?.endMs ?: 0L,
+                        synchronized(queueLock) {
+                            pendingRecoveryWindows.lastOrNull()?.endMs ?: 0L
+                        }
+                    )
                     val window = planWindow(frontierMs, nowMs, minStartMs)
+                        ?.takeIf { it.endMs > maxOf(it.startMs, claimedThroughMs) }
+                        ?.let {
+                            UsageBackfill.Window(
+                                maxOf(it.startMs, claimedThroughMs),
+                                it.endMs
+                            )
+                        }
                     // Debt read → merge → durable publication is ONE debtLock
                     // critical section: a detector staging concurrently (an
                     // apply(), a few ms) cannot interleave a newer record
@@ -1049,7 +1097,6 @@ class TrackerService : Service() {
                     // still pending (e.g. a dao.clear retry after a failed
                     // pass): a worker must stay alive to retire the marker
                     // rather than leaving it stranded.
-                    val row = dao.get()
                     val hasDurableWork = debt != null ||
                         synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
                         (row != null && row.endMs > 0L)
@@ -1077,8 +1124,14 @@ class TrackerService : Service() {
                             val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
                             val row = dao.get()
                             val debt = synchronized(debtLock) { pendingDebt() }
+                            // ANY nonzero row counts as remaining work — a
+                            // completed marker (progress == end > 0) still
+                            // owes its cursor-gated retirement to this
+                            // worker, exactly as in the outer retry check
+                            // below; excluding it here would release the
+                            // guard and strand the marker.
                             drained = synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                                (row != null && row.endMs > 0L && row.progressMs < row.endMs) ||
+                                (row != null && row.endMs > 0L) ||
                                 debt != null
                             if (!drained) backfillInFlight.set(false)
                         }
@@ -1246,16 +1299,21 @@ class TrackerService : Service() {
      *  apply() to stay non-blocking on the tick, so a crash before the
      *  async flush could lose the entry. Re-committing the current value
      *  here (worker-side, blocking OK) upgrades it to durable as soon as
-     *  the worker picks the detection up. No-op when the journal is empty.
-     *  Caller holds no other monitor; the prefs read/write are in-memory
-     *  map operations plus the synchronous disk write. */
-    private fun journalPersist() {
+     *  the worker picks the detection up. No-op (true) when the journal is
+     *  empty. Returns whether the journal is durably on disk — the caller
+     *  must treat false as a worker failure and retry BEFORE claiming
+     *  queued windows: the claim removes journal entries, and a removal
+     *  committed while the append it covers never reached disk would lose
+     *  the gap. Caller holds no other monitor; the prefs read/write are
+     *  in-memory map operations plus the synchronous disk write. */
+    private fun journalPersist(): Boolean {
         synchronized(queueLock) {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             val current = prefs.getString(KEY_BF_QUEUE_JOURNAL, null)
             if (!current.isNullOrEmpty()) {
-                prefs.edit().putString(KEY_BF_QUEUE_JOURNAL, current).commit()
+                return prefs.edit().putString(KEY_BF_QUEUE_JOURNAL, current).commit()
             }
+            return true
         }
     }
 
@@ -1446,7 +1504,17 @@ class TrackerService : Service() {
                             // below, and a failed removal commit keeps the
                             // window queued for the next pass's retry.
                             if (row == null || row.progressMs < next.endMs) {
-                                dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                                // Never move the durable frontier backwards:
+                                // when the row's progress already sits inside
+                                // `next` (a stale-cursor overlap that slipped
+                                // past staging), claim only the uncovered
+                                // remainder (progressMs, next.endMs] —
+                                // reinstalling `next` verbatim would rewind
+                                // progress and replay merged usage.
+                                val claimFrom = maxOf(next.startMs, row?.progressMs ?: 0L)
+                                if (next.endMs > claimFrom) {
+                                    dao.set(BackfillStateEntity(0, claimFrom, next.endMs))
+                                }
                             }
                             // The row now durably covers `next` (either just
                             // installed, or the covered-check above held), so
@@ -1541,9 +1609,22 @@ class TrackerService : Service() {
                             // frontier (clearable: the row stays as the
                             // recovered-through marker until the live cursor
                             // catches up, so a restart cannot replay it).
+                            // The clear REVALIDATES under [debtLock]: a
+                            // detector can stage a newer debt between the
+                            // `extending` snapshot above and this critical
+                            // section, and an unconditional clear would wipe
+                            // that record — the only durable copy of the
+                            // newer outage. Anything now extending beyond
+                            // the recovered frontier is left in place and
+                            // retried (the next pass converts it through the
+                            // extending branch); the check-and-clear is
+                            // atomic because the lock is held across both.
                             synchronized(debtLock) {
+                                val current = pendingDebt()
                                 retryLater =
-                                    frontier < recoveredEnd || !clearPendingDebt()
+                                    frontier < recoveredEnd ||
+                                        (current != null && current.endMs > recoveredEnd) ||
+                                        !clearPendingDebt()
                             }
                         }
                         if (!retryLater) {
@@ -1561,21 +1642,38 @@ class TrackerService : Service() {
                             // merged window and backfill it again
                             // (double-count). A worker-side commit() is
                             // allowed to block; it pins the cursor at ≥
-                            // recoveredEnd on disk first.
-                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                                .edit()
-                                .putLong(
-                                    KEY_TICK_CURSOR_MS,
-                                    maxOf(
-                                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                                            .getLong(KEY_TICK_CURSOR_MS, 0L),
-                                        recoveredEnd
+                            // recoveredEnd on disk first. The read/modify/
+                            // commit runs under [anchorLock] — the same
+                            // monitor as commitTick's cursor update — so this
+                            // second writer cannot interleave with a tick's
+                            // read/modify/apply and move the durable frontier
+                            // backwards.
+                            val pinned = synchronized(anchorLock) {
+                                val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                prefs.edit()
+                                    .putLong(
+                                        KEY_TICK_CURSOR_MS,
+                                        maxOf(
+                                            prefs.getLong(KEY_TICK_CURSOR_MS, 0L),
+                                            recoveredEnd
+                                        )
                                     )
-                                )
-                                .commit()
-                            dao.clear()
-                            backfillInFlight.set(false)
-                            retire = true
+                                    .commit()
+                            }
+                            // Clear the marker and release the guard only
+                            // once the pin is durable: on a failed commit the
+                            // completed row stays in place and the loop
+                            // retries the whole retirement after the backoff
+                            // — clearing first would let a restart with the
+                            // stale cursor re-plan the merged window.
+                            if (pinned) {
+                                dao.clear()
+                                backfillInFlight.set(false)
+                                retire = true
+                            } else {
+                                Log.w(TAG, "cursor pin commit failed; retire retried")
+                                retryLater = true
+                            }
                         }
                     }
                 }
