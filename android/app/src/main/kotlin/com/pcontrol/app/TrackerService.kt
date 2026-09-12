@@ -79,19 +79,21 @@ class TrackerService : Service() {
         private const val KEY_BF_DEBT_START_MS = "backfill_debt_start_ms"
         private const val KEY_BF_DEBT_END_MS = "backfill_debt_end_ms"
 
-        // Durable journal of the LATEST disjoint detection gap. A disjoint
-        // gap cannot live in the debt slot (singleton — overwriting would
-        // discard the still-unpromoted gap already there), so it is staged
-        // here in addition to the in-memory queue: if the process dies
-        // before the queue drains and later ticks advance the cursor past
-        // the queued range, the restart re-ingests this record — the
-        // in-memory queue alone would lose it permanently (the next
-        // detection plans from the newer frontier and can never re-plan a
-        // range the cursor has passed). Overwritten by each new disjoint
-        // detection (latest wins); cleared by the worker once the queue has
-        // been durably drained.
-        private const val KEY_BF_Q_START_MS = "backfill_queue_start_ms"
-        private const val KEY_BF_Q_END_MS = "backfill_queue_end_ms"
+        // Durable journal of disjoint detection gaps, ordered, serialized as
+        // "start:end|start:end|…". A disjoint gap cannot live in the debt
+        // slot (singleton — overwriting would discard the still-unpromoted
+        // gap already there), so each disjoint detection is APPENDED here in
+        // addition to the in-memory queue: if the process dies before the
+        // queue drains and later ticks advance the cursor past the queued
+        // ranges, the restart re-ingests this journal — the in-memory queue
+        // alone would lose them permanently (the next detection plans from
+        // the newer frontier and can never re-plan a range the cursor has
+        // passed). Entries are removed ONLY by the worker after their durable
+        // Room install (commit() — the removal must be durable before the
+        // row can be retired, or a stale entry would replay recovered
+        // slices), so the journal always covers everything not yet durably
+        // installed.
+        private const val KEY_BF_QUEUE_JOURNAL = "backfill_queue_journal"
 
         // Backoff when retirement cannot complete because the debt clear
         // could not be persisted (storage trouble) — retried until it
@@ -137,6 +139,14 @@ class TrackerService : Service() {
         }
     }
 
+    /** Bumped whenever a live tick processes UsageEvents transitions into
+     *  the foreground state. The async [launchForegroundStateSeed]
+     *  captures this generation at launch and assigns its (anchor-time)
+     *  result only if the generation is unchanged — a newer processed
+     *  transition must win over the seed's older snapshot. */
+    @Volatile
+    private var foregroundStateGen = 0L
+
     /** STATE-ONLY foreground seed, run OFF the tick coroutine (the 6-hour
      *  UsageStats query and its iteration must not delay the 10-second
      *  tick), after the anchor has been advanced past a recovered/observed
@@ -148,9 +158,15 @@ class TrackerService : Service() {
      *  is credited from this query (the tick credit is the flat per-tick
      *  sample), so its overlap with the recovered range is the same
      *  documented ≤1-tick residual as the startup-race coordination. One
-     *  bounded query per detection; the seed landing a tick late is
-     *  harmless (the state converges on the next transition/probe). */
+     *  bounded query per detection; the seed runs OFF the tick coroutine
+     *  and its result is generation-guarded (see
+     *  [foregroundStateGen]) so it can never overwrite a newer live state. */
     private fun launchForegroundStateSeed() {
+        // Generation guard: the seed's data is as-of [anchor]. If a live
+        // tick processes transitions while the query runs (its events come
+        // from AFTER the anchor), the tick's state is strictly newer — the
+        // seed must not overwrite it with the older anchor-time state.
+        val genAtStart = foregroundStateGen
         scope.launch {
             try {
                 lastUsageEventQueryTime?.let { anchor ->
@@ -175,9 +191,16 @@ class TrackerService : Service() {
                             AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
                         }
                     }
-                    currentForegroundPkg = AppUsagePoller
-                        .updateForegroundPackage(null, seedEvents)
-                        ?.takeUnless { it == packageName }
+                    // Assign only if no live tick processed newer
+                    // transitions while this query ran (generation
+                    // unchanged); otherwise this seed's anchor-time state
+                    // is stale and would overwrite the newer one — skip the
+                    // assignment entirely rather than nulling the field.
+                    if (foregroundStateGen == genAtStart) {
+                        currentForegroundPkg = AppUsagePoller
+                            .updateForegroundPackage(null, seedEvents)
+                            ?.takeUnless { it == packageName }
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "foreground state seed failed", e)
@@ -334,9 +357,7 @@ class TrackerService : Service() {
             // could never re-plan it. The worker started below claims it and
             // installs it into the durable row; the journal is cleared once
             // the queue has been durably drained.
-            pendingQueuedWindowDurable()?.let { journaled ->
-                enqueueClamped(journaled, 0L)
-            }
+            journalLoad().forEach { journaled -> enqueueClamped(journaled, 0L) }
             lastTickAtMs = 0L
 
             // The process may have just been resurrected after hours or days
@@ -518,6 +539,11 @@ class TrackerService : Service() {
             }
         }
         // UsageEvents does not implement Closeable; resources freed by GC
+        // Bump the foreground-state generation only when this tick actually
+        // processed transitions: the async state-seed's result is as-of its
+        // (older) anchor, so a newer processed transition must invalidate it
+        // (the seed checks this generation before assigning).
+        if (eventList.isNotEmpty()) foregroundStateGen++
 
         val previousForegroundPkg = currentForegroundPkg
         val eventForegroundPkg = AppUsagePoller.updateForegroundPackage(
@@ -829,7 +855,7 @@ class TrackerService : Service() {
                     // before the queue drained would lose the gap
                     // permanently.
                     staged != null -> {
-                        stageQueuedWindowDurable(window)
+                        journalAppend(window)
                         synchronized(queueLock) {
                             enqueueClamped(window, staged.endMs)
                         }
@@ -871,7 +897,7 @@ class TrackerService : Service() {
                                 // with the process, and the advancing cursor
                                 // would prevent any later detection from
                                 // re-planning the range (see the key docs).
-                                stageQueuedWindowDurable(window)
+                                journalAppend(window)
                                 synchronized(queueLock) {
                                     enqueueClamped(window, current.endMs)
                                 }
@@ -1069,39 +1095,70 @@ class TrackerService : Service() {
             if (current == null || current != debt) true else clearPendingDebt()
         }
 
-    /** Durably journals the latest disjoint detection gap (apply() —
+    /** Appends [window] to the durable disjoint-gap journal (apply() —
      *  non-blocking on the tick loop). See the key docs: the in-memory
      *  queue alone would lose a queued disjoint gap if the process died
      *  before the queue drained, because the advancing cursor prevents
-     *  any later detection from re-planning that range. Latest wins. */
-    private fun stageQueuedWindowDurable(window: UsageBackfill.Window) {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .edit()
-            .putLong(KEY_BF_Q_START_MS, window.startMs)
-            .putLong(KEY_BF_Q_END_MS, window.endMs)
-            .apply()
+     *  any later detection from re-planning that range. Appending (never
+     *  overwriting) keeps every not-yet-installed range; entries are
+     *  removed only by [journalRemove] after their durable Room install.
+     *  Callers hold [queueLock] so concurrent read/modify/writes of the
+     *  journal string serialize. */
+    private fun journalAppend(window: UsageBackfill.Window) {
+        synchronized(queueLock) {
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val existing = prefs.getString(KEY_BF_QUEUE_JOURNAL, null)
+            val entry = "${window.startMs}:${window.endMs}"
+            prefs.edit()
+                .putString(
+                    KEY_BF_QUEUE_JOURNAL,
+                    if (existing.isNullOrEmpty()) entry else "$existing|$entry"
+                )
+                .apply()
+        }
     }
 
-    /** The durably journaled disjoint gap, if any (see
-     *  [stageQueuedWindowDurable]). */
-    private fun pendingQueuedWindowDurable(): UsageBackfill.Window? {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val end = prefs.getLong(KEY_BF_Q_END_MS, 0L)
-        if (end <= 0L) return null
-        return UsageBackfill.Window(prefs.getLong(KEY_BF_Q_START_MS, 0L), end)
+    /** Durably removes [windows] from the journal with commit(). The
+     *  removal MUST be durable before the corresponding range can be
+     *  retired from the row — a stale journal entry that survives a crash
+     *  is harmless (re-ingestion is idempotent: the claim step drops a
+     *  window the row already covers), but a journal entry that survives
+     *  while the row was retired would replay recovered slices. Worker-side
+     *  only: commit() blocks, and this path never runs on the tick.
+     *  Callers hold [queueLock]. Returns whether the removal was
+     *  persisted — on failure the caller must keep the in-memory copy so
+     *  the removal retries. */
+    private fun journalRemove(windows: Collection<UsageBackfill.Window>): Boolean {
+        synchronized(queueLock) {
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val current = prefs.getString(KEY_BF_QUEUE_JOURNAL, null) ?: return true
+            val drop = windows.map { "${it.startMs}:${it.endMs}" }.toSet()
+            val kept = current.split('|').filter { it.isNotBlank() && it !in drop }
+            return prefs.edit()
+                .putString(KEY_BF_QUEUE_JOURNAL, kept.joinToString("|"))
+                .commit()
+        }
     }
 
-    /** Removes the durable disjoint-gap journal. Worker-side (commit(),
-     *  durable): the journal is only cleared once its range was installed
-     *  into the durable row (or proven already covered), so a crash can
-     *  always re-ingest it — re-ingestion is idempotent because the claim
-     *  step drops a queued window the row already covers. */
-    private fun clearQueuedWindowDurable() {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .edit()
-            .remove(KEY_BF_Q_START_MS)
-            .remove(KEY_BF_Q_END_MS)
-            .apply()
+    /** Loads the journaled disjoint gaps (oldest first) — startup
+     *  re-ingestion. Caller holds [queueLock]. */
+    private fun journalLoad(): List<UsageBackfill.Window> {
+        synchronized(queueLock) {
+            val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_BF_QUEUE_JOURNAL, null)
+            if (raw.isNullOrEmpty()) return emptyList()
+            return raw.split('|').mapNotNull { part ->
+                val parts = part.split(':')
+                if (parts.size == 2) {
+                    val s = parts[0].toLongOrNull()
+                    val e = parts[1].toLongOrNull()
+                    if (s != null && e != null && e > s) {
+                        return@mapNotNull UsageBackfill.Window(s, e)
+                    }
+                }
+                null
+            }
+        }
     }
 
     /** The end of the still-owed region: the durable Room window if one is
@@ -1182,6 +1239,15 @@ class TrackerService : Service() {
                         val tail = UsageBackfill.Window(
                             maxOf(debt.startMs, row.endMs), debt.endMs
                         )
+                        // Journal the tail durably BEFORE the debt clear: the
+                        // in-memory queue alone would lose it to a crash
+                        // between the clear and the Room claim, and the live
+                        // cursor may already be past it, so no later detection
+                        // could re-plan it. The claim step removes the journal
+                        // entry only after the durable Room install (and drops
+                        // a copy the row already covers), so the journal and
+                        // the queue can never double-replay this range.
+                        journalAppend(tail)
                         enqueueClamped(tail, row.endMs)
                     }
                     // Conditional: the Room write above suspended, and a
@@ -1243,20 +1309,35 @@ class TrackerService : Service() {
                             pendingRecoveryWindows.firstOrNull()
                         }
                         if (next != null) {
-                            if (row != null && row.progressMs >= next.endMs) {
-                                // The durable row already covers this queued
-                                // copy (e.g. promoteDebt re-installed the same
-                                // range from a failed-clear debt while it sat
-                                // queued): drop it instead of re-installing —
-                                // dao.set would reset progress and replay
-                                // already-recovered slices.
-                                synchronized(queueLock) {
-                                    if (pendingRecoveryWindows.firstOrNull() == next) {
-                                        pendingRecoveryWindows.removeFirstOrNull()
-                                    }
+                            // The window's durable JOURNAL entry must be
+                            // removed with commit() only after its durable
+                            // Room install (or proof it is already covered):
+                            // a stale journal entry is harmless (re-ingestion
+                            // is idempotent via the covered-check), but a
+                            // journal entry removed while the row was retired
+                            // would replay recovered slices. The in-memory
+                            // copy is dropped only after the journal removal
+                            // is persisted; a failed commit keeps it queued
+                            // and the next pass retries via this same path.
+                            val journalRemoved = journalRemove(listOf(next))
+                            when {
+                                row != null && row.progressMs >= next.endMs -> {
+                                    // The durable row already covers this queued
+                                    // copy (e.g. promoteDebt re-installed the same
+                                    // range from a failed-clear debt while it sat
+                                    // queued): drop it instead of re-installing —
+                                    // dao.set would reset progress and replay
+                                    // already-recovered slices.
                                 }
-                            } else {
-                                dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                                journalRemoved -> {
+                                    dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                                }
+                                else -> {
+                                    // Journal removal could not be persisted:
+                                    // leave the window queued for the next pass.
+                                }
+                            }
+                            if (journalRemoved) {
                                 synchronized(queueLock) {
                                     // Same single-worker pass; a detector can only
                                     // add, so the head we peeked is still the head.
@@ -1264,14 +1345,6 @@ class TrackerService : Service() {
                                         pendingRecoveryWindows.removeFirstOrNull()
                                     }
                                 }
-                            }
-                            // The range just claimed is durably installed (or
-                            // proven already covered): once the queue has
-                            // drained, the disjoint-gap journal can go too —
-                            // a crash from here on re-plans nothing stale, and
-                            // re-ingestion before this point was idempotent.
-                            if (synchronized(queueLock) { pendingRecoveryWindows.isEmpty() }) {
-                                clearQueuedWindowDurable()
                             }
                         }
                     }
@@ -1353,8 +1426,9 @@ class TrackerService : Service() {
                         }
                         if (!retryLater) {
                             // Retiring with an empty queue: every disjoint-gap
-                            // journal has been durably installed — drop it.
-                            clearQueuedWindowDurable()
+                            // journal entry has already been durably removed
+                            // (commit()) after its durable install, so the
+                            // journal is empty here by construction.
                             dao.clear()
                             backfillInFlight.set(false)
                             retire = true
