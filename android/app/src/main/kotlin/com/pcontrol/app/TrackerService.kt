@@ -1416,7 +1416,18 @@ class TrackerService : Service() {
             // prolonged Room failure) re-appends the SAME disjoint window —
             // skipping identical entries keeps the journal bounded. Distinct
             // ranges still append (they are genuinely separate gaps).
-            if (existing?.split('|')?.any { it == entry } == true) return true
+            if (existing != null && existing.split('|').any { it == entry }) {
+                // A dedupe hit may still be only an apply()-staged entry from
+                // a detector that has not reached disk yet. In durable mode
+                // the caller is about to CLEAR a durable record based on this
+                // journal entry, so the entry must be on disk NOW: commit the
+                // current value (re-writing it forces the queued write).
+                return if (durable) {
+                    prefs.edit().putString(KEY_BF_QUEUE_JOURNAL, existing).commit()
+                } else {
+                    true
+                }
+            }
             val editor = prefs.edit()
                 .putString(
                     KEY_BF_QUEUE_JOURNAL,

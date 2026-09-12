@@ -80,7 +80,11 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
   The bound accessibility service keeps the process alive, and the next
   app-open/boot/package-replace retries the foreground start.
 - **Cursor persistence**: every committed tick writes
-  `tick_cursor_ms` (wall clock of the attribution window end).
+  `tick_cursor_ms` (wall clock of the attribution window end) — except
+  when the tick credited nothing and UsageStats access is unconfirmed:
+  `commitTick` then holds the cursor back so the uncredited stretch stays
+  recoverable (the overlong-gap guard stages it as a recovery window,
+  replayed once access is granted).
 - **Gap backfill**: on service start and whenever a tick detects a stall
   (`now - lastTickAt > 2 min`), the gap becomes a durable **pending
   recovery window** (Room `backfill_state`) that live ticks cannot
@@ -190,10 +194,13 @@ tick cursor:
   merges + its `advanceProgress` commit in ONE Room transaction — a crash
   rolls both back (no lost slices, no double-counted ones). The old
   claim-the-whole-window-before-merging is gone.
-- **The cursor is monotonic and lock-free**: `commitTick` is the cursor's
-  single writer and persists `max(previous, endTime)` (in-memory anchor
-  too), so neither a racing detection nor a wall-clock rollback can move
-  the frontier backwards; the backfill never writes `tick_cursor_ms`.
+- **The cursor is monotonic and serialized**: `commitTick` writes
+  `max(previous, endTime)` (in-memory anchor too) under `anchorLock`, and
+  recovery retirement's durable cursor pin writes the same preference
+  under the same lock, so neither a racing detection nor a wall-clock
+  rollback can move the frontier backwards. Persistence is gated: when a
+  tick credits nothing and UsageStats access is unconfirmed, the cursor is
+  held back so the stretch becomes a recovery window once access returns.
 - **Registration is serialized with publication** under `backfillMutex`:
   a detector always sees previously published windows and either clamps
   behind them or publishes its own gap as the pending row when nothing is

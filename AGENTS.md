@@ -254,10 +254,14 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - **Usage during outages is backfilled from system UsageStats.** Live
   attribution is 10 s sampling: time with the process dead or frozen never
   reaches the counters. Ticks persist `tick_cursor_ms` (the live frontier,
-  written only by `commitTick` — its single writer — and monotonic:
-  `max(previous, endTime)`, so clock rollback cannot rewind it) on every
-  commit; a wall-clock rollback itself skips the tick (that range was
-  already counted). On service start and on ≥2 min loop stalls (detected
+  written by `commitTick` and — serialized with it under `anchorLock` —
+  by recovery retirement's durable cursor pin; monotonic:
+  `max(previous, endTime)`, so clock rollback cannot rewind it) whenever
+  the tick credited something or UsageStats access is confirmed; when
+  nothing was credited and access is unconfirmed the cursor is held back
+  so the stretch stays recoverable (the overlong-gap guard then stages it
+  as a recovery window). A wall-clock rollback itself skips the tick (that
+  range was already counted). On service start and on ≥2 min loop stalls (detected
   via `SystemClock.elapsedRealtime()`), a detected gap is staged as a
   prefs "debt" (apply() — non-blocking on the tick) and becomes a
   **durable pending recovery window** (Room `backfill_state`, schema v3)
