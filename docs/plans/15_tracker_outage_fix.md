@@ -92,6 +92,13 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
   below for the failure-mode rationale.)
 - Web (domain) usage cannot be backfilled retroactively — domains are only
   readable live via the accessibility service. Documented limitation.
+- Locked-screen time inside a recovery window: the replay sees only app
+  transitions, not screen/keyguard state (those UsageEvents are API 30+ and
+  would need a gated replay), so an eventless interval that spans a device
+  lock can contribute up to the 5-minute silence cap of locked time. The
+  live path attributes nothing while the keyguard is locked; recovery stays
+  bounded by the same cap that bounds all recovery phantom attribution.
+  Documented limitation.
 - Tick-path consistency: the event-derived foreground can be pcontrol
   itself (parent viewing the dashboard); exclude self there too.
 

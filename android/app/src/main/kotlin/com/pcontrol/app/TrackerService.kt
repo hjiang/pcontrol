@@ -160,6 +160,14 @@ class TrackerService : Service() {
      *  failing (each failed tick ages the heartbeat toward another stall). */
     private val foregroundSeedInFlight = AtomicBoolean(false)
 
+    // Set when a seed request arrives while another seed is in flight: the
+    // in-flight seed chains a rerun on completion so the newer request's
+    // (post-detection-anchor) state is actually queried. A rejected caller
+    // returning silently would let the in-flight seed assign its OLDER
+    // anchor-time snapshot — e.g. a startup seed outliving a stall
+    // detection, restoring the pre-freeze foreground after thaw.
+    private val foregroundSeedRerun = AtomicBoolean(false)
+
     /** The end time of the most recent tick whose foreground selection was
      *  confirmed by the AUTHORITATIVE accessibility probe (raw result
      *  non-null, including self). The async state-seed must not overwrite an
@@ -200,7 +208,13 @@ class TrackerService : Service() {
         // call invalidate the in-flight seed's result with no replacement
         // query launched, dropping that state refresh entirely. The result
         // generation/seq guards keep whichever seed finishes authoritative.
-        if (!foregroundSeedInFlight.compareAndSet(false, true)) return
+        if (!foregroundSeedInFlight.compareAndSet(false, true)) {
+            // A seed is already querying. Chain a rerun instead of returning
+            // silently: the in-flight seed is anchored at an OLDER time, and
+            // this caller's detection may have advanced the anchor past it.
+            foregroundSeedRerun.set(true)
+            return
+        }
         val seqAtStart = ++foregroundSeedSeq
         scope.launch {
             try {
@@ -252,6 +266,14 @@ class TrackerService : Service() {
                 Log.w(TAG, "foreground state seed failed", e)
             } finally {
                 foregroundSeedInFlight.set(false)
+                // Chain a rerun requested while this seed was in flight: the
+                // rerun launches with the newer current anchor, so a
+                // detection that arrived mid-query is never lost. The seq/
+                // generation guards keep the freshest completed seed
+                // authoritative.
+                if (foregroundSeedRerun.compareAndSet(true, false)) {
+                    launchForegroundStateSeed()
+                }
             }
         }
     }
@@ -1636,18 +1658,28 @@ class TrackerService : Service() {
                             // re-ingestion is idempotent via the covered-check
                             // below, and a failed removal commit keeps the
                             // window queued for the next pass's retry.
-                            if (row == null || row.progressMs < next.endMs) {
-                                // Never move the durable frontier backwards:
-                                // when the row's progress already sits inside
-                                // `next` (a stale-cursor overlap that slipped
-                                // past staging), claim only the uncovered
-                                // remainder (progressMs, next.endMs] —
-                                // reinstalling `next` verbatim would rewind
-                                // progress and replay merged usage.
-                                val claimFrom = maxOf(next.startMs, row?.progressMs ?: 0L)
-                                if (next.endMs > claimFrom) {
-                                    dao.set(BackfillStateEntity(0, claimFrom, next.endMs))
-                                }
+                            if (row == null) {
+                                dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                            } else if (row.progressMs < next.endMs) {
+                                // EXTEND the active row, never rewrite it:
+                                // preserving progressMs and raising only endMs
+                                // keeps the row's unprocessed prefix owed —
+                                // rewriting the row to `next` would drop both
+                                // that prefix and any tail beyond next.endMs
+                                // when a stale journaled/queued window
+                                // overlaps the active row (startup
+                                // re-ingestion and the tick-side disjoint path
+                                // can enqueue windows without row knowledge).
+                                // A fully covered entry (endMs <= progressMs)
+                                // takes the no-set path above and is simply
+                                // removed from the queue.
+                                dao.set(
+                                    BackfillStateEntity(
+                                        row.id,
+                                        row.progressMs,
+                                        maxOf(row.endMs, next.endMs)
+                                    )
+                                )
                             }
                             // The row now durably covers `next` (either just
                             // installed, or the covered-check above held), so
