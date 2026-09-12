@@ -256,37 +256,34 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   reaches the counters. Ticks persist `tick_cursor_ms` (the live frontier,
   written only by `commitTick` — its single writer — and monotonic:
   `max(previous, endTime)`, so clock rollback cannot rewind it) on every
-  commit; on
-  service start and on ≥2 min loop stalls, a detected gap becomes a
+  commit; a wall-clock rollback itself skips the tick (that range was
+  already counted). On service start and on ≥2 min loop stalls (detected
+  via `SystemClock.elapsedRealtime()`), a detected gap is staged as a
+  prefs "debt" (apply() — non-blocking on the tick) and becomes a
   **durable pending recovery window** (Room `backfill_state`, schema v3)
-  that live ticks cannot overwrite, then replays `queryEvents` through
-  `UsageBackfill` (`:core`, pure, unit-tested) and merges per-day app
-  counters. Key invariants: each ~1 h chunk's merges + its progress
-  advance commit in one Room transaction (crash ⇒ rollback ⇒ retry: no
-  lost slices, no double-count); registration is serialized with
-  publication under `backfillMutex` (a detector publishes its gap as the
-  pending row when nothing is owed, so requests can never queue
-  un-clamped duplicates of another detector's window; queued windows are
-  clamped against the latest queued end) and drained before the job
-  retires (never dropped by the single-flight
-  guard); a detection is also recorded as a prefs "debt" (synchronous
-  `commit()`, cleared checked) before the Room
-  registration, so a failed registration retries instead of dropping the
-  window, and registration never blocks the tick loop (only an in-memory
-  frontier snapshot runs there). Retries replay from before the progress
-  frontier with only uncommitted time counted, so a retry neither resets
-  the 5-min silence cap nor drops a short tail (the min-gap check applies
-  only when creating a window, never on retry). Eventless intervals cap at
-  5 min measured from interval
-  start (preserved across chunks and retries; sub-second remainders carry
-  across chunks); pcontrol's own package is excluded;
-  web/domain usage is not recoverable retroactively. The freeze-thaw path
-  additionally floors the replay start at the in-memory
-  `lastUsageEventQueryTime`. Backfill runs on its own single-flight
-  coroutine so a multi-day replay never stalls the tick loop. Residual:
-  pinned windows are in-memory — a death between queueing and the drain
-  loses that queued gap until the next detection; recovery progress
-  itself is always durable.
+  that live ticks cannot overwrite; the worker commits the debt durably
+  and replays `queryEvents` through `UsageBackfill` (`:core`, pure,
+  unit-tested), merging per-day app counters. Key invariants: each ~1 h
+  chunk's merges + its progress advance commit in one Room transaction
+  (crash ⇒ rollback ⇒ retry: no lost slices, no double-count);
+  registration and retirement are serialized with promotion under
+  `backfillMutex` + `debtLock`; the first live query after detection
+  starts at the recovery end (the anchor is advanced at detection), and
+  retirement only clears a debt fully covered by the recovered frontier —
+  an extending debt becomes the next claimed window. Registration writes
+  retry in place (3 × 2 s) on transient Room failures, and the failure
+  path keeps the worker alive while any durable work (queued tails, row
+  work, staged debt) remains. Eventless intervals cap at 5 min measured
+  from interval start (preserved across chunks and retries; sub-second
+  remainders carry across chunks); pcontrol's own package is excluded —
+  including when the accessibility probe reports the pcontrol dashboard
+  itself as foreground (an explicit no-usage tick, never falling back to
+  a stale event-derived app); web/domain usage is not recoverable
+  retroactively. Backfill runs on its own single-flight coroutine so a
+  multi-day replay never stalls the tick loop. Residual: the durable
+  handoff is worker-side — a process death between detection and the
+  worker's durable write (scheduling + apply-flush latency, normally ms)
+  loses the gap until the next detection.
 
 - **HyperOS blocks background activity starts even with draw-over-other-apps.**
   Never use `startActivity` as an automatic enforcement surface: Xiaomi can
