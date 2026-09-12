@@ -81,10 +81,14 @@ New `TimedAppEvent(packageName, eventType, timestampMs)` and
   app-open/boot/package-replace retries the foreground start.
 - **Cursor persistence**: every committed tick writes
   `tick_cursor_ms` (wall clock of the attribution window end) — except
-  when the tick credited nothing and UsageStats access is unconfirmed:
-  `commitTick` then holds the cursor back so the uncredited stretch stays
-  recoverable (the overlong-gap guard stages it as a recovery window,
-  replayed once access is granted).
+  when the tick knew no foreground app AND UsageStats access is
+  unconfirmed. Not merely "credited nothing": a locked-screen tick credits
+  nothing but still knows the foreground state, and holding the cursor
+  back there would stage locked-screen time as a recovery window and
+  replay it against the locked-screen attribution rule. `commitTick` then
+  holds the cursor back so the unattributed stretch stays recoverable (the
+  overlong-gap guard stages it as a recovery window, replayed once access
+  is granted).
 - **Gap backfill**: on service start and whenever a tick detects a stall
   (`now - lastTickAt > 2 min`), the gap becomes a durable **pending
   recovery window** (Room `backfill_state`) that live ticks cannot
@@ -199,8 +203,10 @@ tick cursor:
   recovery retirement's durable cursor pin writes the same preference
   under the same lock, so neither a racing detection nor a wall-clock
   rollback can move the frontier backwards. Persistence is gated: when a
-  tick credits nothing and UsageStats access is unconfirmed, the cursor is
-  held back so the stretch becomes a recovery window once access returns.
+  tick knew no foreground app AND UsageStats access is unconfirmed, the
+  cursor is held back so the stretch becomes a recovery window once access
+  returns (a locked-screen tick credits nothing but still knows the
+  foreground state, so it advances the cursor).
 - **Registration is serialized with publication** under `backfillMutex`:
   a detector always sees previously published windows and either clamps
   behind them or publishes its own gap as the pending row when nothing is
@@ -280,6 +286,19 @@ tick cursor:
   while ANY durable work remains (queued windows or a pending row with
   `progressMs < endMs`) — retrying with backoff instead of stranding it
   until the next detection.
+- **Progress never jumps past an unrecovered queued window**: promoting a
+  debt to the row (or extending the row at retirement) that would raise
+  `progressMs` to/past a queued window's end — or overlap its span —
+  enqueues the window durably behind the queue instead, so the claim
+  step's "fully covered" erasure can never silently drop a detected
+  outage. The decision is a pure seam (`BackfillPromotion` in `:core`,
+  unit-tested) over row end, debt window, and queued windows.
+- **The single-flight guard is released atomically with the final work
+  check**: the retire arm re-checks queue AND detection debt under
+  `backfillMutex` — the same mutex the detector's durable-work check and
+  CAS use — so a detector either registers before the check (the job
+  loops and drains it) or acquires the guard after the release; durable
+  work can never be left with no worker.
 - **Retirement is gated on the live cursor catching up** and on remaining
   work: the claim/retire check distinguishes a newly published row
   (`progressMs < endMs` — process it) from the just-finished row

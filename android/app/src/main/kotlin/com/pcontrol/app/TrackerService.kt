@@ -24,6 +24,7 @@ import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
+import com.pcontrol.core.BackfillPromotion
 import com.pcontrol.core.BrowserContext
 import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
@@ -285,9 +286,10 @@ class TrackerService : Service() {
     // Serializes the backfill bookkeeping — pending-row registration and
     // retirement, the detection debt, and the pinned-window queue — among
     // the backfill coroutines (detections and the worker). The live tick
-    // cursor is NOT part of this state: commitTick is its single writer and
-    // never takes this mutex, so no database I/O here can ever delay the
-    // 10-second tick.
+    // cursor is NOT part of this state: its two writers (commitTick, and
+    // recovery retirement's durable cursor pin) are serialized with each
+    // other under [anchorLock], and neither needs this mutex — so no
+    // database I/O here can ever delay the 10-second tick.
     private val backfillMutex = Mutex()
 
     // Guards the detection-debt preference operations (stage/merge, read,
@@ -455,10 +457,6 @@ class TrackerService : Service() {
             // marker: a completed recovery row keeps progressMs == endMs
             // until retirement (which waits for the cursor to catch up), so
             // the marker frontier can sit AHEAD of the persisted cursor
-            // (e.g. a death before the next commitTick, or a rollback into
-            // the recovered window). Seeding the anchor from the marker
-            // frontier as well prevents the first live queries from
-            // re-counting transitions inside the already-merged window.
             // (e.g. a death before the next commitTick, or a rollback into
             // the recovered window). Seeding the anchor from the marker
             // frontier as well prevents the first live queries from
@@ -1352,7 +1350,11 @@ class TrackerService : Service() {
                 // Release the guard BEFORE re-entering: the retry's own CAS
                 // must be able to acquire it — a still-held flag would fail
                 // compareAndSet, return, and wedge single-flight (and every
-                // future detection) permanently.
+                // future detection) permanently. Safe outside [backfillMutex]:
+                // only the guard's owner ever stores false, and the re-entered
+                // launchBackfill re-checks durable work under the mutex before
+                // its CAS — a detector that acquires the mutex in between owns
+                // the work and the relaunch simply no-ops.
                 if (ownsGuard) backfillInFlight.set(false)
                 if (retry) {
                     delay(REGISTRATION_RETRY_BACKOFF_MS)
@@ -1570,7 +1572,6 @@ class TrackerService : Service() {
      *  branch unions them into the row exactly once). Fully-subsumed
      *  requests are dropped. Safe from the tick coroutine: the queue
      *  accesses take [queueLock] (never held across suspension).
-     *  the queue accesses take [queueLock] (never held across suspension).
      *  With [durable] = true the journal write commits synchronously and
      *  the return value reports whether the queued window is durably
      *  journaled — a worker caller that is about to CLEAR the durable
@@ -1695,11 +1696,34 @@ class TrackerService : Service() {
                 else -> {
                     // Promote the debt as the next window, never moving the
                     // progress backwards past what the completed row already
-                    // recovered.
-                    val start = maxOf(debt.startMs, row?.endMs ?: 0L)
-                    val end = maxOf(debt.endMs, row?.endMs ?: 0L)
-                    if (end > start) {
-                        dao.set(BackfillStateEntity(0, start, end))
+                    // recovered — and never FORWARDS past an unrecovered
+                    // queued window: the claim step erases a queued window
+                    // whose end is at/below the row's progress ("fully
+                    // covered"), so jumping over one would silently lose a
+                    // detected outage. Queue conflicts route through the
+                    // FIFO queue instead (drained first, each as a fresh
+                    // row with its own progress frontier).
+                    val rowEnd = row?.endMs ?: 0L
+                    val queued = synchronized(queueLock) { pendingRecoveryWindows.toList() }
+                    when (val decision = BackfillPromotion.promoteDebt(
+                        UsageBackfill.Window(debt.startMs, debt.endMs), rowEnd, queued
+                    )) {
+                        is BackfillPromotion.Decision.InstallRow ->
+                            dao.set(BackfillStateEntity(0, decision.progressMs, decision.endMs))
+                        is BackfillPromotion.Decision.Enqueue -> {
+                            // enqueueClamped re-validates against the live
+                            // queue (the snapshot above can be stale) and
+                            // commits the journal synchronously; on a failed
+                            // commit the debt below is kept untouched and the
+                            // whole promotion retries on the next pass — the
+                            // clear can never drop a record whose replacement
+                            // is not yet on disk.
+                            if (!enqueueClamped(decision.window, rowEnd, durable = true)) {
+                                Log.w(TAG, "debt journal commit failed; promotion retried")
+                                return
+                            }
+                        }
+                        BackfillPromotion.Decision.None -> Unit
                     }
                     // Conditional for the same reason as above: a debt staged
                     // while dao.set() was in flight supersedes this snapshot
@@ -1866,40 +1890,72 @@ class TrackerService : Service() {
                         val extending = synchronized(debtLock) { pendingDebt() }
                             ?.takeIf { it.endMs > recoveredEnd }
                         if (extending != null) {
-                            // Publish the extension DURABLY through the row:
-                            // progress STAYS at the recovered frontier
-                            // (everything through recoveredEnd remains
-                            // recovered-through — the restart protection the
-                            // completed row provided), and only endMs extends
-                            // to the debt's end, so (recoveredEnd, debt.end]
-                            // becomes remaining work. Unlike an in-memory
-                            // queue entry, this survives a crash between this
-                            // set and the next pass; the next
-                            // recoverPendingWindow replays exactly the tail.
-                            // The suspension deliberately runs OUTSIDE
-                            // [debtLock] (a monitor cannot span a suspension
-                            // point); the clear below is conditional on the
-                            // debt still matching the snapshot, so a newer
-                            // record staged during the Room write survives
-                            // and is handled by the next pass.
-                            dao.set(
-                                BackfillStateEntity(
-                                    id = row?.id ?: 0,
-                                    // A debt staged after promoteDebt read the
-                                    // completed row can start LATER than
-                                    // recoveredEnd (a disjoint outage: ticks
-                                    // were live-counting while recovery ran).
-                                    // Starting the window at recoveredEnd
-                                    // would replay the already-live-counted
-                                    // stretch up to the debt's start — start it
-                                    // at the later of the two instead.
-                                    progressMs = maxOf(recoveredEnd, extending.startMs),
-                                    endMs = extending.endMs
-                                )
-                            )
-                            retryLater = true
-                            if (!clearPendingDebtIfUnchanged(extending)) {
-                                Log.w(TAG, "detection debt clear not persisted; retire retried")
+                            val queued = synchronized(queueLock) { pendingRecoveryWindows.toList() }
+                            when (val decision = BackfillPromotion.extendRow(
+                                recoveredEnd,
+                                UsageBackfill.Window(extending.startMs, extending.endMs),
+                                queued
+                            )) {
+                                is BackfillPromotion.Decision.InstallRow -> {
+                                    // Publish the extension DURABLY through the row:
+                                    // progress STAYS at the recovered frontier
+                                    // (everything through recoveredEnd remains
+                                    // recovered-through — the restart protection the
+                                    // completed row provided), and only endMs extends
+                                    // to the debt's end, so (recoveredEnd, debt.end]
+                                    // becomes remaining work. Unlike an in-memory
+                                    // queue entry, this survives a crash between this
+                                    // set and the next pass; the next
+                                    // recoverPendingWindow replays exactly the tail.
+                                    // The suspension deliberately runs OUTSIDE
+                                    // [debtLock] (a monitor cannot span a suspension
+                                    // point); the clear below is conditional on the
+                                    // debt still matching the snapshot, so a newer
+                                    // record staged during the Room write survives
+                                    // and is handled by the next pass.
+                                    dao.set(
+                                        BackfillStateEntity(
+                                            id = row?.id ?: 0,
+                                            // The debt's start can be LATER than
+                                            // recoveredEnd (a disjoint outage:
+                                            // ticks were live-counting while
+                                            // recovery ran). Starting the window
+                                            // at recoveredEnd would replay the
+                                            // already-live-counted stretch up to
+                                            // the debt's start — start it at the
+                                            // later of the two instead.
+                                            progressMs = decision.progressMs,
+                                            endMs = decision.endMs
+                                        )
+                                    )
+                                    retryLater = true
+                                    if (!clearPendingDebtIfUnchanged(extending)) {
+                                        Log.w(TAG, "detection debt clear not persisted; retire retried")
+                                    }
+                                }
+                                is BackfillPromotion.Decision.Enqueue -> {
+                                    // A queued window lies at/below the frontier
+                                    // the extension would publish (or overlaps
+                                    // the new span): raising progress past it
+                                    // would let the claim step erase that window
+                                    // as "fully covered" — a silently lost
+                                    // outage. Queue the extension behind it
+                                    // instead and let the row retire normally
+                                    // (retryLater stays false): the drain arm
+                                    // keeps the worker and guard alive while the
+                                    // queue is non-empty and claims each window
+                                    // as a fresh row with its own frontier.
+                                    if (enqueueClamped(decision.window, recoveredEnd, durable = true)) {
+                                        synchronized(debtLock) { clearPendingDebtIfUnchanged(extending) }
+                                    } else {
+                                        Log.w(TAG, "extension journal commit failed; retire retried")
+                                        retryLater = true
+                                    }
+                                }
+                                // Unreachable with the takeIf guard above (the
+                                // debt's end is strictly past recoveredEnd);
+                                // present for sealed exhaustiveness.
+                                BackfillPromotion.Decision.None -> Unit
                             }
                         } else {
                             // No debt, or one fully covered by the recovered
@@ -1925,10 +1981,11 @@ class TrackerService : Service() {
                             }
                         }
                         if (!retryLater) {
-                            // Retiring with an empty queue: every disjoint-gap
-                            // journal entry has already been durably removed
-                            // (commit()) after its durable install, so the
-                            // journal is empty here by construction.
+                            // Retiring. Any still-queued windows were durably
+                            // published (journal entry committed) before this
+                            // point and are drained by the arm below after the
+                            // marker clears; a claimed window's journal entry
+                            // is removed only after its durable Room install.
                             //
                             // Durably acknowledge the cursor BEFORE removing
                             // the marker: the in-memory frontier was checked
@@ -1976,21 +2033,32 @@ class TrackerService : Service() {
             }
             when {
                 retire -> {
-                    // The completed row was cleared. If windows are still
-                    // queued (a disjoint window left queued above), KEEP the
-                    // worker and the single-flight guard and claim them as
-                    // fresh rows on the next pass; exit only when nothing is
-                    // left. Each remaining cycle performs real Room work
-                    // (claim + replay), so this converges instead of spinning.
-                    if (synchronized(queueLock) { pendingRecoveryWindows.isEmpty() }) {
-                        // Release the single-flight guard ONLY once the queue
-                        // is fully drained: with windows left queued (a
-                        // disjoint head left queued above), the next pass
-                        // claims each as a fresh row under the SAME guard —
-                        // releasing now would let a second worker start
-                        // concurrently.
-                        backfillInFlight.set(false)
-                        return
+                    // The completed row was cleared. The final work check and
+                    // the guard release run ATOMICALLY under [backfillMutex] —
+                    // the same mutex the detector's durable-work check and CAS
+                    // use — so a concurrent detector either published its work
+                    // before this check (we loop and drain it) or acquires the
+                    // guard after the release (and starts a fresh job).
+                    // Releasing outside the mutex would let a detector stage
+                    // durable work in between, fail its CAS against the
+                    // still-held flag, and return: durable debt/queue with no
+                    // worker until the next detection or restart.
+                    backfillMutex.withLock {
+                        val drained =
+                            synchronized(queueLock) { pendingRecoveryWindows.isEmpty() } &&
+                                synchronized(debtLock) { pendingDebt() == null }
+                        if (drained) {
+                            // Release the single-flight guard ONLY once every
+                            // durable record is drained: with windows left
+                            // queued (a disjoint head left queued above), the
+                            // next pass claims each as a fresh row under the
+                            // SAME guard — releasing now would let a second
+                            // worker start concurrently.
+                            backfillInFlight.set(false)
+                            return
+                        }
+                        // Durable work appeared mid-retirement (a queue entry
+                        // or a detection debt): loop and drain it.
                     }
                 }
                 retryLater -> delay(RETIRE_RETRY_BACKOFF_MS)

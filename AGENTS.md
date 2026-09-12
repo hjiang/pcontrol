@@ -257,10 +257,15 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   written by `commitTick` and — serialized with it under `anchorLock` —
   by recovery retirement's durable cursor pin; monotonic:
   `max(previous, endTime)`, so clock rollback cannot rewind it) whenever
-  the tick credited something or UsageStats access is confirmed; when
-  nothing was credited and access is unconfirmed the cursor is held back
-  so the stretch stays recoverable (the overlong-gap guard then stages it
-  as a recovery window). A wall-clock rollback itself skips the tick (that
+  the tick knew a foreground app or UsageStats access is confirmed; the
+  cursor is held back only when NO foreground was known AND access is
+  unconfirmed, so the stretch stays recoverable (the overlong-gap guard
+  then stages it as a recovery window). Deliberately safer than gating on
+  "credited nothing": a locked-screen tick credits nothing but still knows
+  the foreground state — holding the cursor back there would stage
+  locked-screen time as a recovery window and replay up to the 5-minute
+  silence cap to the pre-lock app, violating "locked-screen time is
+  attributed to nobody". A wall-clock rollback itself skips the tick (that
   range was already counted). On service start and on ≥2 min loop stalls (detected
   via `SystemClock.elapsedRealtime()`), a detected gap is staged as a
   prefs "debt" (apply() — non-blocking on the tick) and becomes a
