@@ -1119,7 +1119,12 @@ class TrackerService : Service() {
                                 .getLong(KEY_TICK_CURSOR_MS, 0L)
                         },
                         synchronized(queueLock) {
-                            pendingRecoveryWindows.lastOrNull()?.endMs ?: 0L
+                            // Max over ALL queued ends (the queue is not
+                            // guaranteed chronologically ordered — see
+                            // [enqueueClamped]): every queued range is
+                            // claimed-for recovery, so the worker's plan
+                            // must not overlap any of them.
+                            pendingRecoveryWindows.maxOfOrNull { it.endMs } ?: 0L
                         }
                     )
                     val window = planWindow(frontierMs, nowMs, minStartMs)
@@ -1499,10 +1504,16 @@ class TrackerService : Service() {
 
     /** Queues [window] for the running job, clamped so it cannot overlap
      *  anything still owed: neither the durable pending window (whose
-     *  progress advances chunk by chunk), the windows already queued ahead
-     *  of it — two detections with a stale frontier would otherwise enqueue
-     *  overlapping ranges — nor (for the detector path) the staged debt.
-     *  Fully-subsumed requests are dropped. Safe from the tick coroutine:
+     *  progress advances chunk by chunk), the QUEUED WINDOWS THAT OVERLAP
+     *  the requested span — two detections with a stale frontier would
+     *  otherwise enqueue overlapping ranges — nor (for the detector path)
+     *  the staged debt. A later DISJOINT queued window does NOT clamp the
+     *  request (the queue is not guaranteed chronologically ordered — e.g.
+     *  a promoteDebt tail enqueued after a later disjoint detection);
+     *  disjoint ranges coalesce safely at claim time instead (the extend
+     *  branch unions them into the row exactly once). Fully-subsumed
+     *  requests are dropped. Safe from the tick coroutine: the queue
+     *  accesses take [queueLock] (never held across suspension).
      *  the queue accesses take [queueLock] (never held across suspension).
      *  With [durable] = true the journal write commits synchronously and
      *  the return value reports whether the queued window is durably
@@ -1516,8 +1527,20 @@ class TrackerService : Service() {
     ): Boolean {
         synchronized(queueLock) {
             var w = window ?: return true
+            // Clamp only against QUEUED windows that OVERLAP the requested
+            // span. Clamping against a later DISJOINT queued window would
+            // push the request past its own end and silently drop a real
+            // recovery tail (e.g. debt tail [100,200] subsumed to [300,300]
+            // by queued [200,300] with the row ending at 100 — the tail
+            // would never be replayed). Genuinely overlapping enqueues are
+            // still coalesced here; disjoint ones merge safely at claim
+            // time instead.
             var owed = owedThroughMs
-            pendingRecoveryWindows.lastOrNull()?.let { owed = maxOf(owed, it.endMs) }
+            for (queued in pendingRecoveryWindows) {
+                if (queued.startMs < w.endMs && queued.endMs > w.startMs) {
+                    owed = maxOf(owed, queued.endMs)
+                }
+            }
             if (owed > w.startMs) {
                 w = UsageBackfill.Window(owed, maxOf(w.endMs, owed))
             }
