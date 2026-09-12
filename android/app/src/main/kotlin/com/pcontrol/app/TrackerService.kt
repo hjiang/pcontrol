@@ -40,6 +40,7 @@ import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -147,6 +148,13 @@ class TrackerService : Service() {
     @Volatile
     private var foregroundStateGen = 0L
 
+    /** The end time of the most recent tick whose foreground selection was
+     *  confirmed by the AUTHORITATIVE accessibility probe (raw result
+     *  non-null, including self). The async state-seed must not overwrite an
+     *  accessibility-confirmed state that is newer than the seed's anchor. */
+    @Volatile
+    private var lastAuthoritativeForegroundAt = 0L
+
     /** STATE-ONLY foreground seed, run OFF the tick coroutine (the 6-hour
      *  UsageStats query and its iteration must not delay the 10-second
      *  tick), after the anchor has been advanced past a recovered/observed
@@ -167,6 +175,12 @@ class TrackerService : Service() {
         // from AFTER the anchor), the tick's state is strictly newer — the
         // seed must not overwrite it with the older anchor-time state.
         val genAtStart = foregroundStateGen
+        // The generation only moves on UsageEvents transitions, but the live
+        // path also updates the foreground from the AUTHORITATIVE
+        // accessibility probe (every commitTick, even without transitions).
+        // The seed must additionally not overwrite an accessibility-confirmed
+        // state that is newer than the seed's anchor.
+        val authoritativeAtStart = lastAuthoritativeForegroundAt
         scope.launch {
             try {
                 lastUsageEventQueryTime?.let { anchor ->
@@ -191,12 +205,15 @@ class TrackerService : Service() {
                             AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
                         }
                     }
-                    // Assign only if no live tick processed newer
-                    // transitions while this query ran (generation
-                    // unchanged); otherwise this seed's anchor-time state
-                    // is stale and would overwrite the newer one — skip the
+                    // Assign only if no live tick processed newer transitions
+                    // (generation unchanged) AND no accessibility-confirmed
+                    // foreground update landed after this seed's anchor —
+                    // otherwise the seed's anchor-time snapshot is stale and
+                    // would overwrite the newer live state; skip the
                     // assignment entirely rather than nulling the field.
-                    if (foregroundStateGen == genAtStart) {
+                    if (foregroundStateGen == genAtStart &&
+                        lastAuthoritativeForegroundAt <= anchor
+                    ) {
                         currentForegroundPkg = AppUsagePoller
                             .updateForegroundPackage(null, seedEvents)
                             ?.takeUnless { it == packageName }
@@ -324,8 +341,15 @@ class TrackerService : Service() {
     }
 
     private fun startTicks() {
-        tickJob?.cancel()
+        val oldJob = tickJob
         tickJob = scope.launch {
+            // Serialize ticks: onStartCommand can re-enter while the previous
+            // job's onTick is still mid-flight (cancellation is cooperative —
+            // a blocked queryEvents call does not abort), and two overlapping
+            // attribution loops could read the same anchor and each credit a
+            // 10-second sample for the same interval. Joining the cancelled
+            // job makes the replacement wait for it to unwind.
+            oldJob?.cancelAndJoin()
             // §9: sync immediately on service start, then every 60s.
             // 0 forces the first post-tick sync check to fire right away.
             lastSyncTime = 0L
@@ -559,6 +583,12 @@ class TrackerService : Service() {
         // prefer it for the periodic attribution/enforcement fallback.
         val rawAccessibilityPkg = withTimeoutOrNull(1_000L) {
             accessibilityForegroundPackage()
+        }
+        // An accessibility result (including self) is AUTHORITATIVE: record
+        // when it last confirmed the foreground so the async state-seed never
+        // overwrites a newer confirmed state with its older anchor-time one.
+        if (rawAccessibilityPkg != null) {
+            lastAuthoritativeForegroundAt = endTime
         }
         // An accessibility result of pcontrol itself is AUTHORITATIVE: the
         // parent's dashboard is foreground and NO child app is in use — do
@@ -872,6 +902,10 @@ class TrackerService : Service() {
             advanceAnchorTo(nowMs)
         }
         scope.launch {
+            // Upgrade any detection-side journalAppend apply() to a durable
+            // write as the worker's first action (the detector stays
+            // non-blocking on the tick; the worker may block on disk).
+            journalPersist()
             var ownsGuard = false
             try {
                 backfillMutex.withLock {
@@ -1140,6 +1174,23 @@ class TrackerService : Service() {
         }
     }
 
+    /** Worker-side durable flush of the journal: the detector appends with
+     *  apply() to stay non-blocking on the tick, so a crash before the
+     *  async flush could lose the entry. Re-committing the current value
+     *  here (worker-side, blocking OK) upgrades it to durable as soon as
+     *  the worker picks the detection up. No-op when the journal is empty.
+     *  Caller holds no other monitor; the prefs read/write are in-memory
+     *  map operations plus the synchronous disk write. */
+    private fun journalPersist() {
+        synchronized(queueLock) {
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val current = prefs.getString(KEY_BF_QUEUE_JOURNAL, null)
+            if (!current.isNullOrEmpty()) {
+                prefs.edit().putString(KEY_BF_QUEUE_JOURNAL, current).commit()
+            }
+        }
+    }
+
     /** Loads the journaled disjoint gaps (oldest first) — startup
      *  re-ingestion. Caller holds [queueLock]. */
     private fun journalLoad(): List<UsageBackfill.Window> {
@@ -1309,38 +1360,29 @@ class TrackerService : Service() {
                             pendingRecoveryWindows.firstOrNull()
                         }
                         if (next != null) {
-                            // The window's durable JOURNAL entry must be
-                            // removed with commit() only after its durable
-                            // Room install (or proof it is already covered):
-                            // a stale journal entry is harmless (re-ingestion
-                            // is idempotent via the covered-check), but a
-                            // journal entry removed while the row was retired
-                            // would replay recovered slices. The in-memory
-                            // copy is dropped only after the journal removal
-                            // is persisted; a failed commit keeps it queued
-                            // and the next pass retries via this same path.
-                            val journalRemoved = journalRemove(listOf(next))
-                            when {
-                                row != null && row.progressMs >= next.endMs -> {
-                                    // The durable row already covers this queued
-                                    // copy (e.g. promoteDebt re-installed the same
-                                    // range from a failed-clear debt while it sat
-                                    // queued): drop it instead of re-installing —
-                                    // dao.set would reset progress and replay
-                                    // already-recovered slices.
-                                }
-                                journalRemoved -> {
-                                    dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
-                                }
-                                else -> {
-                                    // Journal removal could not be persisted:
-                                    // leave the window queued for the next pass.
-                                }
+                            // ORDER: durable Room install FIRST, then the
+                            // journal removal (commit()), then the in-memory
+                            // dequeue. Removing the journal entry before the
+                            // install would let a death between the two drop
+                            // the range entirely (journal and queue both gone
+                            // while the live cursor may already be past it).
+                            // A stale journal entry, by contrast, is harmless:
+                            // re-ingestion is idempotent via the covered-check
+                            // below, and a failed removal commit keeps the
+                            // window queued for the next pass's retry.
+                            if (row == null || row.progressMs < next.endMs) {
+                                dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
                             }
-                            if (journalRemoved) {
+                            // The row now durably covers `next` (either just
+                            // installed, or the covered-check above held), so
+                            // the journal entry can be durably removed; if the
+                            // commit fails, keep the window queued and retry
+                            // this whole path on the next pass.
+                            if (journalRemove(listOf(next))) {
                                 synchronized(queueLock) {
-                                    // Same single-worker pass; a detector can only
-                                    // add, so the head we peeked is still the head.
+                                    // Same single-worker pass; a detector can
+                                    // only add, so the head we peeked is still
+                                    // the head.
                                     if (pendingRecoveryWindows.firstOrNull() == next) {
                                         pendingRecoveryWindows.removeFirstOrNull()
                                     }

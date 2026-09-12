@@ -279,9 +279,11 @@ tick cursor:
   is kept and the pass retried until access is granted. The worker also
   stays alive (with backoff) until queued windows are drained instead of
   releasing the guard after a bounded number of failures.
-- Residual (documented, accepted): pinned windows are in-memory, so a
-  process death between a queueing detection and the running job's drain
-  loses that queued gap until the next detection; recovery progress (Room
+- Residual (documented, accepted): disjoint detection gaps are journaled
+  durably at detection (apply() — same async-flush class as the tick
+  cursor) and re-ingested on restart, so the remaining loss window is the
+  asynchronous journal/debt flush plus worker scheduling (normally ms)
+  between a detection and its durable upgrade; recovery progress (Room
   row + detection debt) is always durable.
 
 ## Verification on device (done 2026-09-09, locally signed dev build —
