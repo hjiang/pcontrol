@@ -155,6 +155,11 @@ class TrackerService : Service() {
     @Volatile
     private var foregroundSeedSeq = 0L
 
+    /** Single-flight guard for [launchForegroundStateSeed]: the bounded
+     *  6-hour seed query must not pile up concurrently while ticks keep
+     *  failing (each failed tick ages the heartbeat toward another stall). */
+    private val foregroundSeedInFlight = AtomicBoolean(false)
+
     /** The end time of the most recent tick whose foreground selection was
      *  confirmed by the AUTHORITATIVE accessibility probe (raw result
      *  non-null, including self). The async state-seed must not overwrite an
@@ -190,6 +195,12 @@ class TrackerService : Service() {
         // Competing seeds: each launch supersedes earlier ones. Only the
         // LATEST seed may assign its result.
         val seqAtStart = ++foregroundSeedSeq
+        // Single-flight: a seed already querying is not duplicated — during
+        // persistent tick failures the stall branch fires every 10 s and
+        // would otherwise stack unbounded concurrent 6-hour UsageStats
+        // queries. The result generation/seq guards keep whichever seed
+        // finishes authoritative.
+        if (!foregroundSeedInFlight.compareAndSet(false, true)) return
         scope.launch {
             try {
                 lastUsageEventQueryTime?.let { anchor ->
@@ -216,11 +227,13 @@ class TrackerService : Service() {
                     }
                     // Assign only if no live tick processed newer transitions
                     // (generation unchanged), no accessibility-confirmed
-                    // foreground update landed after this seed's anchor, and
-                    // this is still the latest seed. Otherwise this seed's
-                    // anchor-time snapshot is stale and would overwrite the
-                    // newer live state — skip the assignment entirely rather
-                    // than nulling the field.
+                    // foreground update landed after this seed's anchor, this
+                    // is still the latest seed, and the seed actually saw
+                    // transitions. A non-empty seed whose state machine ends
+                    // in null (PAUSED / no app) CLEARS the stale state — that
+                    // is authoritative too; only an EMPTY seed preserves the
+                    // old value. Otherwise this seed's anchor-time snapshot is
+                    // stale and would overwrite the newer live state.
                     val seededPkg = AppUsagePoller
                         .updateForegroundPackage(null, seedEvents)
                         ?.takeUnless { it == packageName }
@@ -228,7 +241,7 @@ class TrackerService : Service() {
                         if (foregroundStateGen == genAtStart &&
                             lastAuthoritativeForegroundAt <= anchor &&
                             foregroundSeedSeq == seqAtStart &&
-                            seededPkg != null
+                            seedEvents.isNotEmpty()
                         ) {
                             currentForegroundPkg = seededPkg
                         }
@@ -236,9 +249,15 @@ class TrackerService : Service() {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "foreground state seed failed", e)
+            } finally {
+                foregroundSeedInFlight.set(false)
             }
         }
     }
+    // Foreground state of the LAST processed tick; written by commitTick
+    // (tick coroutine) and the async state-seed — @Volatile so the tick's
+    // read always observes the seed's assignment and vice versa.
+    @Volatile
     private var currentForegroundPkg: String? = null
 
     // Serializes the backfill bookkeeping — pending-row registration and
@@ -394,6 +413,23 @@ class TrackerService : Service() {
             val persistedCursor = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getLong(KEY_TICK_CURSOR_MS, 0L)
             if (persistedCursor > 0L) advanceAnchorTo(persistedCursor)
+            // Coordinate the live anchor with the durable RECOVERED-THROUGH
+            // marker: a completed recovery row keeps progressMs == endMs
+            // until retirement (which waits for the cursor to catch up), so
+            // the marker frontier can sit AHEAD of the persisted cursor
+            // (e.g. a death before the next commitTick, or a rollback into
+            // the recovered window). Seeding the anchor from the marker
+            // frontier as well prevents the first live queries from
+            // re-counting transitions inside the already-merged window.
+            // (e.g. a death before the next commitTick, or a rollback into
+            // the recovered window). Seeding the anchor from the marker
+            // frontier as well prevents the first live queries from
+            // re-counting transitions inside the already-merged window.
+            val markerRow = AppDatabase.getInstance(this@TrackerService)
+                .backfillStateDao().get()
+            if (markerRow != null && markerRow.endMs > 0L) {
+                advanceAnchorTo(maxOf(markerRow.progressMs, markerRow.endMs))
+            }
             // Re-ingest a durably journaled disjoint gap (see the key docs):
             // the journal exists precisely for this restart path — the
             // in-memory queue died with the previous process, and the cursor
@@ -402,7 +438,12 @@ class TrackerService : Service() {
             // installs it into the durable row; the journal is cleared once
             // the queue has been durably drained.
             journalLoad().forEach { journaled -> enqueueClamped(journaled, 0L) }
-            lastTickAtMs = 0L
+            // Heartbeat baseline: initialize BEFORE the first tick attempt
+            // (not only after a success) so that a persistently throwing
+            // first onTick still ages into a stall (≥ MIN_GAP) and stages
+            // recovery — the next successful tick must not jump the cursor
+            // over the failed period undetected.
+            lastTickAtMs = SystemClock.elapsedRealtime()
 
             // The process may have just been resurrected after hours or days
             // (crash, FGS timeout kill, boot, force-stop). Replay what the
@@ -907,11 +948,8 @@ class TrackerService : Service() {
                     // can re-plan it — without the journal a process death
                     // before the queue drained would lose the gap
                     // permanently.
-                    staged != null -> {
-                        journalAppend(window)
-                        synchronized(queueLock) {
-                            enqueueClamped(window, staged.endMs)
-                        }
+                    staged != null -> synchronized(queueLock) {
+                        enqueueClamped(window, staged.endMs)
                     }
                     // Nothing staged: the debt slot is free.
                     else -> stageDebt(window)
@@ -950,11 +988,11 @@ class TrackerService : Service() {
                             // the single durable publication that
                             // [promoteDebt] installs as the pending row.
                             current != null && window.startMs >= current.endMs -> {
-                                // Journal durably too: the in-memory copy dies
-                                // with the process, and the advancing cursor
-                                // would prevent any later detection from
-                                // re-planning the range (see the key docs).
-                                journalAppend(window)
+                                // enqueueClamped journals the ACTUAL clamped
+                                // window durably: the in-memory copy dies with
+                                // the process, and the advancing cursor would
+                                // prevent any later detection from re-planning
+                                // the range (see the key docs).
                                 synchronized(queueLock) {
                                     enqueueClamped(window, current.endMs)
                                 }
@@ -1264,7 +1302,15 @@ class TrackerService : Service() {
             if (owed > w.startMs) {
                 w = UsageBackfill.Window(owed, maxOf(w.endMs, owed))
             }
-            if (w.endMs > w.startMs) pendingRecoveryWindows.addLast(w)
+            if (w.endMs <= w.startMs) return
+            // Journal the ACTUAL (post-clamp) window, not the caller's
+            // request: journalRemove deletes exact start:end strings, so a
+            // journaled pre-clamp range whose clamped copy was processed and
+            // retired would survive as a stale entry and replay on restart
+            // (double-count). journalAppend dedups exact entries, so
+            // re-enqueueing an already-journaled window is a no-op.
+            journalAppend(w)
+            pendingRecoveryWindows.addLast(w)
         }
     }
 
@@ -1328,7 +1374,6 @@ class TrackerService : Service() {
                         // entry only after the durable Room install (and drops
                         // a copy the row already covers), so the journal and
                         // the queue can never double-replay this range.
-                        journalAppend(tail)
                         enqueueClamped(tail, row.endMs)
                     }
                     // Conditional: the Room write above suspended, and a
@@ -1506,6 +1551,28 @@ class TrackerService : Service() {
                             // journal entry has already been durably removed
                             // (commit()) after its durable install, so the
                             // journal is empty here by construction.
+                            //
+                            // Durably acknowledge the cursor BEFORE removing
+                            // the marker: the in-memory frontier was checked
+                            // above, but commitTick persists it with apply()
+                            // (async). If the process died after dao.clear()
+                            // and before that flush, a restart would see a
+                            // stale disk cursor with no marker protecting the
+                            // merged window and backfill it again
+                            // (double-count). A worker-side commit() is
+                            // allowed to block; it pins the cursor at ≥
+                            // recoveredEnd on disk first.
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .edit()
+                                .putLong(
+                                    KEY_TICK_CURSOR_MS,
+                                    maxOf(
+                                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                            .getLong(KEY_TICK_CURSOR_MS, 0L),
+                                        recoveredEnd
+                                    )
+                                )
+                                .commit()
                             dao.clear()
                             backfillInFlight.set(false)
                             retire = true
@@ -1542,6 +1609,17 @@ class TrackerService : Service() {
         val db = AppDatabase.getInstance(this)
         val state = db.backfillStateDao().get() ?: return true
         if (state.endMs <= 0L || state.endMs <= state.progressMs) return true
+        // CLOCK-ROLLBACK DEFER: after a wall-clock rollback the registered
+        // endMs can sit in the future. queryEvents cannot return future
+        // UsageStats, so replaying now would advance progress over a range
+        // whose data does not exist yet (and the silence cap could even
+        // attribute "future" seconds). Defer the whole pass while endMs is
+        // ahead of the clock — the row stays pending and recovers once the
+        // clock catches up.
+        if (state.endMs > System.currentTimeMillis()) {
+            Log.w(TAG, "recovery window endMs in the future (clock rollback); deferring")
+            return false
+        }
         // The window was threshold-vetted when it was registered; a retry
         // must replay every remaining progressMs < endMs — including a
         // short tail left behind by already-committed chunks, which the

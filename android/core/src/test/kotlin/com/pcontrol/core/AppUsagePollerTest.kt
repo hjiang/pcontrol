@@ -96,4 +96,36 @@ class AppUsagePollerTest {
             )
         )
     }
+
+    @Test
+    fun `legacy touch aliases 6 and 7 are ignored and retain the foreground app`() {
+        // Regression guard: event types 6 (MOVE_TO_FOREGROUND) and 7
+        // (MOVE_TO_BACKGROUND) are USER_INTERACTION aliases, not real
+        // transitions — treating them as such used to zero attribution on
+        // every touch. Only types 1/2 may change the foreground.
+        val events = listOf(
+            AppEvent("com.game", 6),
+            AppEvent("com.game", 7),
+            AppEvent("com.game", AppEvent.ACTIVITY_PAUSED),
+            AppEvent("com.game", AppEvent.ACTIVITY_RESUMED),
+        )
+        val state = AppUsagePoller.updateForegroundPackage(
+            previousForegroundPackage = null,
+            events = events
+        )
+        assertEquals("com.game", state)
+
+        // Same rejection when transitions must not fire for touch aliases:
+        // a retained foreground plus only alias events keeps that app.
+        assertEquals(
+            "com.game",
+            AppUsagePoller.updateForegroundPackage(
+                previousForegroundPackage = "com.game",
+                events = listOf(
+                    AppEvent("com.game", 6),
+                    AppEvent("com.game", 7),
+                )
+            )
+        )
+    }
 }
