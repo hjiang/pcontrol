@@ -469,6 +469,8 @@ persist any returned policy into `CachedPolicy`.
 | `org.mozilla.firefox` | `org.mozilla.firefox:id/mozac_browser_toolbar_url_view` |
 | `com.brave.browser` | `com.brave.browser:id/url_bar` |
 | `com.microsoft.emmx` | `com.microsoft.emmx:id/url_bar` |
+| `com.vivaldi.browser` | `com.vivaldi.browser:id/url_bar` |
+| `com.android.browser` | `com.android.browser:id/url` (Xiaomi built-in; shows the domain only transiently during page load, then the page title — see AGENTS.md) |
 
 If a browser's URL can't be read, its time still counts as app time.
 
