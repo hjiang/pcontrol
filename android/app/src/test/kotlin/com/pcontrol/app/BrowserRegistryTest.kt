@@ -30,6 +30,22 @@ class BrowserRegistryTest {
     }
 
     @Test
+    fun `vivaldi has url bar id`() {
+        assertEquals(
+            "com.vivaldi.browser:id/url_bar",
+            BrowserRegistry.urlBarViewId("com.vivaldi.browser")
+        )
+    }
+
+    @Test
+    fun `xiaomi browser has url bar id`() {
+        assertEquals(
+            "com.android.browser:id/url",
+            BrowserRegistry.urlBarViewId("com.android.browser")
+        )
+    }
+
+    @Test
     fun `unknown package returns null`() {
         assertNull(BrowserRegistry.urlBarViewId("com.unknown.browser"))
     }

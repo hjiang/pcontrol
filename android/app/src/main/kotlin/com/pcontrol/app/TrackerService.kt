@@ -1,5 +1,6 @@
 package com.pcontrol.app
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -20,10 +21,10 @@ import com.pcontrol.app.update.UpdateState
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
 import com.pcontrol.core.BrowserContext
-import com.pcontrol.core.DomainParser
 import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
 import com.pcontrol.core.UsageDay
+import com.pcontrol.core.UsageAttribution
 import com.pcontrol.app.db.AppDatabase
 import com.pcontrol.app.db.UsageCounterEntity
 import kotlinx.coroutines.CoroutineScope
@@ -68,6 +69,7 @@ class TrackerService : Service() {
     // Tracks the current day for rollover detection
     private var lastDay: String = ""
     private var lastLoggedForegroundCandidates: String? = null
+    private var lastLoggedAttributionSkip: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -244,22 +246,27 @@ class TrackerService : Service() {
             Log.i(TAG, "Foreground candidates: $candidates")
         }
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (!powerManager.isInteractive) {
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        val screenInteractive = powerManager.isInteractive
+        val keyguardLocked = keyguardManager.isKeyguardLocked
+        if (!UsageAttribution.shouldAttribute(screenInteractive, keyguardLocked)) {
             // Do not attribute a retained foreground package while the display
-            // is off. Browser domain state is not valid across this boundary.
-            previousForegroundPkg?.let { pkg ->
-                if (BrowserRegistry.isKnownBrowser(pkg)) {
-                    BrowserAccessibilityService.domainCache.clear(pkg)
-                }
+            // is off or the keyguard is locked: nothing is genuinely in use.
+            // Browser domain state is not valid across this boundary.
+            val skipState = "interactive=$screenInteractive keyguardLocked=$keyguardLocked"
+            if (skipState != lastLoggedAttributionSkip) {
+                lastLoggedAttributionSkip = skipState
+                Log.i(TAG, "Attribution skipped: $skipState")
             }
-            foregroundPkg?.let { pkg ->
-                if (BrowserRegistry.isKnownBrowser(pkg)) {
-                    BrowserAccessibilityService.domainCache.clear(pkg)
-                }
-            }
+            val skip = UsageAttribution.skipTransition(
+                previousForegroundPkg = previousForegroundPkg,
+                foregroundPkg = foregroundPkg,
+                isKnownBrowser = BrowserRegistry::isKnownBrowser,
+            )
+            skip.browsersToClear.forEach { BrowserAccessibilityService.domainCache.clear(it) }
             browserForegroundPkg = null
             ticksWithoutDomain = 0
-            currentForegroundPkg = foregroundPkg
+            currentForegroundPkg = skip.nextForegroundPkg
             lastUsageEventQueryTime = endTime
             return
         }

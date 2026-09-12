@@ -17,7 +17,7 @@ On the attached Android device, pcontrol has usage access, battery-optimization 
 
 `AppUsagePoller.updateForegroundPackage` will accept the previously known package and a chronologically ordered batch of transitions. It applies transitions in order: foreground transitions replace the state; a background transition clears it only when it belongs to the tracked package; unrelated background events do not erase another active package.
 
-`TrackerService` will retain an event-query cursor for its process lifetime. Its first query retains the existing 60-second bootstrap window; later queries begin at the prior cursor. It will resolve foreground state against `currentForegroundPkg`, and use `PowerManager.isInteractive` to avoid counting while the screen is off.
+`TrackerService` will retain an event-query cursor for its process lifetime. Its first query retains the existing 60-second bootstrap window; later queries begin at the prior cursor. It will resolve foreground state against `currentForegroundPkg`, and use `UsageAttribution.shouldAttribute` (display on via `PowerManager.isInteractive` AND keyguard not locked via `KeyguardManager.isKeyguardLocked`) to avoid counting while the device is not genuinely in use — screen-off and locked-screen time is attributed to nobody, and the cursor still advances through the gap so unlocking never replays it.
 
 ## Validation
 

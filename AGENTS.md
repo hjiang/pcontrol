@@ -74,6 +74,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
 - **Enforcement is local**: the phone blocks apps/sites from its cached
   policy; the server is the source of truth for policy and the sink for
   usage. The dashboard is pull-only — no push channel exists.
+- **Usage attribution counts only genuinely-interactive time**: `TrackerService`
+  credits app/web usage only when the display is on AND the keyguard is not
+  locked (`UsageAttribution.shouldAttribute` in `:core`; the gate also clears
+  browser domain state and advances the usage-events cursor so unlocking never
+  replays the gap). Locked-screen time is attributed to nobody — do not
+  "fix" attribution to run behind a keyguard.
 - **`:core` stays pure JVM**: no Android imports. Anything needing Android
   APIs gets a thin adapter in `:app` (see `UsageStatsAdapter.kt`) so logic
   remains unit-testable without Robolectric.
@@ -245,6 +251,27 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   lifetime. It is separate from the full-screen blocking view and must be
   detached exactly once on service destruction. Validated on Xiaomi
   `2602BRT18C`, HyperOS `OS3.0.304.0.WPLCNXM`.
+
+- **Xiaomi's built-in browser exposes its URL only transiently.** In
+  `com.android.browser` (HyperOS 3), the `id/url` accessibility node shows the
+  domain (`github.com`) for a few seconds during each page load, then swaps to
+  the page **title**, at any scroll position. This is fine for our design:
+  `handleBrowserUrlBar` runs on every browser event and `BrowserDomainCache`
+  never lets a `null` (title) overwrite a captured domain, which then persists
+  until the next navigation. `DomainParser.parse` rejects title-like text —
+  whitespace-bearing candidates and single-colon pseudo-IPs return null — so a
+  settled title (which almost always contains spaces) never overwrites the
+  captured domain. Don't "fix" the registry entry back out because a
+  settled-state dump shows a title. Verified on Xiaomi `25097RP43C`.
+
+- **A release build on a device can only be diagnosed via adb + uiautomator +
+  logcat** (`run-as` fails: not debuggable). The accessibility tree a uiautomator
+  dump shows is the same tree `BrowserAccessibilityService` reads. Release logs
+  are change-deduped in-process (`lastLoggedForegroundCandidates`,
+  `lastLoggedEvaluation`), so `adb logcat -c` does NOT reset them — an absent
+  line after clearing the buffer may just mean "string unchanged since before
+  the clear", not "loop dead". Force a foreground change (HOME, then `am start`
+  another app) to elicit fresh lines.
 
 - **AGP bumps must be coordinated with the CI Gradle pin.** CI has no committed
   wrapper; `android-tests.yml` / `android-build.yml` generate one from a
