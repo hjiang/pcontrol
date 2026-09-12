@@ -262,9 +262,11 @@ tick cursor:
   only clears the durable row after a verified debt clear — a stale debt
   can never resurrect a recovered window. Retirement retries with backoff
   if the clear cannot be persisted.
-- **The tick loop never waits on backfill I/O**: `backfillMutex` no longer
-  involves `commitTick` (single-writer cursor, monotonic by construction);
-  all Room access happens in backfill coroutines only.
+- **The tick loop never waits on backfill I/O**: `backfillMutex` never
+  involves the tick cursor; its two writers (`commitTick` and recovery
+  retirement's durable cursor pin) are serialized with each other under
+  `anchorLock` (monotonic `max(previous, value)`), and all Room access
+  happens in backfill coroutines only.
 - **Detection stages the gap before returning**: `launchBackfill` records
   the detected gap as the prefs debt (apply() — immediately visible,
   non-blocking on the tick) before it returns; the recovery worker upgrades

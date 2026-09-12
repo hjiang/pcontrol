@@ -1553,13 +1553,6 @@ class TrackerService : Service() {
         }
     }
 
-    /** The end of the still-owed region: the durable Room window if one is
-     *  active, otherwise the unpromoted detection debt. */
-    private fun pendingEndMs(
-        row: com.pcontrol.app.db.BackfillStateEntity?,
-        debt: PendingDebt?
-    ): Long = maxOf(row?.endMs ?: 0L, debt?.endMs ?: 0L)
-
     /** Queues [window] for the running job, clamped so it cannot overlap
      *  anything still owed: neither the durable pending window (whose
      *  progress advances chunk by chunk), the QUEUED WINDOWS THAT OVERLAP
@@ -1781,75 +1774,66 @@ class TrackerService : Service() {
                     // active row's unrecovered remainder and lose it. Retry
                     // after a backoff.
                     !handled -> Unit
-                    // Claim the head only when it belongs with the ACTIVE row
-                    // (no row, or overlapping/contiguous with it). A stale
-                    // journal entry is harmless here: re-ingestion is
-                    // idempotent via the covered-check in the claim body, and
-                    // a failed removal commit keeps the window queued for the
-                    // next pass's retry.
+                    // Claim the head only when it belongs with the ACTIVE
+                    // row (no row, or overlapping/contiguous with it). A
+                    // DISJOINT head (starting after the row's end) is left
+                    // queued: merging it into the row (raising endMs) would
+                    // make the next pass replay [row.endMs, next.startMs) —
+                    // the stretch live ticks counted between the two outages
+                    // — and rewriting the row would drop the row's
+                    // unprocessed prefix. Falling through lets the row keep
+                    // recovering or retire (cursor-gated); after the clear,
+                    // the next loop pass claims the queued window as a fresh
+                    // row with its own start as the progress frontier.
                     next != null && (activeRow == null || next.startMs <= activeRow.endMs) -> {
-                        // Claim the head only when it belongs with the ACTIVE
-                        // row (no row, or overlapping/contiguous with it). A
-                        // DISJOINT head (starting after the row's end) is left
-                        // queued: merging it into the row (raising endMs)
-                        // would make the next pass replay [row.endMs,
-                        // next.startMs) — the stretch live ticks counted
-                        // between the two outages — and rewriting the row
-                        // would drop the row's unprocessed prefix. Falling
-                        // through lets the row keep recovering or retire
-                        // (cursor-gated); after the clear, the next loop pass
-                        // claims the queued window as a fresh row with its
-                        // own start as the progress frontier.
-                        if (next != null && (activeRow == null || next.startMs <= activeRow.endMs)) {
-                            // ORDER: durable Room install FIRST, then the
-                            // journal removal (commit()), then the in-memory
-                            // dequeue. Removing the journal entry before the
-                            // install would let a death between the two drop
-                            // the range entirely (journal and queue both gone
-                            // while the live cursor may already be past it).
-                            // A stale journal entry, by contrast, is harmless:
-                            // re-ingestion is idempotent via the covered-check
-                            // below, and a failed removal commit keeps the
-                            // window queued for the next pass's retry.
-                            if (activeRow == null) {
-                                dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
-                            } else {
-                                // Overlapping or contiguous: EXTEND the active
-                                // row — preserving progressMs keeps the row's
-                                // unprocessed prefix owed, and the claimable
-                                // check above guarantees next.startMs <=
-                                // activeRow.endMs, so the raise cannot swallow
-                                // any live-counted gap. A fully covered entry
-                                // (endMs <= progressMs) is an unchanged replace
-                                // here and is simply removed from the queue.
-                                dao.set(
-                                    BackfillStateEntity(
-                                        activeRow.id,
-                                        activeRow.progressMs,
-                                        maxOf(activeRow.endMs, next.endMs)
-                                    )
+                        // ORDER: durable Room install FIRST, then the
+                        // journal removal (commit()), then the in-memory
+                        // dequeue. Removing the journal entry before the
+                        // install would let a death between the two drop
+                        // the range entirely (journal and queue both gone
+                        // while the live cursor may already be past it).
+                        // A stale journal entry, by contrast, is harmless:
+                        // re-ingestion is idempotent via the covered-check
+                        // below, and a failed removal commit keeps the
+                        // window queued for the next pass's retry.
+                        if (activeRow == null) {
+                            dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                        } else {
+                            // Overlapping or contiguous: EXTEND the active
+                            // row — preserving progressMs keeps the row's
+                            // unprocessed prefix owed, and the claimable
+                            // check above guarantees next.startMs <=
+                            // activeRow.endMs, so the raise cannot swallow
+                            // any live-counted gap. A fully covered entry
+                            // (endMs <= progressMs) is an unchanged replace
+                            // here and is simply removed from the queue.
+                            dao.set(
+                                BackfillStateEntity(
+                                    activeRow.id,
+                                    activeRow.progressMs,
+                                    maxOf(activeRow.endMs, next.endMs)
                                 )
-                            }
-                            // The row now durably covers `next` (either just
-                            // installed, or the covered-check above held), so
-                            // the journal entry can be durably removed; if the
-                            // commit fails, keep the window queued, retry this
-                            // whole path on the next pass, and signal
-                            // `retryLater` so the loop backs off instead of
-                            // spinning through Room on a persistent storage
-                            // failure.
-                            if (journalRemove(listOf(next))) {
-                                synchronized(queueLock) {
-                                    // Same single-worker pass; a detector can
-                                    // only add, so the head we peeked is still
-                                    // the head.
-                                    if (pendingRecoveryWindows.firstOrNull() == next) {
-                                        pendingRecoveryWindows.removeFirstOrNull()
-                                    }
+                            )
+                        }
+                        // The row now durably covers `next` (either just
+                        // installed, or the covered-check above held), so
+                        // the journal entry can be durably removed; if the
+                        // commit fails, keep the window queued, retry this
+                        // whole path on the next pass, and signal
+                        // `retryLater` so the loop backs off instead of
+                        // spinning through Room on a persistent storage
+                        // failure.
+                        if (journalRemove(listOf(next))) {
+                            synchronized(queueLock) {
+                                // Same single-worker pass; a detector can
+                                // only add, so the head we peeked is still
+                                // the head.
+                                if (pendingRecoveryWindows.firstOrNull() == next) {
+                                    pendingRecoveryWindows.removeFirstOrNull()
                                 }
-                            } else {
-                                retryLater = true
                             }
+                        } else {
+                            retryLater = true
                         }
                     }
                     // No queued window — but a late registrar may have
