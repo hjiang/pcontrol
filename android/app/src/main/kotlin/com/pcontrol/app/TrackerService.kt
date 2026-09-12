@@ -79,6 +79,20 @@ class TrackerService : Service() {
         private const val KEY_BF_DEBT_START_MS = "backfill_debt_start_ms"
         private const val KEY_BF_DEBT_END_MS = "backfill_debt_end_ms"
 
+        // Durable journal of the LATEST disjoint detection gap. A disjoint
+        // gap cannot live in the debt slot (singleton — overwriting would
+        // discard the still-unpromoted gap already there), so it is staged
+        // here in addition to the in-memory queue: if the process dies
+        // before the queue drains and later ticks advance the cursor past
+        // the queued range, the restart re-ingests this record — the
+        // in-memory queue alone would lose it permanently (the next
+        // detection plans from the newer frontier and can never re-plan a
+        // range the cursor has passed). Overwritten by each new disjoint
+        // detection (latest wins); cleared by the worker once the queue has
+        // been durably drained.
+        private const val KEY_BF_Q_START_MS = "backfill_queue_start_ms"
+        private const val KEY_BF_Q_END_MS = "backfill_queue_end_ms"
+
         // Backoff when retirement cannot complete because the debt clear
         // could not be persisted (storage trouble) — retried until it
         // succeeds; the durable row stays as the consistency marker.
@@ -123,46 +137,51 @@ class TrackerService : Service() {
         }
     }
 
-    /** STATE-ONLY foreground seed, run after the anchor has been advanced
-     *  past a recovered/observed gap (service start, detected stall): the
-     *  anchor advance keeps the live query disjoint from the recovered
-     *  range, so its transitions are not replayed into the foreground state
-     *  machine — without this seed, a probe-less restart or a post-freeze
-     *  app switch would leave attribution on a stale/null app until the
-     *  next transition. Nothing is credited from this query (the tick
-     *  credit is the flat per-tick sample), so its overlap with the
-     *  recovered range is the same documented ≤1-tick residual as the
-     *  startup-race coordination. One bounded query per detection. */
+    /** STATE-ONLY foreground seed, run OFF the tick coroutine (the 6-hour
+     *  UsageStats query and its iteration must not delay the 10-second
+     *  tick), after the anchor has been advanced past a recovered/observed
+     *  gap (service start, detected stall): the anchor advance keeps the
+     *  live query disjoint from the recovered range, so its transitions are
+     *  not replayed into the foreground state machine — without this seed,
+     *  a probe-less restart or a post-freeze app switch would leave
+     *  attribution on a stale/null app until the next transition. Nothing
+     *  is credited from this query (the tick credit is the flat per-tick
+     *  sample), so its overlap with the recovered range is the same
+     *  documented ≤1-tick residual as the startup-race coordination. One
+     *  bounded query per detection; the seed landing a tick late is
+     *  harmless (the state converges on the next transition/probe). */
     private fun launchForegroundStateSeed() {
-        try {
-            lastUsageEventQueryTime?.let { anchor ->
-                val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-                val seedEvents = mutableListOf<AppEvent>()
-                val ev = android.app.usage.UsageEvents.Event()
-                // Look back a full SEED_LOOKBACK (the same bound the recovery
-                // replay uses for its seed): the app that was foreground
-                // across a long outage can have been resumed long before the
-                // anchor, and a short lookback would leave the state
-                // uninitialized (no live attribution until the next
-                // transition) when the accessibility probe is unavailable.
-                val query = usm.queryEvents(
-                    maxOf(0L, anchor - UsageBackfill.SEED_LOOKBACK_MS),
-                    anchor
-                )
-                while (query.hasNextEvent()) {
-                    query.getNextEvent(ev)
-                    val pkg = ev.packageName ?: continue
-                    when (ev.eventType) {
-                        AppEvent.ACTIVITY_RESUMED,
-                        AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
+        scope.launch {
+            try {
+                lastUsageEventQueryTime?.let { anchor ->
+                    val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                    val seedEvents = mutableListOf<AppEvent>()
+                    val ev = android.app.usage.UsageEvents.Event()
+                    // Look back a full SEED_LOOKBACK (the same bound the recovery
+                    // replay uses for its seed): the app that was foreground
+                    // across a long outage can have been resumed long before the
+                    // anchor, and a short lookback would leave the state
+                    // uninitialized (no live attribution until the next
+                    // transition) when the accessibility probe is unavailable.
+                    val query = usm.queryEvents(
+                        maxOf(0L, anchor - UsageBackfill.SEED_LOOKBACK_MS),
+                        anchor
+                    )
+                    while (query.hasNextEvent()) {
+                        query.getNextEvent(ev)
+                        val pkg = ev.packageName ?: continue
+                        when (ev.eventType) {
+                            AppEvent.ACTIVITY_RESUMED,
+                            AppEvent.ACTIVITY_PAUSED -> seedEvents.add(AppEvent(pkg, ev.eventType))
+                        }
                     }
+                    currentForegroundPkg = AppUsagePoller
+                        .updateForegroundPackage(null, seedEvents)
+                        ?.takeUnless { it == packageName }
                 }
-                currentForegroundPkg = AppUsagePoller
-                    .updateForegroundPackage(null, seedEvents)
-                    ?.takeUnless { it == packageName }
+            } catch (e: Exception) {
+                Log.w(TAG, "foreground state seed failed", e)
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "foreground state seed failed", e)
         }
     }
     private var currentForegroundPkg: String? = null
@@ -308,6 +327,16 @@ class TrackerService : Service() {
             val persistedCursor = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getLong(KEY_TICK_CURSOR_MS, 0L)
             if (persistedCursor > 0L) advanceAnchorTo(persistedCursor)
+            // Re-ingest a durably journaled disjoint gap (see the key docs):
+            // the journal exists precisely for this restart path — the
+            // in-memory queue died with the previous process, and the cursor
+            // may already sit past the journaled range, so a fresh detection
+            // could never re-plan it. The worker started below claims it and
+            // installs it into the durable row; the journal is cleared once
+            // the queue has been durably drained.
+            pendingQueuedWindowDurable()?.let { journaled ->
+                enqueueClamped(journaled, 0L)
+            }
             lastTickAtMs = 0L
 
             // The process may have just been resurrected after hours or days
@@ -706,15 +735,20 @@ class TrackerService : Service() {
         // while crediting only a flat 10 s, and the next iteration's stall
         // check would see the cursor already past it — permanently skipping
         // the blocked usage. Stage the skipped stretch as a recovery window
-        // BEFORE the commit covers it; this tick's flat 10 s credit then
-        // covers only its own tail. No-op on the healthy cadence (endTime −
-        // cursor ≈ 10 s << MIN_GAP) and after a rollback (endTime < cursor).
+        // BEFORE the commit covers it. The recovery end is this tick's own
+        // endTime: the tick's flat 10 s credit can then overlap the recovery
+        // tail by ≤ 1 tick — the same documented sampling-model residual as
+        // the startup coordination — whereas shrinking the recovery end by
+        // TICK_INTERVAL would let plan's MIN_GAP check silently reject spans
+        // in the [MIN_GAP, MIN_GAP + TICK) band, skipping them permanently.
+        // No-op on the healthy cadence (endTime − cursor ≈ 10 s ≪ MIN_GAP)
+        // and after a rollback (endTime < cursor).
         val committedCursor = synchronized(anchorLock) {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getLong(KEY_TICK_CURSOR_MS, 0L)
         }
         if (committedCursor > 0L && endTime - committedCursor >= UsageBackfill.MIN_GAP_MS) {
-            launchBackfill(endTime - TICK_INTERVAL_MS)
+            launchBackfill(endTime)
         }
         currentForegroundPkg = foregroundPkg
         synchronized(anchorLock) {
@@ -788,12 +822,17 @@ class TrackerService : Service() {
                     // singleton, and staging over it would discard a gap the
                     // worker has not promoted yet (a second detection can
                     // outrun promotion when Room is slow or failing). The new
-                    // gap rides the in-memory queue instead — the same
-                    // documented residual as every queued window: a process
-                    // death before it is claimed loses it until the next
-                    // detection re-plans it.
-                    staged != null -> synchronized(queueLock) {
-                        enqueueClamped(window, staged.endMs)
+                    // gap rides the in-memory queue AND the durable journal:
+                    // the journal matters because once later ticks advance
+                    // the cursor past the queued range, no later detection
+                    // can re-plan it — without the journal a process death
+                    // before the queue drained would lose the gap
+                    // permanently.
+                    staged != null -> {
+                        stageQueuedWindowDurable(window)
+                        synchronized(queueLock) {
+                            enqueueClamped(window, staged.endMs)
+                        }
                     }
                     // Nothing staged: the debt slot is free.
                     else -> stageDebt(window)
@@ -828,6 +867,11 @@ class TrackerService : Service() {
                             // the single durable publication that
                             // [promoteDebt] installs as the pending row.
                             current != null && window.startMs >= current.endMs -> {
+                                // Journal durably too: the in-memory copy dies
+                                // with the process, and the advancing cursor
+                                // would prevent any later detection from
+                                // re-planning the range (see the key docs).
+                                stageQueuedWindowDurable(window)
                                 synchronized(queueLock) {
                                     enqueueClamped(window, current.endMs)
                                 }
@@ -1025,6 +1069,41 @@ class TrackerService : Service() {
             if (current == null || current != debt) true else clearPendingDebt()
         }
 
+    /** Durably journals the latest disjoint detection gap (apply() —
+     *  non-blocking on the tick loop). See the key docs: the in-memory
+     *  queue alone would lose a queued disjoint gap if the process died
+     *  before the queue drained, because the advancing cursor prevents
+     *  any later detection from re-planning that range. Latest wins. */
+    private fun stageQueuedWindowDurable(window: UsageBackfill.Window) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_BF_Q_START_MS, window.startMs)
+            .putLong(KEY_BF_Q_END_MS, window.endMs)
+            .apply()
+    }
+
+    /** The durably journaled disjoint gap, if any (see
+     *  [stageQueuedWindowDurable]). */
+    private fun pendingQueuedWindowDurable(): UsageBackfill.Window? {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val end = prefs.getLong(KEY_BF_Q_END_MS, 0L)
+        if (end <= 0L) return null
+        return UsageBackfill.Window(prefs.getLong(KEY_BF_Q_START_MS, 0L), end)
+    }
+
+    /** Removes the durable disjoint-gap journal. Worker-side (commit(),
+     *  durable): the journal is only cleared once its range was installed
+     *  into the durable row (or proven already covered), so a crash can
+     *  always re-ingest it — re-ingestion is idempotent because the claim
+     *  step drops a queued window the row already covers. */
+    private fun clearQueuedWindowDurable() {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .remove(KEY_BF_Q_START_MS)
+            .remove(KEY_BF_Q_END_MS)
+            .apply()
+    }
+
     /** The end of the still-owed region: the durable Room window if one is
      *  active, otherwise the unpromoted detection debt. */
     private fun pendingEndMs(
@@ -1186,6 +1265,14 @@ class TrackerService : Service() {
                                     }
                                 }
                             }
+                            // The range just claimed is durably installed (or
+                            // proven already covered): once the queue has
+                            // drained, the disjoint-gap journal can go too —
+                            // a crash from here on re-plans nothing stale, and
+                            // re-ingestion before this point was idempotent.
+                            if (synchronized(queueLock) { pendingRecoveryWindows.isEmpty() }) {
+                                clearQueuedWindowDurable()
+                            }
                         }
                     }
                     // No queued window — but a late registrar may have
@@ -1265,6 +1352,9 @@ class TrackerService : Service() {
                             }
                         }
                         if (!retryLater) {
+                            // Retiring with an empty queue: every disjoint-gap
+                            // journal has been durably installed — drop it.
+                            clearQueuedWindowDurable()
                             dao.clear()
                             backfillInFlight.set(false)
                             retire = true

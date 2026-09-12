@@ -70,6 +70,14 @@ data class WarnedSubjectEntity(
  * leaves the outage frontier intact for retry, and per-chunk progress is
  * committed in the same transaction as the chunk's counter merges, so a
  * crash can neither lose merged slices nor double-count them.
+ *
+ * COMPLETED-MARKER STATE: the recovery worker intentionally RETAINS a row
+ * with `progressMs == endMs > 0` (nothing left to replay) until the live
+ * tick cursor has caught up with `endMs` — it is the recovered-through
+ * marker that stops a restart with a stale cursor from re-registering and
+ * replaying the already-merged window. Such a row is drained and cleared by
+ * the worker's retirement step once the cursor catches up; do not treat
+ * `progressMs == endMs > 0` as "clear it" — retirement is cursor-gated.
  */
 @Entity(tableName = "backfill_state")
 data class BackfillStateEntity(
