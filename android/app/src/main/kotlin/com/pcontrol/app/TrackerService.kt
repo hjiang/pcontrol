@@ -1215,7 +1215,19 @@ class TrackerService : Service() {
                                 if (row != null && row.endMs > claimedStart) {
                                     claimedStart = row.endMs
                                 }
-                                for (queued in pendingRecoveryWindows) {
+                                // Snapshot under [queueLock]: this deque is
+                                // guarded by that monitor and is not
+                                // thread-safe, while a detector can append to
+                                // it (under the same lock) on another thread.
+                                // Iterating it live could throw a
+                                // ConcurrentModificationException or miss a
+                                // just-queued range and compute the wrong
+                                // owed frontier. [debtLock] -> [queueLock] is
+                                // the documented lock order.
+                                val queuedWindows = synchronized(queueLock) {
+                                    pendingRecoveryWindows.toList()
+                                }
+                                for (queued in queuedWindows) {
                                     if (queued.startMs < merged.endMs &&
                                         queued.endMs > claimedStart
                                     ) {
