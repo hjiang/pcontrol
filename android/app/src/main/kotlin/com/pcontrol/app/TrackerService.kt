@@ -1167,28 +1167,20 @@ class TrackerService : Service() {
                                 }
                             }
                         } else {
-                            // No planned window. The staged debt can still be
-                            // stale — fully live-counted since it was staged
-                            // (the cursor only advances over counted or
-                            // separately-staged stretches) — so drop it
-                            // instead of letting [promoteDebt] install it as
-                            // a replay of already-counted time. Atomic under
-                            // [debtLock]: a detector staging concurrently
-                            // wins via the unchanged-check.
-                            if (current != null) {
-                                val liveCursorMs = synchronized(anchorLock) {
-                                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                                        .getLong(KEY_TICK_CURSOR_MS, 0L)
-                                }
-                                if (current.endMs <= liveCursorMs) {
-                                    clearPendingDebtIfUnchanged(current)
-                                    null
-                                } else {
-                                    current
-                                }
-                            } else {
-                                null
-                            }
+                            // No planned window: keep the staged debt as-is.
+                            // The live cursor is NOT evidence that the debt's
+                            // interval was counted: the detection advanced the
+                            // query anchor to the debt's end when it staged,
+                            // so live counting resumes ABOVE it and the cursor
+                            // passing debt.end afterwards is the normal,
+                            // expected state — dropping the record here (with
+                            // no backfill_state row yet) would erase the only
+                            // recovery record. A staged debt is resolved
+                            // solely by [promoteDebt] (Room install, or drop
+                            // as covered by the active row) or by
+                            // retirement's extend branch — never by the
+                            // cursor.
+                            current
                         }
                     }
                     // Start/retain the worker based on ACTUAL persisted or
@@ -1647,7 +1639,19 @@ class TrackerService : Service() {
                         val next = synchronized(queueLock) {
                             pendingRecoveryWindows.firstOrNull()
                         }
-                        if (next != null) {
+                        // Claim the head only when it belongs with the ACTIVE
+                        // row (no row, or overlapping/contiguous with it). A
+                        // DISJOINT head (starting after the row's end) is left
+                        // queued: merging it into the row (raising endMs)
+                        // would make the next pass replay [row.endMs,
+                        // next.startMs) — the stretch live ticks counted
+                        // between the two outages — and rewriting the row
+                        // would drop the row's unprocessed prefix. Falling
+                        // through lets the row keep recovering or retire
+                        // (cursor-gated); after the clear, the next loop pass
+                        // claims the queued window as a fresh row with its
+                        // own start as the progress frontier.
+                        if (next != null && (row == null || next.startMs <= row.endMs)) {
                             // ORDER: durable Room install FIRST, then the
                             // journal removal (commit()), then the in-memory
                             // dequeue. Removing the journal entry before the
@@ -1660,19 +1664,15 @@ class TrackerService : Service() {
                             // window queued for the next pass's retry.
                             if (row == null) {
                                 dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
-                            } else if (row.progressMs < next.endMs) {
-                                // EXTEND the active row, never rewrite it:
-                                // preserving progressMs and raising only endMs
-                                // keeps the row's unprocessed prefix owed —
-                                // rewriting the row to `next` would drop both
-                                // that prefix and any tail beyond next.endMs
-                                // when a stale journaled/queued window
-                                // overlaps the active row (startup
-                                // re-ingestion and the tick-side disjoint path
-                                // can enqueue windows without row knowledge).
-                                // A fully covered entry (endMs <= progressMs)
-                                // takes the no-set path above and is simply
-                                // removed from the queue.
+                            } else {
+                                // Overlapping or contiguous: EXTEND the active
+                                // row — preserving progressMs keeps the row's
+                                // unprocessed prefix owed, and the claimable
+                                // check above guarantees next.startMs <=
+                                // row.endMs, so the raise cannot swallow any
+                                // live-counted gap. A fully covered entry
+                                // (endMs <= progressMs) is an unchanged replace
+                                // here and is simply removed from the queue.
                                 dao.set(
                                     BackfillStateEntity(
                                         row.id,
@@ -1851,7 +1851,17 @@ class TrackerService : Service() {
                 }
             }
             when {
-                retire -> return
+                retire -> {
+                    // The completed row was cleared. If windows are still
+                    // queued (a disjoint window left queued above), KEEP the
+                    // worker and the single-flight guard and claim them as
+                    // fresh rows on the next pass; exit only when nothing is
+                    // left. Each remaining cycle performs real Room work
+                    // (claim + replay), so this converges instead of spinning.
+                    if (synchronized(queueLock) { pendingRecoveryWindows.isEmpty() }) {
+                        return
+                    }
+                }
                 retryLater -> delay(RETIRE_RETRY_BACKOFF_MS)
             }
         }
