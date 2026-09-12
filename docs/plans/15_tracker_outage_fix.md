@@ -245,12 +245,18 @@ tick cursor:
 - **The tick loop never waits on backfill I/O**: `backfillMutex` no longer
   involves `commitTick` (single-writer cursor, monotonic by construction);
   all Room access happens in backfill coroutines only.
-- **Detection hands off durably, synchronously**: `launchBackfill` writes
-  the detection debt (commit()) before returning — a process death after
-  the next commitTick can no longer skip the detected gap. An overlapping
-  unpromoted debt is merged (only possible when no live tick has committed
-  in between), and the registration write retries in place (3 × 2 s) on
-  transient Room failures.
+- **Detection stages the gap before returning**: `launchBackfill` records
+  the detected gap as the prefs debt (apply() — immediately visible,
+  non-blocking on the tick) before it returns; the recovery worker upgrades
+  that record durably (commit()) and into the Room row. The residual — a
+  process death between staging and the worker's durable write (scheduling
+  + flush latency, normally ms) — loses the gap until the next detection
+  re-plans it from the live frontier. An overlapping unpromoted debt is
+  merged (only possible when no live tick has committed in between), a
+  disjoint one is queued instead of overwriting the staged record (the
+  debt is a singleton), and the registration write retries in place
+  (2 s backoff, retried for as long as durable work remains) on transient
+  Room failures.
 - **Clock rollback skips ticks**: the monotonic cursor can sit ahead of a
   rolled-back clock; such ticks are skipped entirely (that wall-clock range
   was already counted) instead of double-counting via a bootstrapped

@@ -270,8 +270,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   `backfillMutex` + `debtLock`; the first live query after detection
   starts at the recovery end (the anchor is advanced at detection), and
   retirement only clears a debt fully covered by the recovered frontier —
-  an extending debt becomes the next claimed window. Registration writes
-  retry in place (3 × 2 s) on transient Room failures, and the failure
+  an extending debt becomes the next claimed window, and a second
+detection disjoint from the staged debt is queued instead of overwriting
+it (the debt record is a singleton — a disjoint overwrite would discard a
+still-unpromoted gap). Registration writes retry in place (2 s backoff,
+retried for as long as durable work remains) on transient Room failures,
+and the failure
   path keeps the worker alive while any durable work (queued tails, row
   work, staged debt) remains. Eventless intervals cap at 5 min measured
   from interval start (preserved across chunks and retries; sub-second
