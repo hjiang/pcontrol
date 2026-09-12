@@ -258,7 +258,10 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   the page **title**, at any scroll position. This is fine for our design:
   `handleBrowserUrlBar` runs on every browser event and `BrowserDomainCache`
   never lets a `null` (title) overwrite a captured domain, which then persists
-  until the next navigation. Don't "fix" the registry entry back out because a
+  until the next navigation. `DomainParser.parse` rejects title-like text —
+  whitespace-bearing candidates and single-colon pseudo-IPs return null — so a
+  settled title (which almost always contains spaces) never overwrites the
+  captured domain. Don't "fix" the registry entry back out because a
   settled-state dump shows a title. Verified on Xiaomi `25097RP43C`.
 
 - **A release build on a device can only be diagnosed via adb + uiautomator +
