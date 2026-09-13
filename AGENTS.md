@@ -296,7 +296,12 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   path keeps the worker alive while any durable work (queued tails, row
   work, staged debt) remains. The tick heartbeat refreshes only after a
   successful tick, so persistent tick failures age into a stall and the
-  failed period is recovered from the last committed cursor. Eventless
+  failed period is recovered from the last committed cursor. The
+  orchestration decisions are expressed as pure `:core` seams
+  (`BackfillQueue`, `BackfillRecovery` — plan 16) and pinned by tests
+  where the decision is testable; the floor's call-site wiring, the
+  guard race windows, and the real Room/prefs write ordering remain
+  device-verified. Eventless
   intervals cap at 5 min measured
   from interval start (preserved across chunks and retries; sub-second
   remainders carry across chunks); pcontrol's own package is excluded —

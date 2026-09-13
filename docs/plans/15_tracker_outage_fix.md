@@ -321,6 +321,12 @@ tick cursor:
   between a detection and its durable upgrade; recovery progress (Room
   row + detection debt) is always durable.
 
+The recovery ORCHESTRATION DECISIONS are now unit-tested at pure `:core`
+seams (`BackfillQueue`, `BackfillRecovery` — see plan 16 / issue #79); the
+device verification below remains the proof for the real execution order
+(Room/prefs writes, guard timing), which the seams deliberately do not
+cover.
+
 ## Verification on device (done 2026-09-09, locally signed dev build —
 see lineage note)
 
