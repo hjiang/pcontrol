@@ -51,6 +51,11 @@ object BackfillRecovery {
      * a PR #81 review finding: the previous any-overlap jump treated
      * `[100,350]` against queued `[300,400]` as fully covered and returned
      * null, dropping the unpromoted `[100,300)`.
+     *
+     * The sweep runs over the queued windows sorted by start, so chained
+     * coverage resolves to the farthest reachable end regardless of the
+     * queue's (explicitly non-chronological) order, and the persisted debt
+     * never re-enqueues a range the queue already claims (PR #81 round 3).
      */
     fun owedWindow(
         merged: UsageBackfill.Window,
@@ -61,10 +66,12 @@ object BackfillRecovery {
         if (rowEndMs > claimedStart) {
             claimedStart = rowEndMs
         }
-        for (q in queued) {
-            if (q.startMs <= claimedStart && q.endMs > claimedStart) {
-                claimedStart = q.endMs
-            }
+        // Sorted-start sweep: once a window starts past the claimed frontier,
+        // every later start does too, so the frontier is final and the result
+        // is order-independent.
+        for (q in queued.sortedBy { it.startMs }) {
+            if (q.startMs > claimedStart) break
+            if (q.endMs > claimedStart) claimedStart = q.endMs
         }
         return if (claimedStart >= merged.endMs) null else UsageBackfill.Window(claimedStart, merged.endMs)
     }

@@ -85,6 +85,16 @@ class BackfillRecoveryTest {
     }
 
     @Test
+    fun `owed window keeps the gap between two queued windows`() {
+        val result = BackfillRecovery.owedWindow(
+            merged = w(100, 500),
+            rowEndMs = 0L,
+            queued = listOf(w(300, 400), w(100, 200))
+        )
+        assertEquals(w(200, 500), result)
+    }
+
+    @Test
     fun `owed window ignores a disjoint queued window above the span`() {
         val result = BackfillRecovery.owedWindow(merged = w(100, 200), rowEndMs = 0L, queued = listOf(w(300, 400)))
         assertEquals(w(100, 200), result)
@@ -110,6 +120,30 @@ class BackfillRecoveryTest {
             queued = listOf(w(100, 200), w(150, 450))
         )
         assertEquals(w(450, 500), result)
+    }
+
+    @Test
+    fun `owed window resolves chained coverage regardless of queue order`() {
+        // REGRESSION PIN (PR #81 round 3): the queue is not chronological,
+        // so [150,450] can precede [100,200]. Together they cover
+        // [100,450]: the persisted debt must be [450,500] both ways, not
+        // [200,500] (which re-includes a range the queue already claims).
+        assertEquals(
+            w(450, 500),
+            BackfillRecovery.owedWindow(
+                merged = w(100, 500),
+                rowEndMs = 0L,
+                queued = listOf(w(150, 450), w(100, 200))
+            )
+        )
+        assertEquals(
+            w(450, 500),
+            BackfillRecovery.owedWindow(
+                merged = w(100, 500),
+                rowEndMs = 0L,
+                queued = listOf(w(100, 200), w(150, 450))
+            )
+        )
     }
 
     @Test

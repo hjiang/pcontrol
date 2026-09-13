@@ -106,6 +106,43 @@ class BackfillQueueTest {
     }
 
     @Test
+    fun `clamp preserves the gap between two queued windows`() {
+        // Chained coverage must not jump across an uncovered gap: [100,200]
+        // covers up to 200 and [300,400] starts after it, so [200,300) stays
+        // owed.
+        val result = BackfillQueue.clamp(
+            window = w(100, 500),
+            owedThroughMs = 100L,
+            queued = listOf(w(300, 400), w(100, 200))
+        )
+        assertEquals(w(200, 500), result)
+    }
+
+    @Test
+    fun `clamp resolves chained coverage regardless of queue order`() {
+        // REGRESSION PIN (PR #81 round 3): the queue is explicitly not
+        // chronological, so [150,450] can arrive before [100,200]. Together
+        // they cover [100,450]: the sorted sweep must return [450,500] both
+        // ways, not [200,500] (which would re-claim [200,450)).
+        assertEquals(
+            w(450, 500),
+            BackfillQueue.clamp(
+                window = w(100, 500),
+                owedThroughMs = 100L,
+                queued = listOf(w(150, 450), w(100, 200))
+            )
+        )
+        assertEquals(
+            w(450, 500),
+            BackfillQueue.clamp(
+                window = w(100, 500),
+                owedThroughMs = 100L,
+                queued = listOf(w(100, 200), w(150, 450))
+            )
+        )
+    }
+
+    @Test
     fun `clamp returns null for a zero-width window`() {
         val result = BackfillQueue.clamp(window = w(100, 100), owedThroughMs = 0L, queued = emptyList())
         assertEquals(null, result)

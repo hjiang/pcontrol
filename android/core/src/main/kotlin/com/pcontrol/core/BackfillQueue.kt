@@ -31,6 +31,13 @@ object BackfillQueue {
      * PR #81 review finding: the previous any-overlap jump to `q.endMs`
      * treated `[100,350]` against queued `[300,400]` as fully subsumed and
      * discarded the still-unrecovered `[100,300)`.
+     *
+     * The sweep runs over the queued windows sorted by start, so chained
+     * coverage resolves to the farthest reachable end regardless of the
+     * queue's (explicitly non-chronological) order — a window extending the
+     * frontier can legally arrive before the window that reaches it
+     * (PR #81 round 3: `[150,450]` before `[100,200]` must still clamp
+     * `[100,500]` to `[450,500]`, not `[200,500]`).
      */
     fun clamp(
         window: UsageBackfill.Window,
@@ -38,11 +45,13 @@ object BackfillQueue {
         queued: List<UsageBackfill.Window>
     ): UsageBackfill.Window? {
         var owed = owedThroughMs
-        for (q in queued) {
+        // Sorted-start sweep: once a window starts past the frontier, every
+        // later start does too, so the frontier is final and the result is
+        // order-independent.
+        for (q in queued.sortedBy { it.startMs }) {
             val frontier = maxOf(owed, window.startMs)
-            if (q.startMs <= frontier && q.endMs > frontier) {
-                owed = maxOf(owed, q.endMs)
-            }
+            if (q.startMs > frontier) break
+            if (q.endMs > frontier) owed = q.endMs
         }
         val clamped = if (owed > window.startMs) {
             UsageBackfill.Window(owed, maxOf(window.endMs, owed))
