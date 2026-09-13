@@ -55,7 +55,10 @@ queue head stays the identity for the journal removal and the dequeue.
 ### Stage 2 — TrackerService rewiring (behavior-preserving)
 
 Frontier snapshot via `recoveryFloorMs` (anchor = rejected candidate); the
-worker-side plan clamp via `BackfillQueue.clamp`; the debt-merge owed
+worker-side plan clamp via `BackfillQueue.clamp` — passing the ACTUAL
+snapshotted queued windows, not a collapsed max-end frontier, so the
+sweep's gap preservation is effective at that call site too (PR #81
+round 4); the debt-merge owed
 computation via `owedWindow`; the three durable-work checks via
 `hasDurableWork`; `journalAppend`/`journalRemove`/`journalLoad` via the
 codec; `enqueueClamped` via `clamp`; the `runRecovery` claim arm via
