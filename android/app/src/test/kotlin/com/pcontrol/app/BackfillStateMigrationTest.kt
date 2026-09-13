@@ -32,11 +32,13 @@ class BackfillStateMigrationTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+        AppDatabase.closeForTests()   // never inherit another class's cached instance
         context.deleteDatabase(DB_NAME)
     }
 
     @After
     fun tearDown() {
+        AppDatabase.closeForTests()
         context.deleteDatabase(DB_NAME)
     }
 
@@ -111,7 +113,6 @@ class BackfillStateMigrationTest {
             assertEquals(0L, cleared.progressMs)
             assertEquals(0L, cleared.endMs)
         }
-        db.close()
     }
 
     companion object {

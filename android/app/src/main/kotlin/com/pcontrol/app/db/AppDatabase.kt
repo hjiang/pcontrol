@@ -1,6 +1,7 @@
 package com.pcontrol.app.db
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -155,6 +156,25 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "pcontrol.db"
                 ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { INSTANCE = it }
+            }
+        }
+
+        /**
+         * Test-only reset of the process-wide [INSTANCE].
+         *
+         * [RoomDatabase.close] permanently shuts down Room's query and
+         * transaction executors, yet [getInstance] would keep returning the
+         * closed instance. Robolectric reuses static state across test
+         * classes, so a test that closes the singleton directly poisons
+         * every later test that touches it (JobCancellationException).
+         * Tests that open the real on-disk database must reset through
+         * here instead of closing the handle themselves.
+         */
+        @VisibleForTesting
+        internal fun closeForTests() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }
