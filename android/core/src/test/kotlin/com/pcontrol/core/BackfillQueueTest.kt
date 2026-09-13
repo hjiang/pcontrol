@@ -79,13 +79,30 @@ class BackfillQueueTest {
     }
 
     @Test
-    fun `clamp takes the maximum end over multiple overlapping queued windows`() {
+    fun `clamp takes the maximum end over overlapping queued windows that cover the frontier`() {
+        // A queued window only justifies skipping to its end when it starts
+        // at/below the not-yet-claimed frontier (so it covers the request's
+        // prefix); a chained pair still resolves to the farthest end.
         val result = BackfillQueue.clamp(
             window = w(100, 500),
             owedThroughMs = 100L,
-            queued = listOf(w(150, 200), w(300, 400))
+            queued = listOf(w(100, 200), w(150, 450))
         )
-        assertEquals(w(400, 500), result)
+        assertEquals(w(450, 500), result)
+    }
+
+    @Test
+    fun `clamp preserves the uncovered prefix when a queued window starts inside the span`() {
+        // REGRESSION PIN (PR #81 review): queued [300,400] does NOT cover
+        // [100,300). The old any-overlap jump set owed to 400, collapsed the
+        // request to a zero-width window and returned null — silently
+        // dropping the still-unrecovered prefix.
+        val result = BackfillQueue.clamp(
+            window = w(100, 350),
+            owedThroughMs = 100L,
+            queued = listOf(w(300, 400))
+        )
+        assertEquals(w(100, 350), result)
     }
 
     @Test

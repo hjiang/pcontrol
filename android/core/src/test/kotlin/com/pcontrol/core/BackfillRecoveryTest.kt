@@ -65,9 +65,23 @@ class BackfillRecoveryTest {
     }
 
     @Test
-    fun `owed window is raised past an overlapping queued window`() {
-        val result = BackfillRecovery.owedWindow(merged = w(100, 500), rowEndMs = 0L, queued = listOf(w(200, 300)))
+    fun `owed window is raised past a queued window that covers the frontier`() {
+        val result = BackfillRecovery.owedWindow(merged = w(100, 500), rowEndMs = 0L, queued = listOf(w(100, 300)))
         assertEquals(w(300, 500), result)
+    }
+
+    @Test
+    fun `owed window preserves the uncovered prefix when a queued window starts inside the span`() {
+        // REGRESSION PIN (PR #81 review): queued [300,400] does not cover
+        // [100,300), so the merged span must not collapse to that window's
+        // end. The old any-overlap jump returned null and dropped an
+        // unpromoted outage.
+        val result = BackfillRecovery.owedWindow(
+            merged = w(100, 350),
+            rowEndMs = 0L,
+            queued = listOf(w(300, 400))
+        )
+        assertEquals(w(100, 350), result)
     }
 
     @Test
@@ -89,11 +103,11 @@ class BackfillRecoveryTest {
     }
 
     @Test
-    fun `owed window takes the maximum claimed end over overlapping queued windows`() {
+    fun `owed window takes the maximum claimed end over queued windows covering the frontier`() {
         val result = BackfillRecovery.owedWindow(
             merged = w(100, 500),
             rowEndMs = 0L,
-            queued = listOf(w(150, 200), w(300, 450))
+            queued = listOf(w(100, 200), w(150, 450))
         )
         assertEquals(w(450, 500), result)
     }

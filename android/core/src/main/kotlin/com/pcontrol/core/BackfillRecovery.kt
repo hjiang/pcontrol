@@ -35,13 +35,22 @@ object BackfillRecovery {
     /**
      * INVARIANT C — the owed span of a merged detection debt after clamping
      * against ranges already claimed for recovery: the active row's end
-     * ([rowEndMs], 0 when absent) and every queued window OVERLAPPING the
-     * span. The LIVE CURSOR is deliberately excluded (the caller's
-     * detection advanced the query anchor past the debt, so live ticks push
-     * the cursor forward without sampling the debt's prefix — clamping to it
-     * would erase an unpromoted outage). Returns null when the merged span
-     * is fully covered: the caller keeps the debt record as-is and lets the
-     * claim/retire steps resolve it against the covering state.
+     * ([rowEndMs], 0 when absent) and every queued window that COVERS the
+     * claimed frontier it would advance past. The LIVE CURSOR is deliberately
+     * excluded (the caller's detection advanced the query anchor past the
+     * debt, so live ticks push the cursor forward without sampling the
+     * debt's prefix — clamping to it would erase an unpromoted outage).
+     * Returns null when the merged span is fully covered: the caller keeps
+     * the debt record as-is and lets the claim/retire steps resolve it
+     * against the covering state.
+     *
+     * Only a queued window starting at/below the current claimed frontier
+     * justifies raising it to that window's end: such a window provably
+     * covers the intervening span. A queued window starting strictly inside
+     * the merged span leaves the uncovered prefix in the returned window —
+     * a PR #81 review finding: the previous any-overlap jump treated
+     * `[100,350]` against queued `[300,400]` as fully covered and returned
+     * null, dropping the unpromoted `[100,300)`.
      */
     fun owedWindow(
         merged: UsageBackfill.Window,
@@ -53,7 +62,7 @@ object BackfillRecovery {
             claimedStart = rowEndMs
         }
         for (q in queued) {
-            if (q.startMs < merged.endMs && q.endMs > claimedStart) {
+            if (q.startMs <= claimedStart && q.endMs > claimedStart) {
                 claimedStart = q.endMs
             }
         }

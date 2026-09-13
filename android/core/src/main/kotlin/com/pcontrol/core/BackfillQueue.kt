@@ -17,11 +17,20 @@ object BackfillQueue {
 
     /**
      * Clamps [window] against [owedThroughMs] and every QUEUED window that
-     * OVERLAPS the span (their ends are claimed-for recovery too — two
-     * detections with a stale frontier would otherwise enqueue overlapping
-     * ranges). Returns null when nothing remains to queue (null input is
-     * the caller's concern): fully subsumed requests are dropped, and a
-     * zero-width result is dropped the same way.
+     * COVERS the frontier it would advance past (their ends are claimed-for
+     * recovery too — two detections with a stale frontier would otherwise
+     * enqueue overlapping ranges). Returns null when nothing remains to
+     * queue (null input is the caller's concern): fully subsumed requests
+     * are dropped, and a zero-width result is dropped the same way.
+     *
+     * Only a queued window starting AT OR BELOW the not-yet-claimed frontier
+     * (`maxOf(owedThroughMs, window.startMs)`) justifies skipping to its end:
+     * such a window provably covers the request's prefix. A queued window
+     * starting strictly inside the span (a non-contiguous queue) leaves the
+     * uncovered prefix IN the result instead of silently dropping it — a
+     * PR #81 review finding: the previous any-overlap jump to `q.endMs`
+     * treated `[100,350]` against queued `[300,400]` as fully subsumed and
+     * discarded the still-unrecovered `[100,300)`.
      */
     fun clamp(
         window: UsageBackfill.Window,
@@ -30,7 +39,8 @@ object BackfillQueue {
     ): UsageBackfill.Window? {
         var owed = owedThroughMs
         for (q in queued) {
-            if (q.startMs < window.endMs && q.endMs > window.startMs) {
+            val frontier = maxOf(owed, window.startMs)
+            if (q.startMs <= frontier && q.endMs > frontier) {
                 owed = maxOf(owed, q.endMs)
             }
         }
