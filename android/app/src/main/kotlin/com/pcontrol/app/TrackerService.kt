@@ -24,7 +24,10 @@ import com.pcontrol.app.update.UpdateResult
 import com.pcontrol.app.update.UpdateState
 import com.pcontrol.core.AppEvent
 import com.pcontrol.core.AppUsagePoller
+import com.pcontrol.core.BackfillJournal
 import com.pcontrol.core.BackfillPromotion
+import com.pcontrol.core.BackfillQueue
+import com.pcontrol.core.BackfillRecovery
 import com.pcontrol.core.BrowserContext
 import com.pcontrol.core.PolicyEngine
 import com.pcontrol.core.PolicyV2
@@ -534,6 +537,8 @@ class TrackerService : Service() {
                     // foreground known and UsageStats access unconfirmed —
                     // nothing credited). Flooring at the anchor would skip
                     // exactly that uncounted stretch and lose recoverable usage.
+                    // The decision itself is BackfillRecovery.recoveryFloorMs
+                    // (issue #79), so the anchor rejection stays test-pinned.
                     launchBackfill(System.currentTimeMillis())
                     // The anchor advance makes the next tick's query skip the
                     // freeze's transitions — reseed the foreground state from
@@ -1009,8 +1014,14 @@ class TrackerService : Service() {
         // read/modify/apply runs under — so a worker-retry snapshot can
         // never tear against a concurrently committing tick.
         val frontierMs = synchronized(anchorLock) {
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val committedCursorMs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getLong(KEY_TICK_CURSOR_MS, 0L)
+            // INVARIANT A (316d726 / issue #79): floor at the COMMITTED
+            // cursor. The in-memory query anchor is passed as the rejected
+            // candidate only — it can sit ahead of the cursor exactly when
+            // nothing was credited, and flooring there would skip that
+            // uncounted stretch (pinned by BackfillRecoveryTest).
+            BackfillRecovery.recoveryFloorMs(committedCursorMs, lastUsageEventQueryTime)
         }
         val window = planWindow(frontierMs, nowMs)
         if (window != null) {
@@ -1152,13 +1163,7 @@ class TrackerService : Service() {
                         }
                     )
                     val window = planWindow(frontierMs, nowMs)
-                        ?.takeIf { it.endMs > maxOf(it.startMs, claimedThroughMs) }
-                        ?.let {
-                            UsageBackfill.Window(
-                                maxOf(it.startMs, claimedThroughMs),
-                                it.endMs
-                            )
-                        }
+                        ?.let { BackfillQueue.clamp(it, claimedThroughMs, emptyList()) }
                     // Debt read → merge → durable publication is ONE debtLock
                     // critical section: a detector staging concurrently (an
                     // apply(), a few ms) cannot interleave a newer record
@@ -1211,10 +1216,8 @@ class TrackerService : Service() {
                                 // permanently lose the original outage. A
                                 // disjoint queued window (starting at/after
                                 // the span's end) must not subsume it either.
-                                var claimedStart = merged.startMs
-                                if (row != null && row.endMs > claimedStart) {
-                                    claimedStart = row.endMs
-                                }
+                                // (BackfillRecovery.owedWindow — pinned by
+                                // BackfillRecoveryTest, issue #79.)
                                 // Snapshot under [queueLock]: this deque is
                                 // guarded by that monitor and is not
                                 // thread-safe, while a detector can append to
@@ -1227,14 +1230,12 @@ class TrackerService : Service() {
                                 val queuedWindows = synchronized(queueLock) {
                                     pendingRecoveryWindows.toList()
                                 }
-                                for (queued in queuedWindows) {
-                                    if (queued.startMs < merged.endMs &&
-                                        queued.endMs > claimedStart
-                                    ) {
-                                        claimedStart = queued.endMs
-                                    }
-                                }
-                                val owed = if (claimedStart >= merged.endMs) {
+                                val owed = BackfillRecovery.owedWindow(
+                                    merged,
+                                    row?.endMs ?: 0L,
+                                    queuedWindows
+                                )
+                                if (owed == null) {
                                     // Fully covered by claimed ranges: keep
                                     // the debt record as-is — promoteDebt
                                     // resolves it against the covering state
@@ -1242,11 +1243,6 @@ class TrackerService : Service() {
                                     // covered; otherwise recovery no-ops over
                                     // the covered range) without double
                                     // counting.
-                                    null
-                                } else {
-                                    UsageBackfill.Window(claimedStart, merged.endMs)
-                                }
-                                if (owed == null) {
                                     current
                                 } else if (writeDebt(owed)) {
                                     owed
@@ -1299,9 +1295,13 @@ class TrackerService : Service() {
                     // still pending (e.g. a dao.clear retry after a failed
                     // pass): a worker must stay alive to retire the marker
                     // rather than leaving it stranded.
-                    val hasDurableWork = debt != null ||
-                        synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                        (row != null && row.endMs > 0L)
+                    val hasDurableWork = BackfillRecovery.hasDurableWork(
+                        stagedDebt = debt != null,
+                        queuedNonEmpty = synchronized(queueLock) {
+                            pendingRecoveryWindows.isNotEmpty()
+                        },
+                        rowEndMs = row?.endMs ?: 0L
+                    )
                     if (hasDurableWork) {
                         ownsGuard = backfillInFlight.compareAndSet(false, true)
                     }
@@ -1332,9 +1332,13 @@ class TrackerService : Service() {
                             // worker, exactly as in the outer retry check
                             // below; excluding it here would release the
                             // guard and strand the marker.
-                            drained = synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                                (row != null && row.endMs > 0L) ||
-                                debt != null
+                            drained = BackfillRecovery.hasDurableWork(
+                                stagedDebt = debt != null,
+                                queuedNonEmpty = synchronized(queueLock) {
+                                    pendingRecoveryWindows.isNotEmpty()
+                                },
+                                rowEndMs = row?.endMs ?: 0L
+                            )
                             if (!drained) backfillInFlight.set(false)
                         }
                         if (!drained) return@launch
@@ -1360,9 +1364,13 @@ class TrackerService : Service() {
                         val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
                         val row = dao.get()
                         val debt = synchronized(debtLock) { pendingDebt() }
-                        retry = synchronized(queueLock) { pendingRecoveryWindows.isNotEmpty() } ||
-                            (row != null && row.endMs > 0L) ||
-                            debt != null
+                        retry = BackfillRecovery.hasDurableWork(
+                            stagedDebt = debt != null,
+                            queuedNonEmpty = synchronized(queueLock) {
+                                pendingRecoveryWindows.isNotEmpty()
+                            },
+                            rowEndMs = row?.endMs ?: 0L
+                        )
                     }
                 } catch (e2: Exception) {
                     Log.w(TAG, "backfill retry check failed; assuming work remains", e2)
@@ -1477,12 +1485,11 @@ class TrackerService : Service() {
         synchronized(queueLock) {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             val existing = prefs.getString(KEY_BF_QUEUE_JOURNAL, null)
-            val entry = "${window.startMs}:${window.endMs}"
             // Deduplicate: a retrying registration (2 s cadence during a
             // prolonged Room failure) re-appends the SAME disjoint window —
             // skipping identical entries keeps the journal bounded. Distinct
             // ranges still append (they are genuinely separate gaps).
-            if (existing != null && existing.split('|').any { it == entry }) {
+            if (BackfillJournal.containsEntry(existing, window)) {
                 // A dedupe hit may still be only an apply()-staged entry from
                 // a detector that has not reached disk yet. In durable mode
                 // the caller is about to CLEAR a durable record based on this
@@ -1495,10 +1502,7 @@ class TrackerService : Service() {
                 }
             }
             val editor = prefs.edit()
-                .putString(
-                    KEY_BF_QUEUE_JOURNAL,
-                    if (existing.isNullOrEmpty()) entry else "$existing|$entry"
-                )
+                .putString(KEY_BF_QUEUE_JOURNAL, BackfillJournal.appendEntry(existing, window))
             if (!durable) {
                 editor.apply()
                 return true
@@ -1521,10 +1525,8 @@ class TrackerService : Service() {
         synchronized(queueLock) {
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             val current = prefs.getString(KEY_BF_QUEUE_JOURNAL, null) ?: return true
-            val drop = windows.map { "${it.startMs}:${it.endMs}" }.toSet()
-            val kept = current.split('|').filter { it.isNotBlank() && it !in drop }
             return prefs.edit()
-                .putString(KEY_BF_QUEUE_JOURNAL, kept.joinToString("|"))
+                .putString(KEY_BF_QUEUE_JOURNAL, BackfillJournal.removeEntries(current, windows))
                 .commit()
         }
     }
@@ -1557,18 +1559,7 @@ class TrackerService : Service() {
         synchronized(queueLock) {
             val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(KEY_BF_QUEUE_JOURNAL, null)
-            if (raw.isNullOrEmpty()) return emptyList()
-            return raw.split('|').mapNotNull { part ->
-                val parts = part.split(':')
-                if (parts.size == 2) {
-                    val s = parts[0].toLongOrNull()
-                    val e = parts[1].toLongOrNull()
-                    if (s != null && e != null && e > s) {
-                        return@mapNotNull UsageBackfill.Window(s, e)
-                    }
-                }
-                null
-            }
+            return BackfillJournal.decode(raw)
         }
     }
 
@@ -1595,7 +1586,7 @@ class TrackerService : Service() {
         durable: Boolean = false
     ): Boolean {
         synchronized(queueLock) {
-            var w = window ?: return true
+            val requested = window ?: return true
             // Clamp only against QUEUED windows that OVERLAP the requested
             // span. Clamping against a later DISJOINT queued window would
             // push the request past its own end and silently drop a real
@@ -1603,17 +1594,13 @@ class TrackerService : Service() {
             // by queued [200,300] with the row ending at 100 — the tail
             // would never be replayed). Genuinely overlapping enqueues are
             // still coalesced here; disjoint ones merge safely at claim
-            // time instead.
-            var owed = owedThroughMs
-            for (queued in pendingRecoveryWindows) {
-                if (queued.startMs < w.endMs && queued.endMs > w.startMs) {
-                    owed = maxOf(owed, queued.endMs)
-                }
-            }
-            if (owed > w.startMs) {
-                w = UsageBackfill.Window(owed, maxOf(w.endMs, owed))
-            }
-            if (w.endMs <= w.startMs) return true
+            // time instead. (BackfillQueue.clamp — pinned by
+            // BackfillQueueTest, issue #79.)
+            val w = BackfillQueue.clamp(
+                requested,
+                owedThroughMs,
+                pendingRecoveryWindows.toList()
+            ) ?: return true
             // Journal the ACTUAL (post-clamp) window, not the caller's
             // request: journalRemove deletes exact start:end strings, so a
             // journaled pre-clamp range whose clamped copy was processed and
@@ -1786,13 +1773,21 @@ class TrackerService : Service() {
                 val next = synchronized(queueLock) {
                     pendingRecoveryWindows.firstOrNull()
                 }
-                when {
+                // The claim decision (which arm runs) is BackfillRecovery.claim
+                // (issue #79), pinned by BackfillRecoveryTest; the arms below
+                // own only the durable writes and their ORDER.
+                when (val decision = BackfillRecovery.claim(
+                    handled = handled,
+                    rowEndMs = activeRow?.endMs ?: 0L,
+                    rowProgressMs = activeRow?.progressMs ?: 0L,
+                    head = next
+                )) {
                     // The pass could not run (UsageStats access currently
                     // unavailable): leave the active row AND the queue exactly
                     // as they are — claiming `next` here would overwrite the
                     // active row's unrecovered remainder and lose it. Retry
                     // after a backoff.
-                    !handled -> Unit
+                    BackfillRecovery.Claim.NotHandled -> Unit
                     // Claim the head only when it belongs with the ACTIVE
                     // row (no row, or overlapping/contiguous with it). A
                     // DISJOINT head (starting after the row's end) is left
@@ -1804,7 +1799,18 @@ class TrackerService : Service() {
                     // recovering or retire (cursor-gated); after the clear,
                     // the next loop pass claims the queued window as a fresh
                     // row with its own start as the progress frontier.
-                    next != null && (activeRow == null || next.startMs <= activeRow.endMs) -> {
+                    is BackfillRecovery.Claim.InstallFreshRow,
+                    is BackfillRecovery.Claim.ExtendActiveRow -> {
+                        // `next` is non-null in this arm by construction:
+                        // both decisions are produced only for a peeked head.
+                        // The seam's payload is the single source of truth for
+                        // the row values below; the peeked head stays only the
+                        // identity for the journal removal and the dequeue.
+                        // The `activeRow == null` split mirrors the seam's
+                        // contract exactly (InstallFreshRow only without a
+                        // row, ExtendActiveRow only with one), so the casts
+                        // are exhaustive in this arm.
+                        val claimed = next!!
                         // ORDER: durable Room install FIRST, then the
                         // journal removal (commit()), then the in-memory
                         // dequeue. Removing the journal entry before the
@@ -1816,7 +1822,9 @@ class TrackerService : Service() {
                         // below, and a failed removal commit keeps the
                         // window queued for the next pass's retry.
                         if (activeRow == null) {
-                            dao.set(BackfillStateEntity(0, next.startMs, next.endMs))
+                            val window =
+                                (decision as BackfillRecovery.Claim.InstallFreshRow).window
+                            dao.set(BackfillStateEntity(0, window.startMs, window.endMs))
                         } else {
                             // Overlapping or contiguous: EXTEND the active
                             // row — preserving progressMs keeps the row's
@@ -1826,11 +1834,13 @@ class TrackerService : Service() {
                             // any live-counted gap. A fully covered entry
                             // (endMs <= progressMs) is an unchanged replace
                             // here and is simply removed from the queue.
+                            val extensionEnd =
+                                (decision as BackfillRecovery.Claim.ExtendActiveRow).endMs
                             dao.set(
                                 BackfillStateEntity(
                                     activeRow.id,
                                     activeRow.progressMs,
-                                    maxOf(activeRow.endMs, next.endMs)
+                                    extensionEnd
                                 )
                             )
                         }
@@ -1842,12 +1852,12 @@ class TrackerService : Service() {
                         // `retryLater` so the loop backs off instead of
                         // spinning through Room on a persistent storage
                         // failure.
-                        if (journalRemove(listOf(next))) {
+                        if (journalRemove(listOf(claimed))) {
                             synchronized(queueLock) {
                                 // Same single-worker pass; a detector can
                                 // only add, so the head we peeked is still
                                 // the head.
-                                if (pendingRecoveryWindows.firstOrNull() == next) {
+                                if (pendingRecoveryWindows.firstOrNull() == claimed) {
                                     pendingRecoveryWindows.removeFirstOrNull()
                                 }
                             }
@@ -1862,7 +1872,7 @@ class TrackerService : Service() {
                     // finished row does NOT count as new work: it still has
                     // endMs > 0 but no remaining work (progress == end) —
                     // treating it as work would hot-loop here forever.
-                    activeRow != null && activeRow.progressMs < activeRow.endMs -> Unit
+                    BackfillRecovery.Claim.ProcessActiveRow -> Unit
                     else -> {
                         // Nothing owed by the row. Retire — but only once the
                         // live tick cursor has caught up with the recovered
@@ -1977,10 +1987,22 @@ class TrackerService : Service() {
                             // atomic because the lock is held across both.
                             synchronized(debtLock) {
                                 val current = pendingDebt()
-                                retryLater =
-                                    frontier < recoveredEnd ||
-                                        (current != null && current.endMs > recoveredEnd) ||
-                                        !clearPendingDebt()
+                                retryLater = when (
+                                    BackfillRecovery.debtClearDecision(
+                                        frontier,
+                                        recoveredEnd,
+                                        current?.endMs
+                                    )
+                                ) {
+                                    BackfillRecovery.DebtClear.Clear -> !clearPendingDebt()
+                                    // KeepUntilCursorCatchesUp (invariant E:
+                                    // the marker protects the merged window
+                                    // until the cursor catches up) and
+                                    // KeepForExtendingDebt (the debt becomes
+                                    // the next claimed window) retry the
+                                    // retirement after a backoff.
+                                    else -> true
+                                }
                             }
                         }
                         if (!retryLater) {
