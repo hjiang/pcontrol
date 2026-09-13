@@ -210,6 +210,15 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   screenshots, TalkBack, Accessibility Scanner, API 37, and large-font manual
   checks remain required before release.
 
+- **Never `close()` the `AppDatabase` singleton in tests.** `getInstance()`
+  caches into a `@Volatile INSTANCE` it never clears, while `RoomDatabase.close()`
+  permanently shuts down Room's executors — the closed instance keeps being
+  returned and every later test in the same Robolectric JVM fails with
+  `JobCancellationException: Job was cancelled`. Tests that need the real
+  on-disk database must reset via `AppDatabase.closeForTests()` in `tearDown`
+  (closes the handle *and* nulls `INSTANCE`); everything else keeps using
+  `Room.inMemoryDatabaseBuilder` (issue #80).
+
 - **`versionName`/`versionCode` must match the release tag — CI injects them.**
   `build.gradle.kts` hardcodes defaults (`versionName`, `versionCode`) for
   local dev builds, but `android-build.yml` extracts the numeric version from
