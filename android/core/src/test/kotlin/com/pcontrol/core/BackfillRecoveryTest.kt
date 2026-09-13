@@ -6,8 +6,15 @@ import org.junit.jupiter.api.Test
 /**
  * Regression tests for the TrackerService recovery-orchestration decisions
  * (issue #79). Each test pins one invariant the PR #69 review rounds either
- * fixed (e8019d6 queued-window swallow, guard release) or corrected at the
- * call site without a possible test (316d726 recovery floor):
+ * fixed (e8019d6 queued-window swallow) or corrected at the call site
+ * without a possible test (316d726 recovery floor).
+ *
+ * Deliberately NOT covered here: the single-flight guard handoff
+ * (`backfillInFlight` acquire/release vs. detector publication, the other
+ * e8019d6 fix). `hasDurableWork` is only that decision's liveness input — a
+ * Boolean cannot exercise the `backfillMutex` serialization, so invariant D
+ * stays manual-only (see docs/plans/16_tracker_recovery_test_coverage.md),
+ * exactly as the review of this suite pointed out.
  *
  * - A: the recovery floor is the COMMITTED cursor, never the in-memory
  *   query anchor;
