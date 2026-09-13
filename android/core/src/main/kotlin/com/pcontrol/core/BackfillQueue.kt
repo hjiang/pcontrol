@@ -90,9 +90,13 @@ object BackfillJournal {
         if (raw.isNullOrEmpty()) entryOf(window) else "$raw|${entryOf(window)}"
 
     /**
-     * Parses a journal into its well-formed windows (oldest first): entries
-     * that are not `start:end` with `end > start` are dropped. Used for
-     * startup re-ingestion only — removal goes through [removeEntries].
+     * Parses a journal into its well-formed windows, in JOURNAL (append)
+     * order — deliberately NOT chronological: the journal is a singleton
+     * record appended to by detections AND by recovery-side promotions (a
+     * promoted debt tail can follow a later disjoint detection), exactly
+     * like the in-memory queue. Entries that are not `start:end` with
+     * `end > start` are dropped. Used for startup re-ingestion only —
+     * removal goes through [removeEntries].
      */
     fun decode(raw: String?): List<UsageBackfill.Window> {
         if (raw.isNullOrEmpty()) return emptyList()

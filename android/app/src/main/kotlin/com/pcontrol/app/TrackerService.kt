@@ -1553,8 +1553,10 @@ class TrackerService : Service() {
         }
     }
 
-    /** Loads the journaled disjoint gaps (oldest first) — startup
-     *  re-ingestion. Caller holds [queueLock]. */
+    /** Loads the journaled disjoint gaps in JOURNAL (append) order — NOT
+     *  chronological, like [pendingRecoveryWindows] (a promoted debt tail can
+     *  be appended after a later disjoint detection) — startup re-ingestion.
+     *  Caller holds [queueLock]. */
     private fun journalLoad(): List<UsageBackfill.Window> {
         synchronized(queueLock) {
             val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
