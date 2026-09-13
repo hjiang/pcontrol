@@ -233,6 +233,82 @@ a release APK when a tag matching `android-*` is pushed. Pushes trigger CI on
   total call timeout and deterministic `Response.close()`/`use`; otherwise one
   stuck or leaked HTTP exchange can hold `syncInFlight` and make the dashboard
   report an otherwise-live device offline.
+- **Only `ACTIVITY_RESUMED`/`ACTIVITY_PAUSED` (1/2) are UsageEvents
+  transitions.** The old `AppEvent.MOVE_TO_FOREGROUND = 6` /
+  `MOVE_TO_BACKGROUND = 7` aliased real `SYSTEM_INTERACTION`/
+  `USER_INTERACTION` — every touch read as a background transition and
+  zeroed event-derived foreground until the next resume. The wrong
+  constants are deleted; do not reintroduce them.
+
+- **`dataSync` foreground services die after 6 hours on Android 15+.**
+  Diagnosed on Xiaomi 25097RP43C / HyperOS 3 / Android 16: at the 6 h mark
+  `ForegroundServiceDidNotStopInTimeException` kills the process, then every
+  sticky restart crashes with `ForegroundServiceStartNotAllowedException:
+  Time limit already exhausted` until the app is opened in the foreground —
+  silent multi-day outages (logcat evidence 08-21/08-26/08-28 in plan 15).
+  `TrackerService` now starts with `FOREGROUND_SERVICE_TYPE_SPECIAL_USE` on
+  API 34+ (manifest declares `dataSync|specialUse` +
+  `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` + both FGS permissions), and
+  `startForegroundSafely()` never crashes the process — a failed start logs
+  and `stopSelf()`s (callers use `startForegroundService`; lingering would
+  crash via RemoteServiceException seconds later; the bound accessibility
+  service keeps the process alive for the next retry).
+- **An APK update stops all services and nothing restarts them.** Not even
+  `START_STICKY`. Every install (auto-update included) left the tracker
+  dead until the next boot or manual app open — found while installing the
+  0.0.8 build on-device. `BootReceiver` handles `MY_PACKAGE_REPLACED` as
+  well as `BOOT_COMPLETED`.
+
+- **Usage during outages is backfilled from system UsageStats.** Live
+  attribution is 10 s sampling: time with the process dead or frozen never
+  reaches the counters. Ticks persist `tick_cursor_ms` (the live frontier,
+  written by `commitTick` and — serialized with it under `anchorLock` —
+  by recovery retirement's durable cursor pin; monotonic:
+  `max(previous, endTime)`, so clock rollback cannot rewind it) whenever
+  the tick knew a foreground app or UsageStats access is confirmed; the
+  cursor is held back only when NO foreground was known AND access is
+  unconfirmed, so the stretch stays recoverable (the overlong-gap guard
+  then stages it as a recovery window). Deliberately safer than gating on
+  "credited nothing": a locked-screen tick credits nothing but still knows
+  the foreground state — holding the cursor back there would stage
+  locked-screen time as a recovery window and replay up to the 5-minute
+  silence cap to the pre-lock app, violating "locked-screen time is
+  attributed to nobody". A wall-clock rollback itself skips the tick (that
+  range was already counted). On service start and on ≥2 min loop stalls (detected
+  via `SystemClock.elapsedRealtime()`), a detected gap is staged as a
+  prefs "debt" (apply() — non-blocking on the tick) and becomes a
+  **durable pending recovery window** (Room `backfill_state`, schema v3)
+  that live ticks cannot overwrite; the worker commits the debt durably
+  and replays `queryEvents` through `UsageBackfill` (`:core`, pure,
+  unit-tested), merging per-day app counters. Key invariants: each ~1 h
+  chunk's merges + its progress advance commit in one Room transaction
+  (crash ⇒ rollback ⇒ retry: no lost slices, no double-count);
+  registration and retirement are serialized with promotion under
+  `backfillMutex` + `debtLock`; the first live query after detection
+  starts at the recovery end (the anchor is advanced at detection), and
+  retirement only clears a debt fully covered by the recovered frontier —
+  an extending debt becomes the next claimed window, and a second
+  detection disjoint from the staged debt is queued instead of overwriting
+  it (the debt record is a singleton — a disjoint overwrite would discard a
+  still-unpromoted gap). Registration writes retry in place (2 s backoff,
+  retried for as long as durable work remains) on transient Room failures,
+  and the failure
+  path keeps the worker alive while any durable work (queued tails, row
+  work, staged debt) remains. The tick heartbeat refreshes only after a
+  successful tick, so persistent tick failures age into a stall and the
+  failed period is recovered from the last committed cursor. Eventless
+  intervals cap at 5 min measured
+  from interval start (preserved across chunks and retries; sub-second
+  remainders carry across chunks); pcontrol's own package is excluded —
+  including when the accessibility probe reports the pcontrol dashboard
+  itself as foreground (an explicit no-usage tick, never falling back to
+  a stale event-derived app); web/domain usage is not recoverable
+  retroactively. Backfill runs on its own single-flight coroutine so a
+  multi-day replay never stalls the tick loop. Residual: the durable
+  handoff is worker-side — a process death between detection and the
+  worker's durable write (scheduling + apply-flush latency, normally ms)
+  loses the gap until the next detection.
+
 - **HyperOS blocks background activity starts even with draw-over-other-apps.**
   Never use `startActivity` as an automatic enforcement surface: Xiaomi can
   reject it with `Abort background activity starts`/`MIUIOP(10021)`. The bound

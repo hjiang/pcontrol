@@ -11,7 +11,11 @@ data class AppEvent(
     companion object {
         const val ACTIVITY_RESUMED = 1  // matches UsageEvents.Event.ACTIVITY_RESUMED
         const val ACTIVITY_PAUSED = 2   // matches UsageEvents.Event.ACTIVITY_PAUSED
-        const val MOVE_TO_FOREGROUND = 6
-        const val MOVE_TO_BACKGROUND = 7
+
+        // Deliberately absent: the real UsageEvents constants are
+        // MOVE_TO_FOREGROUND = 1 and MOVE_TO_BACKGROUND = 2 — mere aliases
+        // of ACTIVITY_RESUMED/PAUSED. Earlier (wrong) values 6/7 here aliased
+        // SYSTEM_INTERACTION and USER_INTERACTION, so touches were consumed
+        // as background transitions. Only 1/2 are ever transitions.
     }
 }

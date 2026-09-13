@@ -34,10 +34,8 @@ object AppUsagePoller {
 
         for (event in events) {
             when (event.eventType) {
-                AppEvent.ACTIVITY_RESUMED,
-                AppEvent.MOVE_TO_FOREGROUND -> foregroundPackage = event.packageName
-                AppEvent.ACTIVITY_PAUSED,
-                AppEvent.MOVE_TO_BACKGROUND -> {
+                AppEvent.ACTIVITY_RESUMED -> foregroundPackage = event.packageName
+                AppEvent.ACTIVITY_PAUSED -> {
                     if (event.packageName == foregroundPackage) {
                         foregroundPackage = null
                     }
