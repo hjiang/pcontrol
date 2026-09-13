@@ -1122,26 +1122,25 @@ class TrackerService : Service() {
                 }
                 backfillMutex.withLock {
                     val dao = AppDatabase.getInstance(this@TrackerService).backfillStateDao()
-                    // Everything at/below [claimedThroughMs] is already
-                    // claimed for recovery: the durable row (recovered or
-                    // being recovered exactly once) plus the disjoint
-                    // windows queued ahead of it. Clamp the planned window
-                    // against that mark BEFORE any publication — after a
-                    // restart with a stale cursor the planned window can
-                    // overlap the re-ingested journal ranges (or an active
-                    // row), and publishing that overlap as the debt would
-                    // install a row covering queued work that the claim step
-                    // would then have to unwind. A fully-claimed window
-                    // publishes nothing.
+                    // Everything covered by the durable row (recovered or
+                    // being recovered exactly once) and by the queued windows
+                    // is already claimed for recovery. Clamp the planned
+                    // window against BOTH — the row's end and the actual
+                    // queued ranges — BEFORE any publication: after a restart
+                    // with a stale cursor the planned window can overlap the
+                    // re-ingested journal ranges (or an active row), and
+                    // publishing that overlap as the debt would install a row
+                    // covering queued work that the claim step would then have
+                    // to unwind. A fully-claimed window publishes nothing.
                     val row = dao.get()
                     // The LIVE cursor is a claimed-through mark too: this
                     // worker can run concurrently with live ticks (the retry
                     // re-entry path), and the detection-side frontier
                     // snapshot may be stale by the time the worker publishes.
-                    // The clamps below therefore always take the cursor under
-                    // [anchorLock] — the same monitor commitTick's cursor
-                    // commit runs under — so a published window can never
-                    // begin below a frontier live counting has passed.
+                    // The staging revalidation therefore re-reads the cursor
+                    // under [anchorLock] — the same monitor commitTick's
+                    // cursor commit runs under — so a published window can
+                    // never begin below a frontier live counting has passed.
                     // Claimed-through proof = the active row's [progressMs,
                     // endMs] (being recovered exactly once) and the queued
                     // windows' ranges (durably journaled + queued). The LIVE
@@ -1151,19 +1150,20 @@ class TrackerService : Service() {
                     // without ever sampling the debt's prefix, so clamping a
                     // debt start to the cursor would erase an unpromoted
                     // outage (see the owed clamp below).
-                    val claimedThroughMs = maxOf(
-                        row?.endMs ?: 0L,
-                        synchronized(queueLock) {
-                            // Max over ALL queued ends (the queue is not
-                            // guaranteed chronologically ordered — see
-                            // [enqueueClamped]): every queued range is
-                            // claimed-for recovery, so the worker's plan
-                            // must not overlap any of them.
-                            pendingRecoveryWindows.maxOfOrNull { it.endMs } ?: 0L
-                        }
-                    )
+                    // The ACTUAL queued windows, not their max end: the
+                    // clamp's coverage sweep resolves chained coverage and
+                    // deliberately preserves an uncovered prefix, whereas
+                    // collapsing the queue to one frontier erases a gap the
+                    // queue does not cover (PR #81 review: a queued [300,400]
+                    // with a planned [100,350] must not drop [100,300)).
+                    // Overlap with a queued range is still handled where it
+                    // belongs: [BackfillPromotion] routes a conflicting debt
+                    // to the queue instead of installing a row over it.
+                    val queuedAtPlan = synchronized(queueLock) {
+                        pendingRecoveryWindows.toList()
+                    }
                     val window = planWindow(frontierMs, nowMs)
-                        ?.let { BackfillQueue.clamp(it, claimedThroughMs, emptyList()) }
+                        ?.let { BackfillQueue.clamp(it, row?.endMs ?: 0L, queuedAtPlan) }
                     // Debt read → merge → durable publication is ONE debtLock
                     // critical section: a detector staging concurrently (an
                     // apply(), a few ms) cannot interleave a newer record
